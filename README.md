@@ -1,0 +1,48 @@
+# Premier Plus · Classroom Scheduler
+
+An interactive classroom scheduling board for the 2026 Summer program (Jericho).
+
+**Live demo:** enable GitHub Pages (instructions below) and the site will be served at
+`https://<your-username>.github.io/classroom-scheduler/`
+
+## Features
+
+- Schedule grid: time slots × rooms, with separate tabs for Morning (daily) and Mon–Fri afternoons
+- Morning uses combined Room 2+3; afternoons use Rooms 2 and 3 separately
+- Each class card shows class name, teacher, enrollment / capacity with a color-coded progress bar
+  (green = open, amber = nearly full, red = full)
+- **Drag & drop** a class card to move it to another time slot or room; drop onto another class to swap
+- Click any card to edit name / teacher / capacity / notes; ＋ − steppers for quick enrollment changes
+- Add, rename, reorder, or delete rooms and time slots
+- All changes saved automatically to the browser (localStorage); Reset Data restores the original schedule
+
+## Project structure
+
+```
+index.html      ← page shell (loads app.js)
+app.js          ← bundled production build (committed, so GitHub Pages works with zero build step)
+src/App.jsx     ← application source
+src/main.jsx    ← entry point
+```
+
+## Develop / rebuild
+
+```bash
+npm install
+npx esbuild src/main.jsx --bundle --minify --outfile=app.js --define:process.env.NODE_ENV='"production"'
+```
+
+Then open `index.html` in a browser (or serve with `npx serve .`).
+
+## Deploy to GitHub Pages
+
+1. Push this repository to GitHub (see below)
+2. On GitHub: **Settings → Pages → Source: Deploy from a branch → Branch: `main` / root → Save**
+3. Wait ~1 minute; the site appears at `https://<your-username>.github.io/classroom-scheduler/`
+
+## Note on data
+
+Schedule data lives in each visitor's own browser (localStorage). Two people opening the site see
+their own independent copies — there is no shared backend. If you need multi-user shared editing,
+the next step would be adding a small backend (e.g. Supabase / Firebase) — the data layer is isolated
+in `loadData` / `saveData` in `src/App.jsx`, so it's a contained change.
