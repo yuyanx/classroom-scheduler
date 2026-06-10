@@ -8,14 +8,16 @@ const DEFAULT_ROOMS = {
 };
 
 const SECTIONS = [
-  { id: "morning", label: "Morning (Daily)" },
-  { id: "mon", label: "Mon PM" },
-  { id: "tue", label: "Tue PM" },
-  { id: "wed", label: "Wed PM" },
-  { id: "thu", label: "Thu PM" },
-  { id: "fri", label: "Fri PM" },
+  { id: "morning", label: "Morning (Daily)", short: "AM" },
+  { id: "mon", label: "Mon PM", short: "Mon" },
+  { id: "tue", label: "Tue PM", short: "Tue" },
+  { id: "wed", label: "Wed PM", short: "Wed" },
+  { id: "thu", label: "Thu PM", short: "Thu" },
+  { id: "fri", label: "Fri PM", short: "Fri" },
 ];
 
+const sectionShort = (id) => SECTIONS.find((s) => s.id === id)?.short || id;
+const sectionIdx = (id) => SECTIONS.findIndex((s) => s.id === id);
 const roomGroup = (sectionId) => (sectionId === "morning" ? "morning" : "afternoon");
 
 const DEFAULT_SLOTS = {
@@ -88,19 +90,49 @@ const DEFAULT_CLASSES = [
   mk("thu", 1, "5", "NYT", "Rebecca", 0, 12),
 ];
 
-const defaultData = () => ({
-  rooms: JSON.parse(JSON.stringify(DEFAULT_ROOMS)),
-  slots: JSON.parse(JSON.stringify(DEFAULT_SLOTS)),
-  classes: JSON.parse(JSON.stringify(DEFAULT_CLASSES)),
-  nextId: _seed,
-});
+// ───────────────────────── Data model ─────────────────────────
+// catalog:    one entry per class/cohort — { id, name, teacher, reg, cap, note }
+// placements: where a class meets       — { id, classId, section, slotIdx, room }
+// A class placed in several slots/days shares one roster: reg/cap/name edits apply everywhere.
+
+// Convert the pre-library format ({ classes: [...] }) into catalog + placements.
+// Grid entries that are fully identical (name/teacher/reg/cap/note) collapse into
+// one catalog entry with several placements — i.e. one class meeting on several days.
+function migrateOld(old) {
+  const catalog = [];
+  const placements = [];
+  let n = 1;
+  const byKey = new Map();
+  (old.classes || []).forEach((c) => {
+    const key = [c.name, c.teacher || "", c.reg || 0, c.cap ?? 12, c.note || ""].join("¦");
+    let entry = byKey.get(key);
+    if (!entry) {
+      entry = { id: "k" + n++, name: c.name, teacher: c.teacher || "", reg: c.reg || 0, cap: c.cap ?? 12, note: c.note || "" };
+      byKey.set(key, entry);
+      catalog.push(entry);
+    }
+    placements.push({ id: "p" + n++, classId: entry.id, section: c.section, slotIdx: c.slotIdx, room: c.room });
+  });
+  return { rooms: old.rooms, slots: old.slots, catalog, placements, nextId: n };
+}
+
+const defaultData = () =>
+  migrateOld({
+    rooms: JSON.parse(JSON.stringify(DEFAULT_ROOMS)),
+    slots: JSON.parse(JSON.stringify(DEFAULT_SLOTS)),
+    classes: DEFAULT_CLASSES,
+  });
 
 const STORAGE_KEY = "premier-classroom-schedule";
 
 const loadData = () => {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.catalog && parsed.placements) return parsed;
+      if (parsed && parsed.classes) return migrateOld(parsed); // pre-library data
+    }
   } catch (e) { /* fall through */ }
   return defaultData();
 };
@@ -123,71 +155,125 @@ const ratioColor = (reg, cap) => {
   return { bar: "#0d7a72", text: "#0f766e", bg: "#f0fdfa" };
 };
 
+const slotShort = (label) => ((label || "").split(/[–—-]/)[0].trim() || label || "");
+
 // ───────────────────────── Main component ─────────────────────────
 export default function ClassroomScheduler() {
   const [data, setData] = useState(loadData);
   const [saveError, setSaveError] = useState(false);
   const [tab, setTab] = useState("morning");
-  const [editing, setEditing] = useState(null); // {cls, slotIdx, room, isNew}
+  const [editing, setEditing] = useState(null); // {isNew, classId?, placementId?, slotIdx?, room?}
   const [roomMgrOpen, setRoomMgrOpen] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
-  const [dragId, setDragId] = useState(null);
-  const [dragOver, setDragOver] = useState(null);
+  const [drag, setDrag] = useState(null); // {type:'lib'|'pl', id}
+  const [dragOver, setDragOver] = useState(null); // "slotIdx|room" or "tray"
+  const [libOpen, setLibOpen] = useState(true);
+  const [libQuery, setLibQuery] = useState("");
 
   const persist = useCallback((next) => {
     setData(next);
     setSaveError(!saveData(next));
   }, []);
 
-  const { rooms, slots, classes } = data;
+  const { rooms, slots, catalog, placements } = data;
   const curRooms = rooms[roomGroup(tab)] || [];
   const curSlots = slots[tab] || [];
 
-  const findClass = (slotIdx, room) =>
-    classes.find((c) => c.section === tab && c.slotIdx === slotIdx && c.room === room);
+  const classOfId = (id) => catalog.find((k) => k.id === id);
+  const placementAt = (slotIdx, room) =>
+    placements.find((p) => p.section === tab && p.slotIdx === slotIdx && p.room === room);
+  const placementsOf = (classId) => placements.filter((p) => p.classId === classId);
 
-  const totalReg = classes.reduce((s, c) => s + (c.reg || 0), 0);
-  const tabReg = classes.filter((c) => c.section === tab).reduce((s, c) => s + (c.reg || 0), 0);
-  const tabCount = classes.filter((c) => c.section === tab).length;
+  const totalReg = catalog.reduce((s, k) => s + (k.reg || 0), 0);
+  const tabPls = placements.filter((p) => p.section === tab);
+  const tabReg = tabPls.reduce((s, p) => s + ((classOfId(p.classId) || {}).reg || 0), 0);
 
-  // ── Drag & drop: move a class; if target is occupied, swap the two ──
-  const moveClass = (clsId, toSlotIdx, toRoom) => {
-    const src = classes.find((c) => c.id === clsId);
-    if (!src) return;
-    if (src.section === tab && src.slotIdx === toSlotIdx && src.room === toRoom) return;
-    const target = findClass(toSlotIdx, toRoom);
+  // Chips like "Mon 2:00" for everywhere a class is scheduled
+  const placementChips = (classId) =>
+    placementsOf(classId)
+      .slice()
+      .sort((a, b) => sectionIdx(a.section) - sectionIdx(b.section) || a.slotIdx - b.slotIdx)
+      .map((p) => ({
+        id: p.id,
+        label: `${sectionShort(p.section)} ${slotShort((slots[p.section] || [])[p.slotIdx])}`.trim(),
+      }));
+
+  // ── Placement ops ──
+  const addPlacement = (classId, slotIdx, room) => {
+    if (!classOfId(classId) || placementAt(slotIdx, room)) return;
+    const nid = data.nextId || 1000;
     persist({
       ...data,
-      classes: classes.map((c) => {
-        if (c.id === src.id) return { ...c, slotIdx: toSlotIdx, room: toRoom };
-        if (target && c.id === target.id) return { ...c, slotIdx: src.slotIdx, room: src.room };
-        return c;
+      placements: [...placements, { id: "p" + nid, classId, section: tab, slotIdx, room }],
+      nextId: nid + 1,
+    });
+  };
+
+  const removePlacement = (plId) =>
+    persist({ ...data, placements: placements.filter((p) => p.id !== plId) });
+
+  // Drag & drop: move a placement; if target cell is occupied, swap the two
+  const movePlacement = (plId, toSlotIdx, toRoom) => {
+    const src = placements.find((p) => p.id === plId);
+    if (!src) return;
+    if (src.section === tab && src.slotIdx === toSlotIdx && src.room === toRoom) return;
+    const target = placementAt(toSlotIdx, toRoom);
+    persist({
+      ...data,
+      placements: placements.map((p) => {
+        if (p.id === src.id) return { ...p, section: tab, slotIdx: toSlotIdx, room: toRoom };
+        if (target && p.id === target.id) return { ...p, section: src.section, slotIdx: src.slotIdx, room: src.room };
+        return p;
       }),
     });
   };
 
-  const dropHandlers = (slotIdx, room) => ({
+  // Cell drop targets: accept a grid card always (move/swap); accept a library card only when empty
+  const cellHandlers = (slotIdx, room, occupiedPl) => ({
     onDragOver: (e) => {
+      if (!drag) return;
+      if (drag.type === "lib" && occupiedPl) return; // browser shows no-drop cursor
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
       setDragOver(slotIdx + "|" + room);
     },
-    onDragLeave: () => setDragOver(null),
+    onDragLeave: () => setDragOver((d) => (d === slotIdx + "|" + room ? null : d)),
     onDrop: (e) => {
       e.preventDefault();
-      const id = e.dataTransfer.getData("text/plain") || dragId;
-      if (id) moveClass(id, slotIdx, room);
-      setDragId(null);
+      const raw = e.dataTransfer.getData("text/plain") || (drag ? drag.type + ":" + drag.id : "");
+      const [type, id] = raw.split(":");
+      if (type === "lib" && !occupiedPl) addPlacement(id, slotIdx, room);
+      else if (type === "pl") movePlacement(id, slotIdx, room);
+      setDrag(null);
       setDragOver(null);
     },
   });
 
-  // ── Registered count stepper ──
-  const bump = (cls, delta) => {
+  // Library tray: dropping a scheduled card here unschedules it (class stays in the library)
+  const trayHandlers = {
+    onDragOver: (e) => {
+      if (drag?.type !== "pl") return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      setDragOver("tray");
+    },
+    onDragLeave: () => setDragOver((d) => (d === "tray" ? null : d)),
+    onDrop: (e) => {
+      e.preventDefault();
+      const raw = e.dataTransfer.getData("text/plain") || (drag ? drag.type + ":" + drag.id : "");
+      const [type, id] = raw.split(":");
+      if (type === "pl") removePlacement(id);
+      setDrag(null);
+      setDragOver(null);
+    },
+  };
+
+  // ── Registered count stepper (shared roster: updates every placement of the class) ──
+  const bump = (classId, delta) => {
     persist({
       ...data,
-      classes: classes.map((c) =>
-        c.id === cls.id ? { ...c, reg: Math.max(0, (c.reg || 0) + delta) } : c
+      catalog: catalog.map((k) =>
+        k.id === classId ? { ...k, reg: Math.max(0, (k.reg || 0) + delta) } : k
       ),
     });
   };
@@ -196,45 +282,57 @@ export default function ClassroomScheduler() {
   const saveClass = (form) => {
     let next;
     if (editing.isNew) {
-      const newCls = {
-        id: "c" + (data.nextId || 1000),
-        section: tab,
-        slotIdx: editing.slotIdx,
-        room: editing.room,
-        ...form,
-      };
-      next = { ...data, classes: [...classes, newCls], nextId: (data.nextId || 1000) + 1 };
+      let nid = data.nextId || 1000;
+      const entry = { id: "k" + nid++, ...form };
+      const newPls =
+        editing.room != null
+          ? [...placements, { id: "p" + nid++, classId: entry.id, section: tab, slotIdx: editing.slotIdx, room: editing.room }]
+          : placements;
+      next = { ...data, catalog: [...catalog, entry], placements: newPls, nextId: nid };
     } else {
       next = {
         ...data,
-        classes: classes.map((c) => (c.id === editing.cls.id ? { ...c, ...form } : c)),
+        catalog: catalog.map((k) => (k.id === editing.classId ? { ...k, ...form } : k)),
       };
     }
     persist(next);
     setEditing(null);
   };
 
-  const deleteClass = () => {
-    persist({ ...data, classes: classes.filter((c) => c.id !== editing.cls.id) });
+  const deleteClass = (classId) => {
+    const n = placementsOf(classId).length;
+    if (n > 1 && !window.confirm(`This class is scheduled in ${n} slots. Delete it everywhere?`)) return;
+    persist({
+      ...data,
+      catalog: catalog.filter((k) => k.id !== classId),
+      placements: placements.filter((p) => p.classId !== classId),
+    });
     setEditing(null);
+  };
+
+  const duplicateClass = (k) => {
+    const nid = data.nextId || 1000;
+    persist({
+      ...data,
+      catalog: [...catalog, { ...k, id: "k" + nid, name: k.name + " (copy)" }],
+      nextId: nid + 1,
+    });
   };
 
   // ── Room management (separate morning / afternoon groups) ──
   const saveRooms = (groups) => {
-    let newClasses = classes;
+    let np = placements;
     ["morning", "afternoon"].forEach((g) => {
-      const inGroup = (c) => roomGroup(c.section) === g;
+      const inGroup = (p) => roomGroup(p.section) === g;
       Object.entries(groups[g].renames).forEach(([oldName, newName]) => {
-        newClasses = newClasses.map((c) =>
-          inGroup(c) && c.room === oldName ? { ...c, room: newName } : c
-        );
+        np = np.map((p) => (inGroup(p) && p.room === oldName ? { ...p, room: newName } : p));
       });
-      newClasses = newClasses.filter((c) => !inGroup(c) || groups[g].names.includes(c.room));
+      np = np.filter((p) => !inGroup(p) || groups[g].names.includes(p.room));
     });
     persist({
       ...data,
       rooms: { morning: groups.morning.names, afternoon: groups.afternoon.names },
-      classes: newClasses,
+      placements: np,
     });
     setRoomMgrOpen(false);
   };
@@ -253,21 +351,33 @@ export default function ClassroomScheduler() {
     persist({ ...data, slots: { ...slots, [tab]: ns } });
   };
   const removeSlot = (idx) => {
-    const has = classes.some((c) => c.section === tab && c.slotIdx === idx);
-    if (has && !window.confirm("This time slot has classes. Deleting it will remove them too. Continue?")) return;
+    const has = placements.some((p) => p.section === tab && p.slotIdx === idx);
+    if (has && !window.confirm("This time slot has classes. They will be unscheduled (but stay in the Class Library). Continue?")) return;
     const ns = curSlots.filter((_, i) => i !== idx);
-    const nc = classes
-      .filter((c) => !(c.section === tab && c.slotIdx === idx))
-      .map((c) =>
-        c.section === tab && c.slotIdx > idx ? { ...c, slotIdx: c.slotIdx - 1 } : c
+    const np = placements
+      .filter((p) => !(p.section === tab && p.slotIdx === idx))
+      .map((p) =>
+        p.section === tab && p.slotIdx > idx ? { ...p, slotIdx: p.slotIdx - 1 } : p
       );
-    persist({ ...data, slots: { ...slots, [tab]: ns }, classes: nc });
+    persist({ ...data, slots: { ...slots, [tab]: ns }, placements: np });
   };
 
   const resetAll = () => {
     persist(defaultData());
     setConfirmReset(false);
   };
+
+  // ── Library list (filtered, unscheduled first) ──
+  const q = libQuery.trim().toLowerCase();
+  const libList = catalog
+    .filter((k) => !q || k.name.toLowerCase().includes(q) || (k.teacher || "").toLowerCase().includes(q))
+    .sort((a, b) => {
+      const ap = placements.some((p) => p.classId === a.id);
+      const bp = placements.some((p) => p.classId === b.id);
+      if (ap !== bp) return ap ? 1 : -1;
+      return a.name.localeCompare(b.name);
+    });
+  const unscheduledCount = catalog.filter((k) => !placements.some((p) => p.classId === k.id)).length;
 
   // ───────────────────────── Render ─────────────────────────
   return (
@@ -297,6 +407,102 @@ export default function ClassroomScheduler() {
         </div>
       )}
 
+      {/* Class Library */}
+      <section style={{ maxWidth: 1320, margin: "0 auto", padding: "16px 24px 0" }}>
+        <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderBottom: libOpen ? "1px solid #eceeea" : "none", flexWrap: "wrap" }}>
+            <button
+              onClick={() => setLibOpen((o) => !o)}
+              style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 14, fontWeight: 700, color: "#123c3a", padding: 0 }}
+            >
+              {libOpen ? "▾" : "▸"} Class Library
+            </button>
+            <span style={{ fontSize: 12, color: "#64748b" }}>
+              {catalog.length} classes · {unscheduledCount} unscheduled
+            </span>
+            <input
+              style={{ ...inputStyle, width: 190, padding: "6px 10px", marginLeft: "auto", fontSize: 13 }}
+              placeholder="Search class or teacher…"
+              value={libQuery}
+              onChange={(e) => setLibQuery(e.target.value)}
+            />
+            <button style={{ ...btnPrimary, padding: "7px 14px", fontSize: 13 }} onClick={() => setEditing({ isNew: true })}>
+              ＋ New class
+            </button>
+          </div>
+          {libOpen && (
+            <div
+              {...trayHandlers}
+              style={{
+                padding: "10px 12px", display: "flex", flexWrap: "wrap", gap: 8, minHeight: 50, alignItems: "flex-start",
+                background: dragOver === "tray" ? "#fff7ed" : "transparent",
+                outline: drag?.type === "pl" ? "2px dashed #d97706" : "none",
+                outlineOffset: -5, borderRadius: "0 0 10px 10px",
+              }}
+            >
+              {drag?.type === "pl" && (
+                <span style={{ fontSize: 12, color: "#b45309", fontWeight: 600, alignSelf: "center" }}>
+                  ⤓ Release here to unschedule
+                </span>
+              )}
+              {libList.map((k) => {
+                const chips = placementChips(k.id);
+                const col = ratioColor(k.reg, k.cap);
+                return (
+                  <div
+                    key={k.id}
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData("text/plain", "lib:" + k.id);
+                      e.dataTransfer.effectAllowed = "copyMove";
+                      setDrag({ type: "lib", id: k.id });
+                    }}
+                    onDragEnd={() => { setDrag(null); setDragOver(null); }}
+                    onClick={() => setEditing({ isNew: false, classId: k.id })}
+                    title="Drag onto the grid to schedule (the same class can be placed on several days) · click to edit"
+                    style={{
+                      border: "1px solid #d6dad4", borderRadius: 8,
+                      background: chips.length ? "#fff" : "#fffbeb",
+                      padding: "7px 9px", width: 185, cursor: "grab",
+                      opacity: drag?.type === "lib" && drag.id === k.id ? 0.35 : 1,
+                      display: "flex", flexDirection: "column", gap: 4,
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 4 }}>
+                      <div style={{ fontWeight: 700, fontSize: 13, lineHeight: 1.25, flex: 1 }}>{k.name}</div>
+                      <button
+                        style={miniBtn} title="Duplicate (for a second cohort of the same course)"
+                        onClick={(e) => { e.stopPropagation(); duplicateClass(k); }}
+                      >⧉</button>
+                      <button
+                        style={{ ...miniBtn, color: "#b91c1c" }} title="Delete class"
+                        onClick={(e) => { e.stopPropagation(); deleteClass(k.id); }}
+                      >✕</button>
+                    </div>
+                    <div style={{ fontSize: 12, color: "#475569" }}>
+                      {k.teacher || <i style={{ color: "#b45309" }}>Teacher TBD</i>}
+                      <b style={{ marginLeft: 8, color: col.text }}>{k.reg} / {k.cap}</b>
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                      {chips.length === 0 ? (
+                        <span style={{ ...chipStyle, background: "#fef3c7", color: "#b45309" }}>unscheduled</span>
+                      ) : (
+                        chips.map((c) => <span key={c.id} style={chipStyle}>{c.label}</span>)
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+              {libList.length === 0 && (
+                <span style={{ fontSize: 13, color: "#94a3b8", alignSelf: "center" }}>
+                  {catalog.length === 0 ? "No classes yet — click ＋ New class." : "No classes match the search."}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      </section>
+
       {/* Tabs */}
       <nav style={{ maxWidth: 1320, margin: "0 auto", padding: "16px 24px 0", display: "flex", gap: 6, flexWrap: "wrap" }}>
         {SECTIONS.map((s) => (
@@ -319,7 +525,7 @@ export default function ClassroomScheduler() {
           </button>
         ))}
         <span style={{ marginLeft: "auto", alignSelf: "center", fontSize: 13, color: "#64748b" }}>
-          {tabCount} classes · {tabReg} students in this view
+          {tabPls.length} classes · {tabReg} students in this view
         </span>
       </nav>
 
@@ -350,12 +556,13 @@ export default function ClassroomScheduler() {
                     </div>
                   </td>
                   {curRooms.map((room) => {
-                    const cls = findClass(si, room);
+                    const pl = placementAt(si, room);
+                    const cls = pl ? classOfId(pl.classId) : null;
                     const cellKey = si + "|" + room;
                     const isOver = dragOver === cellKey;
-                    if (!cls) {
+                    if (!pl || !cls) {
                       return (
-                        <td key={room} style={tdStyle} {...dropHandlers(si, room)}>
+                        <td key={room} style={tdStyle} {...cellHandlers(si, room, null)}>
                           <button
                             onClick={() => setEditing({ isNew: true, slotIdx: si, room })}
                             style={{
@@ -366,6 +573,7 @@ export default function ClassroomScheduler() {
                               color: isOver ? "#0d7a72" : "#94a3b8",
                               fontSize: 13, cursor: "pointer",
                             }}
+                            title="Click to create a new class here, or drag one in from the Class Library"
                           >
                             {isOver ? "Drop here" : "＋ Add class"}
                           </button>
@@ -374,29 +582,32 @@ export default function ClassroomScheduler() {
                     }
                     const col = ratioColor(cls.reg, cls.cap);
                     const pct = cls.cap ? Math.min(100, Math.round((cls.reg / cls.cap) * 100)) : 0;
+                    const otherDays = [...new Set(
+                      placementsOf(cls.id).filter((p) => p.id !== pl.id).map((p) => sectionShort(p.section))
+                    )];
                     return (
-                      <td key={room} style={tdStyle} {...dropHandlers(si, room)}>
+                      <td key={room} style={tdStyle} {...cellHandlers(si, room, pl)}>
                         <div
                           draggable
                           onDragStart={(e) => {
-                            e.dataTransfer.setData("text/plain", cls.id);
+                            e.dataTransfer.setData("text/plain", "pl:" + pl.id);
                             e.dataTransfer.effectAllowed = "move";
-                            setDragId(cls.id);
+                            setDrag({ type: "pl", id: pl.id });
                           }}
-                          onDragEnd={() => { setDragId(null); setDragOver(null); }}
+                          onDragEnd={() => { setDrag(null); setDragOver(null); }}
                           style={{
-                            border: isOver && dragId !== cls.id ? "2px solid #0d7a72" : "1px solid #d6dad4",
+                            border: isOver && drag?.id !== pl.id ? "2px solid #0d7a72" : "1px solid #d6dad4",
                             borderRadius: 8, background: col.bg,
                             padding: "8px 10px", minHeight: 86, display: "flex", flexDirection: "column", gap: 4,
-                            opacity: dragId === cls.id ? 0.35 : 1,
+                            opacity: drag?.type === "pl" && drag.id === pl.id ? 0.35 : 1,
                             cursor: "grab",
-                            boxShadow: isOver && dragId !== cls.id ? "0 0 0 3px rgba(13,122,114,.15)" : "none",
+                            boxShadow: isOver && drag?.id !== pl.id ? "0 0 0 3px rgba(13,122,114,.15)" : "none",
                             transition: "opacity .15s, box-shadow .15s",
                           }}
-                          title={isOver && dragId !== cls.id ? "Release to swap with this class" : "Drag to move · click text to edit"}
+                          title={isOver && drag?.id !== pl.id ? "Release to swap with this class" : "Drag to move (or into the library to unschedule) · click text to edit"}
                         >
                           <div
-                            onClick={() => setEditing({ isNew: false, cls, slotIdx: si, room })}
+                            onClick={() => setEditing({ isNew: false, classId: cls.id, placementId: pl.id, slotIdx: si, room })}
                             style={{ cursor: "pointer" }}
                             title="Click to edit"
                           >
@@ -405,14 +616,19 @@ export default function ClassroomScheduler() {
                               {cls.teacher || <i style={{ color: "#b45309" }}>Teacher TBD</i>}
                               {cls.note && <span style={{ marginLeft: 6, color: "#7c3aed" }}>⏱ {cls.note}</span>}
                             </div>
+                            {otherDays.length > 0 && (
+                              <div style={{ fontSize: 11, color: "#0f766e", marginTop: 2 }} title="Same class (one roster) also meets on these days">
+                                ⇄ also {otherDays.join(" · ")}
+                              </div>
+                            )}
                           </div>
                           <div style={{ marginTop: "auto" }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                              <button onClick={() => bump(cls, -1)} style={stepBtn}>−</button>
+                              <button onClick={() => bump(cls.id, -1)} style={stepBtn}>−</button>
                               <span style={{ fontSize: 13, fontWeight: 700, color: col.text, minWidth: 48, textAlign: "center" }}>
                                 {cls.reg} / {cls.cap}
                               </span>
-                              <button onClick={() => bump(cls, +1)} style={stepBtn}>＋</button>
+                              <button onClick={() => bump(cls.id, +1)} style={stepBtn}>＋</button>
                               {cls.reg >= cls.cap && cls.cap > 0 && (
                                 <span style={{ fontSize: 11, color: "#b91c1c", fontWeight: 700 }}>FULL</span>
                               )}
@@ -434,9 +650,11 @@ export default function ClassroomScheduler() {
           </div>
         </div>
         <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
-          🖱 <b>Drag a class card</b> to any cell to change its time slot or room; dropping onto another class swaps them.
-          Click the card text to edit, use ＋ − to adjust enrollment. Green = open, amber = nearly full, red = full.
-          Morning uses combined Room 2+3; afternoons use Rooms 2 and 3 separately. Data is saved in this browser.
+          🖱 Define classes in the <b>Class Library</b>, then drag them onto the grid. Place the same class on several
+          days (e.g. Tue + Thu) — it stays one class with one shared enrollment, so edits update everywhere
+          (the Morning tab already means every day). Drag a scheduled card onto another to swap, or back into the
+          library to unschedule it. Click any card to edit, use ＋ − to adjust enrollment.
+          Green = open, amber = nearly full, red = full. Data is saved in this browser.
         </p>
       </main>
 
@@ -444,17 +662,23 @@ export default function ClassroomScheduler() {
       {editing && (
         <ClassModal
           editing={editing}
-          tabLabel={SECTIONS.find((s) => s.id === tab)?.label}
-          slotLabel={curSlots[editing.slotIdx]}
+          cls={editing.classId ? classOfId(editing.classId) : null}
+          placementCount={editing.classId ? placementsOf(editing.classId).length : 0}
+          contextLabel={
+            editing.room != null
+              ? `${SECTIONS.find((s) => s.id === tab)?.label} · ${curSlots[editing.slotIdx]} · Room ${editing.room}`
+              : "Class Library — drag the card onto the grid to schedule it"
+          }
           onSave={saveClass}
-          onDelete={deleteClass}
+          onDelete={() => deleteClass(editing.classId)}
+          onUnschedule={editing.placementId ? () => { removePlacement(editing.placementId); setEditing(null); } : null}
           onClose={() => setEditing(null)}
         />
       )}
 
       {/* Room manager modal */}
       {roomMgrOpen && (
-        <RoomModal rooms={rooms} classes={classes} onSave={saveRooms} onClose={() => setRoomMgrOpen(false)} />
+        <RoomModal rooms={rooms} placements={placements} onSave={saveRooms} onClose={() => setRoomMgrOpen(false)} />
       )}
 
       {/* Reset confirmation */}
@@ -475,8 +699,8 @@ export default function ClassroomScheduler() {
 }
 
 // ───────────────────────── Class edit modal ─────────────────────────
-function ClassModal({ editing, tabLabel, slotLabel, onSave, onDelete, onClose }) {
-  const c = editing.cls || {};
+function ClassModal({ editing, cls, placementCount, contextLabel, onSave, onDelete, onUnschedule, onClose }) {
+  const c = cls || {};
   const [name, setName] = useState(c.name || "");
   const [teacher, setTeacher] = useState(c.teacher || "");
   const [reg, setReg] = useState(c.reg ?? 0);
@@ -497,9 +721,12 @@ function ClassModal({ editing, tabLabel, slotLabel, onSave, onDelete, onClose })
   return (
     <Overlay onClose={onClose}>
       <h3 style={{ marginTop: 0, marginBottom: 4 }}>{editing.isNew ? "Add class" : "Edit class"}</h3>
-      <p style={{ margin: "0 0 16px", fontSize: 13, color: "#64748b" }}>
-        {tabLabel} · {slotLabel} · Room {editing.room}
-      </p>
+      <p style={{ margin: "0 0 16px", fontSize: 13, color: "#64748b" }}>{contextLabel}</p>
+      {!editing.isNew && placementCount > 1 && (
+        <p style={{ margin: "-10px 0 14px", fontSize: 12, color: "#0f766e" }}>
+          ⇄ Scheduled in {placementCount} slots — changes here apply to all of them.
+        </p>
+      )}
       <Field label="Class name *">
         <input style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. SAT Math" autoFocus />
       </Field>
@@ -517,9 +744,14 @@ function ClassModal({ editing, tabLabel, slotLabel, onSave, onDelete, onClose })
       <Field label="Note / actual time (optional)">
         <input style={inputStyle} value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. 2:30–4:00" />
       </Field>
-      <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+      <div style={{ display: "flex", gap: 10, marginTop: 18, flexWrap: "wrap" }}>
         {!editing.isNew && (
           <button style={{ ...btnSecondary, color: "#b91c1c", borderColor: "#fca5a5" }} onClick={onDelete}>Delete class</button>
+        )}
+        {onUnschedule && (
+          <button style={btnSecondary} onClick={onUnschedule} title="Remove from this slot only — the class stays in the library">
+            Remove from slot
+          </button>
         )}
         <div style={{ marginLeft: "auto", display: "flex", gap: 10 }}>
           <button style={btnSecondary} onClick={onClose}>Cancel</button>
@@ -531,15 +763,12 @@ function ClassModal({ editing, tabLabel, slotLabel, onSave, onDelete, onClose })
 }
 
 // ───────────────────────── Room manager (AM / PM groups) ─────────────────────────
-function RoomModal({ rooms, classes, onSave, onClose }) {
+function RoomModal({ rooms, placements, onSave, onClose }) {
   const [morning, setMorning] = useState(rooms.morning.map((r) => ({ orig: r, name: r })));
   const [afternoon, setAfternoon] = useState(rooms.afternoon.map((r) => ({ orig: r, name: r })));
 
   const countFor = (group, origName) =>
-    classes.filter((c) => {
-      const g = c.section === "morning" ? "morning" : "afternoon";
-      return g === group && c.room === origName;
-    }).length;
+    placements.filter((p) => roomGroup(p.section) === group && p.room === origName).length;
 
   const makeOps = (list, setList, group) => ({
     move: (i, dir) => {
@@ -551,7 +780,7 @@ function RoomModal({ rooms, classes, onSave, onClose }) {
     },
     remove: (i) => {
       const n = list[i].orig ? countFor(group, list[i].orig) : 0;
-      if (n > 0 && !window.confirm(`Room "${list[i].name}" has ${n} class(es). Deleting it will remove them too. Continue?`)) return;
+      if (n > 0 && !window.confirm(`Room "${list[i].name}" has ${n} class(es). Deleting it will unschedule them. Continue?`)) return;
       setList(list.filter((_, idx) => idx !== i));
     },
     add: () => setList([...list, { orig: null, name: "" }]),
@@ -679,6 +908,10 @@ const tdStyle = {
 const inputStyle = {
   width: "100%", boxSizing: "border-box", padding: "8px 10px", fontSize: 14,
   border: "1px solid #cbd5d1", borderRadius: 8, outline: "none",
+};
+const chipStyle = {
+  fontSize: 11, background: "#e6f4f3", color: "#0f766e", borderRadius: 4,
+  padding: "1px 6px", whiteSpace: "nowrap", fontWeight: 600,
 };
 const btnGhost = {
   background: "transparent", border: "1px solid rgba(255,255,255,.35)", color: "inherit",

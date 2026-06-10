@@ -9,6 +9,10 @@ An interactive classroom scheduling board for the 2026 Summer program (Jericho).
 
 - Schedule grid: time slots × rooms, with separate tabs for Morning (daily) and Mon–Fri afternoons
 - Morning uses combined Room 2+3; afternoons use Rooms 2 and 3 separately
+- **Class Library**: define every class once (name / teacher / capacity); unscheduled classes wait in
+  the library tray. Drag a card onto the grid to schedule it — place the same class on several days
+  and it stays one record with one shared enrollment (edits sync everywhere). Drag a scheduled card
+  back into the library to unschedule it without deleting it.
 - Each class card shows class name, teacher, enrollment / capacity with a color-coded progress bar
   (green = open, amber = nearly full, red = full)
 - **Drag & drop** a class card to move it to another time slot or room; drop onto another class to swap

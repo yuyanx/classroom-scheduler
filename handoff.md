@@ -84,14 +84,25 @@ All state lives in one object persisted to localStorage:
     mon: ["12:30–2:00", "2:00–3:30", "3:30–5:00"],
     // ... tue, wed, thu, fri
   },
-  classes: [
-    { id, section, slotIdx, room, name, teacher, reg, cap, note }
+  catalog: [
+    { id, name, teacher, reg, cap, note }       // one entry per class/cohort
+  ],
+  placements: [
+    { id, classId, section, slotIdx, room }     // where a class meets
   ],
   nextId: <number>
 }
 ```
 
-A class is addressed by `(section, slotIdx, room)` — there is no grid matrix, just a flat array of class objects that are filtered by those three fields.
+The **catalog** is the master class list (shown in the Class Library tray); **placements** put a
+class into grid cells. A grid cell is addressed by `(section, slotIdx, room)`; the cell's class is
+found by joining `placement.classId` → catalog. A class placed on several days has several
+placements sharing one catalog entry — one roster, so enrollment/name edits apply everywhere.
+A catalog entry with no placements is "unscheduled" and sits in the library tray.
+
+**Migration:** `migrateOld()` in `App.jsx` converts the pre-library localStorage shape
+(`{ classes: [{section, slotIdx, room, name, ...}] }`) on load. Grid entries that were fully
+identical (name/teacher/reg/cap/note) are merged into one catalog entry with multiple placements.
 
 ### Sections / tabs
 
