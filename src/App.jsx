@@ -278,24 +278,19 @@ export default function ClassroomScheduler() {
     });
   };
 
-  // ── Save class (add / edit) ──
-  const saveClass = (form) => {
-    let next;
-    if (editing.isNew) {
-      let nid = data.nextId || 1000;
-      const entry = { id: "k" + nid++, ...form };
-      const newPls =
-        editing.room != null
-          ? [...placements, { id: "p" + nid++, classId: entry.id, section: tab, slotIdx: editing.slotIdx, room: editing.room }]
-          : placements;
-      next = { ...data, catalog: [...catalog, entry], placements: newPls, nextId: nid };
-    } else {
-      next = {
-        ...data,
-        catalog: catalog.map((k) => (k.id === editing.classId ? { ...k, ...form } : k)),
-      };
-    }
-    persist(next);
+  // ── Save class (add / edit) — form fields plus its full meeting-time list ──
+  const saveClass = (form, rows) => {
+    let nid = data.nextId || 1000;
+    const classId = editing.isNew ? "k" + nid++ : editing.classId;
+    const newCatalog = editing.isNew
+      ? [...catalog, { id: classId, ...form }]
+      : catalog.map((k) => (k.id === classId ? { ...k, ...form } : k));
+    const others = placements.filter((p) => p.classId !== classId);
+    const mine = rows.map((r) => ({
+      id: r.id || "p" + nid++,
+      classId, section: r.section, slotIdx: r.slotIdx, room: r.room,
+    }));
+    persist({ ...data, catalog: newCatalog, placements: [...others, ...mine], nextId: nid });
     setEditing(null);
   };
 
@@ -459,7 +454,7 @@ export default function ClassroomScheduler() {
                     }}
                     onDragEnd={() => { setDrag(null); setDragOver(null); }}
                     onClick={() => setEditing({ isNew: false, classId: k.id })}
-                    title="Drag onto the grid to schedule (the same class can be placed on several days) · click to edit"
+                    title="Drag onto the grid to schedule (the same class can be placed on several days) · click to edit details & meeting times"
                     style={{
                       border: "1px solid #d6dad4", borderRadius: 8,
                       background: chips.length ? "#fff" : "#fffbeb",
@@ -650,7 +645,8 @@ export default function ClassroomScheduler() {
           </div>
         </div>
         <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
-          🖱 Define classes in the <b>Class Library</b>, then drag them onto the grid. Place the same class on several
+          🖱 Define classes in the <b>Class Library</b>, then drag them onto the grid — or click any card and set its
+          meeting times right in the dialog. Place the same class on several
           days (e.g. Tue + Thu) — it stays one class with one shared enrollment, so edits update everywhere
           (the Morning tab already means every day). Drag a scheduled card onto another to swap, or back into the
           library to unschedule it. Click any card to edit, use ＋ − to adjust enrollment.
@@ -663,15 +659,32 @@ export default function ClassroomScheduler() {
         <ClassModal
           editing={editing}
           cls={editing.classId ? classOfId(editing.classId) : null}
-          placementCount={editing.classId ? placementsOf(editing.classId).length : 0}
+          initialRows={
+            editing.classId
+              ? placementsOf(editing.classId)
+                  .slice()
+                  .sort((a, b) => sectionIdx(a.section) - sectionIdx(b.section) || a.slotIdx - b.slotIdx)
+                  .map((p) => ({ id: p.id, section: p.section, slotIdx: p.slotIdx, room: p.room }))
+              : editing.room != null
+                ? [{ id: null, section: tab, slotIdx: editing.slotIdx, room: editing.room }]
+                : []
+          }
+          slots={slots}
+          rooms={rooms}
+          defaultSection={tab}
+          occupiedBy={(section, slotIdx, room) => {
+            const p = placements.find(
+              (x) => x.section === section && x.slotIdx === slotIdx && x.room === room && x.classId !== editing.classId
+            );
+            return p ? (classOfId(p.classId)?.name || "another class") : null;
+          }}
           contextLabel={
             editing.room != null
               ? `${SECTIONS.find((s) => s.id === tab)?.label} · ${curSlots[editing.slotIdx]} · Room ${editing.room}`
-              : "Class Library — drag the card onto the grid to schedule it"
+              : "Class Library"
           }
           onSave={saveClass}
           onDelete={() => deleteClass(editing.classId)}
-          onUnschedule={editing.placementId ? () => { removePlacement(editing.placementId); setEditing(null); } : null}
           onClose={() => setEditing(null)}
         />
       )}
@@ -699,59 +712,131 @@ export default function ClassroomScheduler() {
 }
 
 // ───────────────────────── Class edit modal ─────────────────────────
-function ClassModal({ editing, cls, placementCount, contextLabel, onSave, onDelete, onUnschedule, onClose }) {
+function ClassModal({ editing, cls, initialRows, slots, rooms, defaultSection, occupiedBy, contextLabel, onSave, onDelete, onClose }) {
   const c = cls || {};
   const [name, setName] = useState(c.name || "");
   const [teacher, setTeacher] = useState(c.teacher || "");
   const [reg, setReg] = useState(c.reg ?? 0);
   const [cap, setCap] = useState(c.cap ?? 12);
   const [note, setNote] = useState(c.note || "");
+  const [rows, setRows] = useState(initialRows); // meeting times: {id?, section, slotIdx, room}
+
+  // Taken = occupied by another class on the board, or by another row in this dialog
+  const takenBy = (row, room, rowIdx) => {
+    const other = occupiedBy(row.section, row.slotIdx, room);
+    if (other) return other;
+    const dup = rows.some((o, j) => j !== rowIdx && o.section === row.section && o.slotIdx === row.slotIdx && o.room === room);
+    return dup ? "this class" : null;
+  };
+
+  const setRow = (i, patch) => setRows(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const addRow = () => setRows([...rows, { id: null, section: defaultSection, slotIdx: 0, room: "" }]);
+  const delRow = (i) => setRows(rows.filter((_, j) => j !== i));
 
   const submit = () => {
     if (!name.trim()) return;
-    onSave({
-      name: name.trim(),
-      teacher: teacher.trim(),
-      reg: Math.max(0, parseInt(reg, 10) || 0),
-      cap: Math.max(0, parseInt(cap, 10) || 0),
-      note: note.trim(),
-    });
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      if (!r.room) {
+        alert("Pick a room for every meeting time (or remove the row).");
+        return;
+      }
+      const taken = takenBy(r, r.room, i);
+      if (taken) {
+        alert(`Conflict: ${SECTIONS.find((s) => s.id === r.section)?.label} ${(slots[r.section] || [])[r.slotIdx]} Room ${r.room} is taken by ${taken}.`);
+        return;
+      }
+    }
+    onSave(
+      {
+        name: name.trim(),
+        teacher: teacher.trim(),
+        reg: Math.max(0, parseInt(reg, 10) || 0),
+        cap: Math.max(0, parseInt(cap, 10) || 0),
+        note: note.trim(),
+      },
+      rows
+    );
   };
 
   return (
-    <Overlay onClose={onClose}>
+    <Overlay onClose={onClose} wide>
       <h3 style={{ marginTop: 0, marginBottom: 4 }}>{editing.isNew ? "Add class" : "Edit class"}</h3>
       <p style={{ margin: "0 0 16px", fontSize: 13, color: "#64748b" }}>{contextLabel}</p>
-      {!editing.isNew && placementCount > 1 && (
-        <p style={{ margin: "-10px 0 14px", fontSize: 12, color: "#0f766e" }}>
-          ⇄ Scheduled in {placementCount} slots — changes here apply to all of them.
-        </p>
-      )}
-      <Field label="Class name *">
-        <input style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. SAT Math" autoFocus />
-      </Field>
-      <Field label="Teacher">
-        <input style={inputStyle} value={teacher} onChange={(e) => setTeacher(e.target.value)} placeholder="e.g. Herrick" />
-      </Field>
-      <div style={{ display: "flex", gap: 12 }}>
-        <Field label="Registered" style={{ flex: 1 }}>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        <Field label="Class name *" style={{ flex: 2, minWidth: 180 }}>
+          <input style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. SAT Math" autoFocus />
+        </Field>
+        <Field label="Teacher" style={{ flex: 1.4, minWidth: 130 }}>
+          <input style={inputStyle} value={teacher} onChange={(e) => setTeacher(e.target.value)} placeholder="e.g. Herrick" />
+        </Field>
+        <Field label="Registered" style={{ flex: 1, minWidth: 80 }}>
           <input style={inputStyle} type="number" min="0" value={reg} onChange={(e) => setReg(e.target.value)} />
         </Field>
-        <Field label="Capacity" style={{ flex: 1 }}>
+        <Field label="Capacity" style={{ flex: 1, minWidth: 80 }}>
           <input style={inputStyle} type="number" min="0" value={cap} onChange={(e) => setCap(e.target.value)} />
         </Field>
       </div>
       <Field label="Note / actual time (optional)">
         <input style={inputStyle} value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. 2:30–4:00" />
       </Field>
+
+      <div style={{ margin: "6px 0 8px", fontSize: 13, color: "#475569", fontWeight: 600 }}>
+        Schedule
+        {rows.length > 0 && (
+          <span style={{ fontWeight: 400, color: "#64748b" }}>
+            {" "}— meets {rows.length}×/week{rows.length > 1 ? " (one shared roster)" : ""}
+          </span>
+        )}
+      </div>
+      {rows.map((r, i) => (
+        <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
+          <select
+            style={{ ...selStyle, flex: 1.2 }}
+            value={r.section}
+            onChange={(e) => setRow(i, { section: e.target.value, slotIdx: 0, room: "" })}
+          >
+            {SECTIONS.map((s) => (
+              <option key={s.id} value={s.id}>{s.label}</option>
+            ))}
+          </select>
+          <select
+            style={{ ...selStyle, flex: 1.2 }}
+            value={r.slotIdx}
+            onChange={(e) => setRow(i, { slotIdx: Number(e.target.value) })}
+          >
+            {(slots[r.section] || []).map((sl, idx) => (
+              <option key={idx} value={idx}>{sl}</option>
+            ))}
+          </select>
+          <select
+            style={{ ...selStyle, flex: 1.1 }}
+            value={r.room}
+            onChange={(e) => setRow(i, { room: e.target.value })}
+          >
+            <option value="">Room…</option>
+            {(rooms[roomGroup(r.section)] || []).map((rm) => {
+              const taken = takenBy(r, rm, i);
+              return (
+                <option key={rm} value={rm} disabled={!!taken}>
+                  {"Room " + rm + (taken ? " — " + taken : "")}
+                </option>
+              );
+            })}
+          </select>
+          <button style={{ ...miniBtn, color: "#b91c1c", flexShrink: 0 }} onClick={() => delRow(i)} title="Remove this meeting time">✕</button>
+        </div>
+      ))}
+      {rows.length === 0 && (
+        <div style={{ fontSize: 12, color: "#b45309", marginBottom: 6 }}>
+          Not scheduled — the class stays in the library tray (you can also drag it onto the grid later).
+        </div>
+      )}
+      <button style={{ ...btnSecondary, fontSize: 13, padding: "6px 12px" }} onClick={addRow}>＋ Add meeting time</button>
+
       <div style={{ display: "flex", gap: 10, marginTop: 18, flexWrap: "wrap" }}>
         {!editing.isNew && (
           <button style={{ ...btnSecondary, color: "#b91c1c", borderColor: "#fca5a5" }} onClick={onDelete}>Delete class</button>
-        )}
-        {onUnschedule && (
-          <button style={btnSecondary} onClick={onUnschedule} title="Remove from this slot only — the class stays in the library">
-            Remove from slot
-          </button>
         )}
         <div style={{ marginLeft: "auto", display: "flex", gap: 10 }}>
           <button style={btnSecondary} onClick={onClose}>Cancel</button>
@@ -908,6 +993,10 @@ const tdStyle = {
 const inputStyle = {
   width: "100%", boxSizing: "border-box", padding: "8px 10px", fontSize: 14,
   border: "1px solid #cbd5d1", borderRadius: 8, outline: "none",
+};
+const selStyle = {
+  boxSizing: "border-box", padding: "7px 8px", fontSize: 13, minWidth: 0,
+  border: "1px solid #cbd5d1", borderRadius: 8, outline: "none", background: "#fff", color: "#1e293b",
 };
 const chipStyle = {
   fontSize: 11, background: "#e6f4f3", color: "#0f766e", borderRadius: 4,
