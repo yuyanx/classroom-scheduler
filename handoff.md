@@ -50,7 +50,7 @@ classroom-scheduler/
 ```
 
 Components inside `App.jsx` (top to bottom): default data + `migrateOld()` →
-`ClassroomScheduler` (main: library tray, tabs, grid, all state ops) →
+`ClassroomScheduler` (main: left library sidebar, tabs, grid, all state ops) →
 `ClassModal` (class fields + schedule-rows editor) → `RoomModal` → `Overlay` / `Field` → style objects.
 
 ---
@@ -113,12 +113,19 @@ identical (name/teacher/reg/cap/note) are merged into one catalog entry with mul
 
 Six tabs: `morning` (daily AM), then `mon`–`fri` (afternoon PM). Morning uses `rooms.morning`; all afternoon tabs share `rooms.afternoon`. A class placed in `morning` meets every day by convention; a PM class meeting twice a week simply has placements on two day tabs.
 
+### Layout
+
+The Class Library is a left sidebar (`aside`) inside the main content row. The sidebar has a fixed
+width of 300px and its card list scrolls independently with `overflowY: auto`; the schedule tabs and
+grid live in the flexible right pane. Keep drag-and-drop handlers attached to the sidebar list so
+dropping a scheduled grid card there still unschedules it without deleting the catalog entry.
+
 ### Two ways to schedule a class
 
 1. **Drag & drop.** Drag payloads are strings in `dataTransfer` (+ mirrored in `drag` state):
    `"lib:<classId>"` from a library card — dropping on an *empty* grid cell creates a placement
    (occupied cells reject it); `"pl:<placementId>"` from a grid card — dropping on a cell
-   moves it (occupied target = swap), dropping back onto the library tray removes the
+   moves it (occupied target = swap), dropping back onto the library sidebar removes the
    placement (unschedules without deleting).
 2. **Schedule rows in `ClassModal`.** The dialog holds a local `rows` state
    (`{id?, section, slotIdx, room}` per meeting time). Room options are disabled when taken
@@ -147,6 +154,8 @@ Six tabs: `morning` (daily AM), then `mon`–`fri` (afternoon PM). Morning uses 
   multi-day placements with shared roster; automatic localStorage migration.
 - `6bb8021` — **schedule editor in the class dialog**: meeting times as day/slot/room dropdown
   rows with occupied-room disabling and conflict validation on save.
+- 2026-06-10 — **left-side Class Library**: moved the Class Library from a horizontal tray above
+  the grid into a 300px left sidebar with an independently scrollable class list.
 
 ---
 

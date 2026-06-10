@@ -402,131 +402,143 @@ export default function ClassroomScheduler() {
         </div>
       )}
 
-      {/* Class Library */}
-      <section style={{ maxWidth: 1320, margin: "0 auto", padding: "16px 24px 0" }}>
-        <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: 10 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderBottom: libOpen ? "1px solid #eceeea" : "none", flexWrap: "wrap" }}>
-            <button
-              onClick={() => setLibOpen((o) => !o)}
-              style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 14, fontWeight: 700, color: "#123c3a", padding: 0 }}
-            >
-              {libOpen ? "▾" : "▸"} Class Library
-            </button>
-            <span style={{ fontSize: 12, color: "#64748b" }}>
-              {catalog.length} classes · {unscheduledCount} unscheduled
-            </span>
-            <input
-              style={{ ...inputStyle, width: 190, padding: "6px 10px", marginLeft: "auto", fontSize: 13 }}
-              placeholder="Search class or teacher…"
-              value={libQuery}
-              onChange={(e) => setLibQuery(e.target.value)}
-            />
-            <button style={{ ...btnPrimary, padding: "7px 14px", fontSize: 13 }} onClick={() => setEditing({ isNew: true })}>
-              ＋ New class
-            </button>
-          </div>
-          {libOpen && (
-            <div
-              {...trayHandlers}
-              style={{
-                padding: "10px 12px", display: "flex", flexWrap: "wrap", gap: 8, minHeight: 50, alignItems: "flex-start",
-                background: dragOver === "tray" ? "#fff7ed" : "transparent",
-                outline: drag?.type === "pl" ? "2px dashed #d97706" : "none",
-                outlineOffset: -5, borderRadius: "0 0 10px 10px",
-              }}
-            >
-              {drag?.type === "pl" && (
-                <span style={{ fontSize: 12, color: "#b45309", fontWeight: 600, alignSelf: "center" }}>
-                  ⤓ Release here to unschedule
+      <div style={{ maxWidth: 1500, margin: "0 auto", padding: "16px 24px 40px", display: "flex", gap: 16, alignItems: "flex-start" }}>
+        {/* Class Library */}
+        <aside style={{ flex: "0 0 300px", width: 300, position: "sticky", top: 16, alignSelf: "flex-start" }}>
+          <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: 10, height: "calc(100vh - 112px)", minHeight: 420, maxHeight: 780, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            <div style={{ padding: "12px 14px", borderBottom: libOpen ? "1px solid #eceeea" : "none" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <button
+                  onClick={() => setLibOpen((o) => !o)}
+                  style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 14, fontWeight: 700, color: "#123c3a", padding: 0, textAlign: "left" }}
+                >
+                  {libOpen ? "▾" : "▸"} Class Library
+                </button>
+                <span style={{ marginLeft: "auto", fontSize: 12, color: "#64748b", whiteSpace: "nowrap" }}>
+                  {catalog.length} total
                 </span>
-              )}
-              {libList.map((k) => {
-                const chips = placementChips(k.id);
-                const col = ratioColor(k.reg, k.cap);
-                return (
-                  <div
-                    key={k.id}
-                    draggable
-                    onDragStart={(e) => {
-                      e.dataTransfer.setData("text/plain", "lib:" + k.id);
-                      e.dataTransfer.effectAllowed = "copyMove";
-                      setDrag({ type: "lib", id: k.id });
-                    }}
-                    onDragEnd={() => { setDrag(null); setDragOver(null); }}
-                    onClick={() => setEditing({ isNew: false, classId: k.id })}
-                    title="Drag onto the grid to schedule (the same class can be placed on several days) · click to edit details & meeting times"
-                    style={{
-                      border: "1px solid #d6dad4", borderRadius: 8,
-                      background: chips.length ? "#fff" : "#fffbeb",
-                      padding: "7px 9px", width: 185, cursor: "grab",
-                      opacity: drag?.type === "lib" && drag.id === k.id ? 0.35 : 1,
-                      display: "flex", flexDirection: "column", gap: 4,
-                    }}
-                  >
-                    <div style={{ display: "flex", alignItems: "flex-start", gap: 4 }}>
-                      <div style={{ fontWeight: 700, fontSize: 13, lineHeight: 1.25, flex: 1 }}>{k.name}</div>
-                      <button
-                        style={miniBtn} title="Duplicate (for a second cohort of the same course)"
-                        onClick={(e) => { e.stopPropagation(); duplicateClass(k); }}
-                      >⧉</button>
-                      <button
-                        style={{ ...miniBtn, color: "#b91c1c" }} title="Delete class"
-                        onClick={(e) => { e.stopPropagation(); deleteClass(k.id); }}
-                      >✕</button>
-                    </div>
-                    <div style={{ fontSize: 12, color: "#475569" }}>
-                      {k.teacher || <i style={{ color: "#b45309" }}>Teacher TBD</i>}
-                      <b style={{ marginLeft: 8, color: col.text }}>{k.reg} / {k.cap}</b>
-                    </div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                      {chips.length === 0 ? (
-                        <span style={{ ...chipStyle, background: "#fef3c7", color: "#b45309" }}>unscheduled</span>
-                      ) : (
-                        chips.map((c) => <span key={c.id} style={chipStyle}>{c.label}</span>)
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-              {libList.length === 0 && (
-                <span style={{ fontSize: 13, color: "#94a3b8", alignSelf: "center" }}>
-                  {catalog.length === 0 ? "No classes yet — click ＋ New class." : "No classes match the search."}
-                </span>
+              </div>
+              <div style={{ marginTop: 3, fontSize: 12, color: "#64748b" }}>
+                {unscheduledCount} unscheduled
+              </div>
+              {libOpen && (
+                <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                  <input
+                    style={{ ...inputStyle, minWidth: 0, flex: 1, padding: "6px 10px", fontSize: 13 }}
+                    placeholder="Search class or teacher…"
+                    value={libQuery}
+                    onChange={(e) => setLibQuery(e.target.value)}
+                  />
+                  <button style={{ ...btnPrimary, padding: "7px 11px", fontSize: 13, flexShrink: 0 }} onClick={() => setEditing({ isNew: true })}>
+                    ＋ New
+                  </button>
+                </div>
               )}
             </div>
-          )}
-        </div>
-      </section>
+            {libOpen && (
+              <div
+                {...trayHandlers}
+                style={{
+                  padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8, minHeight: 0, flex: 1, alignItems: "stretch",
+                  overflowY: "auto", overscrollBehavior: "contain",
+                  background: dragOver === "tray" ? "#fff7ed" : "transparent",
+                  outline: drag?.type === "pl" ? "2px dashed #d97706" : "none",
+                  outlineOffset: -5, borderRadius: "0 0 10px 10px",
+                }}
+              >
+                {drag?.type === "pl" && (
+                  <span style={{ fontSize: 12, color: "#b45309", fontWeight: 600 }}>
+                    ⤓ Release here to unschedule
+                  </span>
+                )}
+                {libList.map((k) => {
+                  const chips = placementChips(k.id);
+                  const col = ratioColor(k.reg, k.cap);
+                  return (
+                    <div
+                      key={k.id}
+                      draggable
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData("text/plain", "lib:" + k.id);
+                        e.dataTransfer.effectAllowed = "copyMove";
+                        setDrag({ type: "lib", id: k.id });
+                      }}
+                      onDragEnd={() => { setDrag(null); setDragOver(null); }}
+                      onClick={() => setEditing({ isNew: false, classId: k.id })}
+                      title="Drag onto the grid to schedule (the same class can be placed on several days) · click to edit details & meeting times"
+                      style={{
+                        border: "1px solid #d6dad4", borderRadius: 8,
+                        background: chips.length ? "#fff" : "#fffbeb",
+                        padding: "7px 9px", width: "100%", boxSizing: "border-box", cursor: "grab",
+                        opacity: drag?.type === "lib" && drag.id === k.id ? 0.35 : 1,
+                        display: "flex", flexDirection: "column", gap: 4,
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "flex-start", gap: 4 }}>
+                        <div style={{ fontWeight: 700, fontSize: 13, lineHeight: 1.25, flex: 1 }}>{k.name}</div>
+                        <button
+                          style={miniBtn} title="Duplicate (for a second cohort of the same course)"
+                          onClick={(e) => { e.stopPropagation(); duplicateClass(k); }}
+                        >⧉</button>
+                        <button
+                          style={{ ...miniBtn, color: "#b91c1c" }} title="Delete class"
+                          onClick={(e) => { e.stopPropagation(); deleteClass(k.id); }}
+                        >✕</button>
+                      </div>
+                      <div style={{ fontSize: 12, color: "#475569" }}>
+                        {k.teacher || <i style={{ color: "#b45309" }}>Teacher TBD</i>}
+                        <b style={{ marginLeft: 8, color: col.text }}>{k.reg} / {k.cap}</b>
+                      </div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                        {chips.length === 0 ? (
+                          <span style={{ ...chipStyle, background: "#fef3c7", color: "#b45309" }}>unscheduled</span>
+                        ) : (
+                          chips.map((c) => <span key={c.id} style={chipStyle}>{c.label}</span>)
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+                {libList.length === 0 && (
+                  <span style={{ fontSize: 13, color: "#94a3b8" }}>
+                    {catalog.length === 0 ? "No classes yet — click ＋ New." : "No classes match the search."}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        </aside>
 
-      {/* Tabs */}
-      <nav style={{ maxWidth: 1320, margin: "0 auto", padding: "16px 24px 0", display: "flex", gap: 6, flexWrap: "wrap" }}>
-        {SECTIONS.map((s) => (
-          <button
-            key={s.id}
-            onClick={() => setTab(s.id)}
-            style={{
-              padding: "8px 18px",
-              borderRadius: "10px 10px 0 0",
-              border: "1px solid #d6dad4",
-              borderBottom: "none",
-              cursor: "pointer",
-              fontSize: 14,
-              fontWeight: tab === s.id ? 700 : 400,
-              background: tab === s.id ? "#fff" : "#e8eae6",
-              color: tab === s.id ? "#123c3a" : "#64748b",
-            }}
-          >
-            {s.label}
-          </button>
-        ))}
-        <span style={{ marginLeft: "auto", alignSelf: "center", fontSize: 13, color: "#64748b" }}>
-          {tabPls.length} classes · {tabReg} students in this view
-        </span>
-      </nav>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {/* Tabs */}
+          <nav style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {SECTIONS.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => setTab(s.id)}
+                style={{
+                  padding: "8px 18px",
+                  borderRadius: "10px 10px 0 0",
+                  border: "1px solid #d6dad4",
+                  borderBottom: "none",
+                  cursor: "pointer",
+                  fontSize: 14,
+                  fontWeight: tab === s.id ? 700 : 400,
+                  background: tab === s.id ? "#fff" : "#e8eae6",
+                  color: tab === s.id ? "#123c3a" : "#64748b",
+                }}
+              >
+                {s.label}
+              </button>
+            ))}
+            <span style={{ marginLeft: "auto", alignSelf: "center", fontSize: 13, color: "#64748b" }}>
+              {tabPls.length} classes · {tabReg} students in this view
+            </span>
+          </nav>
 
-      {/* Schedule grid */}
-      <main style={{ maxWidth: 1320, margin: "0 auto", padding: "0 24px 40px" }}>
-        <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto" }}>
+          {/* Schedule grid */}
+          <main>
+            <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto" }}>
           <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 140 + curRooms.length * 145 }}>
             <thead>
               <tr>
@@ -643,16 +655,18 @@ export default function ClassroomScheduler() {
           <div style={{ padding: "10px 14px", borderTop: "1px solid #eceeea" }}>
             <button onClick={addSlot} style={{ ...btnGhost, color: "#123c3a", borderColor: "#cbd5d1" }}>＋ Add time slot</button>
           </div>
+            </div>
+            <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
+              🖱 Define classes in the <b>Class Library</b>, then drag them onto the grid — or click any card and set its
+              meeting times right in the dialog. Place the same class on several
+              days (e.g. Tue + Thu) — it stays one class with one shared enrollment, so edits update everywhere
+              (the Morning tab already means every day). Drag a scheduled card onto another to swap, or back into the
+              library to unschedule it. Click any card to edit, use ＋ − to adjust enrollment.
+              Green = open, amber = nearly full, red = full. Data is saved in this browser.
+            </p>
+          </main>
         </div>
-        <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
-          🖱 Define classes in the <b>Class Library</b>, then drag them onto the grid — or click any card and set its
-          meeting times right in the dialog. Place the same class on several
-          days (e.g. Tue + Thu) — it stays one class with one shared enrollment, so edits update everywhere
-          (the Morning tab already means every day). Drag a scheduled card onto another to swap, or back into the
-          library to unschedule it. Click any card to edit, use ＋ − to adjust enrollment.
-          Green = open, amber = nearly full, red = full. Data is saved in this browser.
-        </p>
-      </main>
+      </div>
 
       {/* Class edit modal */}
       {editing && (
