@@ -2,7 +2,7 @@
 
 ## What this is
 
-**Premier Plus · Classroom Scheduler** — an interactive scheduling board for the 2026 Summer program at Jericho. Staff can view and edit a weekly class grid (rooms × time slots), drag-and-drop classes, adjust enrollment counts, and manage rooms.
+**Premier Plus · Classroom Scheduler** — an interactive scheduling board for the 2026 Summer program at Jericho. Staff define classes in a **Class Library**, then schedule them onto a weekly grid (rooms × time slots) either by drag-and-drop or by editing meeting times in the class dialog. Enrollment counts, rooms, and time slots are all editable in place.
 
 No backend. All state is stored in the visitor's browser (`localStorage`, key: `premier-classroom-schedule`). Two users opening the site see independent copies.
 
@@ -39,14 +39,19 @@ No TypeScript, no router, no state management library.
 
 ```
 classroom-scheduler/
-├── index.html          # Page shell — mounts #root, loads app.js
-├── app.js              # Committed production bundle (do not hand-edit)
-├── package.json        # Dependencies: react, react-dom, esbuild
+├── index.html            # Page shell — mounts #root, loads app.js
+├── app.js                # Committed production bundle (do not hand-edit)
+├── package.json          # Dependencies: react, react-dom, esbuild
 ├── src/
-│   ├── main.jsx        # Entry point — ReactDOM.createRoot → <ClassroomScheduler />
-│   └── App.jsx         # Entire application (single file, ~700 lines)
-└── handoff.md          # This file
+│   ├── main.jsx          # Entry point — ReactDOM.createRoot → <ClassroomScheduler />
+│   └── App.jsx           # Entire application (single file, ~1000 lines)
+├── .claude/launch.json   # Local preview server config (python3 http.server on :4173)
+└── handoff.md            # This file
 ```
+
+Components inside `App.jsx` (top to bottom): default data + `migrateOld()` →
+`ClassroomScheduler` (main: library tray, tabs, grid, all state ops) →
+`ClassModal` (class fields + schedule-rows editor) → `RoomModal` → `Overlay` / `Field` → style objects.
 
 ---
 
@@ -106,18 +111,42 @@ identical (name/teacher/reg/cap/note) are merged into one catalog entry with mul
 
 ### Sections / tabs
 
-Six tabs: `morning` (daily AM), then `mon`–`fri` (afternoon PM). Morning uses `rooms.morning`; all afternoon tabs share `rooms.afternoon`.
+Six tabs: `morning` (daily AM), then `mon`–`fri` (afternoon PM). Morning uses `rooms.morning`; all afternoon tabs share `rooms.afternoon`. A class placed in `morning` meets every day by convention; a PM class meeting twice a week simply has placements on two day tabs.
+
+### Two ways to schedule a class
+
+1. **Drag & drop.** Drag payloads are strings in `dataTransfer` (+ mirrored in `drag` state):
+   `"lib:<classId>"` from a library card — dropping on an *empty* grid cell creates a placement
+   (occupied cells reject it); `"pl:<placementId>"` from a grid card — dropping on a cell
+   moves it (occupied target = swap), dropping back onto the library tray removes the
+   placement (unschedules without deleting).
+2. **Schedule rows in `ClassModal`.** The dialog holds a local `rows` state
+   (`{id?, section, slotIdx, room}` per meeting time). Room options are disabled when taken
+   (by another class on the board, or another row in the same dialog); `submit()` re-validates
+   and alerts on conflict. On save, `saveClass(form, rows)` rebuilds the class's placements:
+   rows keep existing placement ids where present, new rows get fresh ids.
 
 ### Persistence
 
-`loadData()` / `saveData()` in `App.jsx` (lines 100–115) are the only places that touch localStorage. Swapping these two functions is the complete scope of adding a backend.
+`loadData()` / `saveData()` near the top of `App.jsx` are the only places that touch localStorage. Swapping these two functions is the complete scope of adding a backend.
 
 ### Enrollment color logic
 
-`ratioColor(reg, cap)` (line 118) returns `{bar, text, bg}` colors:
+`ratioColor(reg, cap)` returns `{bar, text, bg}` colors:
 - green (`#0d7a72`) — below 75 % full
 - amber (`#d97706`) — 75–99 % full
 - red (`#dc2626`) — at or over capacity
+
+---
+
+## Change log
+
+- `f120258` — initial commit: grid-only scheduler (flat `classes` array).
+- `3cefdd3` — **Class Library**: data model split into `catalog` + `placements`; library tray
+  with search/duplicate/delete; drag lib→grid to schedule, grid→lib to unschedule; linked
+  multi-day placements with shared roster; automatic localStorage migration.
+- `6bb8021` — **schedule editor in the class dialog**: meeting times as day/slot/room dropdown
+  rows with occupied-room disabling and conflict validation on save.
 
 ---
 
@@ -125,7 +154,7 @@ Six tabs: `morning` (daily AM), then `mon`–`fri` (afternoon PM). Morning uses 
 
 - **Backend / multi-user sync** — replace `loadData` / `saveData` with Supabase or Firebase realtime calls. The rest of the app is unaffected.
 - **TypeScript** — the data model is well-defined; adding types to `App.jsx` is a self-contained change.
-- **Split into components** — `App.jsx` is a single ~700-line file. `ClassModal`, `RoomModal`, and `Overlay` are already split into functions at the bottom; moving them to separate files under `src/components/` is straightforward.
+- **Split into components** — `App.jsx` is a single ~1000-line file. `ClassModal`, `RoomModal`, and `Overlay` are already split into functions at the bottom; moving them to separate files under `src/components/` is straightforward.
 - **Build pipeline** — currently `app.js` is committed. Adding a `vercel.json` with a `buildCommand` would let Vercel run esbuild on deploy instead, removing the committed bundle.
 - **Mobile layout** — the grid uses a `<table>` with `overflowX: auto`. A card-based layout for small screens would improve mobile usability.
 - **Export / print view** — a read-only printable summary of the week's schedule.
