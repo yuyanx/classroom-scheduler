@@ -99,11 +99,11 @@ All state lives in one object persisted to localStorage:
 }
 ```
 
-The **catalog** is the master class list (shown in the Class Library tray); **placements** put a
+The **catalog** is the master class list (shown in the Class Library sidebar); **placements** put a
 class into grid cells. A grid cell is addressed by `(section, slotIdx, room)`; the cell's class is
 found by joining `placement.classId` → catalog. A class placed on several days has several
 placements sharing one catalog entry — one roster, so enrollment/name edits apply everywhere.
-A catalog entry with no placements is "unscheduled" and sits in the library tray.
+A catalog entry with no placements is "unscheduled" and sits in the library sidebar.
 
 **Migration:** `migrateOld()` in `App.jsx` converts the pre-library localStorage shape
 (`{ classes: [{section, slotIdx, room, name, ...}] }`) on load. Grid entries that were fully
@@ -131,7 +131,17 @@ dropping a scheduled grid card there still unschedules it without deleting the c
    (`{id?, section, slotIdx, room}` per meeting time). Room options are disabled when taken
    (by another class on the board, or another row in the same dialog); `submit()` re-validates
    and alerts on conflict. On save, `saveClass(form, rows)` rebuilds the class's placements:
-   rows keep existing placement ids where present, new rows get fresh ids.
+   rows keep existing placement ids where present, new rows get fresh ids. Opening a class from
+   the Class Library and changing its schedule rows uses this same path, so the calendar grid updates
+   immediately after save.
+
+### Teacher conflict warnings
+
+`teacherKey()` normalizes teacher names and ignores blank / `TBD` / `N/A` values. `teacherConflictsAt()`
+checks for another placement with the same normalized teacher in the same `(section, slotIdx)`.
+Teacher conflicts are non-blocking warnings: the class modal marks the affected schedule row before
+save, grid cards get a red border plus a "Teacher conflict" badge, and the sidebar card also shows a
+warning when any of that class's placements conflict. Room conflicts remain hard blockers.
 
 ### Persistence
 
@@ -156,6 +166,8 @@ dropping a scheduled grid card there still unschedules it without deleting the c
   rows with occupied-room disabling and conflict validation on save.
 - 2026-06-10 — **left-side Class Library**: moved the Class Library from a horizontal tray above
   the grid into a 300px left sidebar with an independently scrollable class list.
+- 2026-06-10 — **teacher conflict warnings**: same-teacher / same-time overlaps are marked in the
+  class schedule editor, on affected calendar cards, and on affected sidebar cards.
 
 ---
 

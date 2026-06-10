@@ -156,6 +156,10 @@ const ratioColor = (reg, cap) => {
 };
 
 const slotShort = (label) => ((label || "").split(/[–—-]/)[0].trim() || label || "");
+const teacherKey = (teacher) => {
+  const key = (teacher || "").trim().toLowerCase();
+  return key === "tbd" || key === "n/a" || key === "na" ? "" : key;
+};
 
 // ───────────────────────── Main component ─────────────────────────
 export default function ClassroomScheduler() {
@@ -183,6 +187,25 @@ export default function ClassroomScheduler() {
   const placementAt = (slotIdx, room) =>
     placements.find((p) => p.section === tab && p.slotIdx === slotIdx && p.room === room);
   const placementsOf = (classId) => placements.filter((p) => p.classId === classId);
+  const teacherConflictsAt = (section, slotIdx, teacher, opts = {}) => {
+    const key = teacherKey(teacher);
+    if (!key) return [];
+    return placements
+      .filter((p) =>
+        p.section === section &&
+        p.slotIdx === slotIdx &&
+        p.id !== opts.excludePlacementId &&
+        p.classId !== opts.excludeClassId
+      )
+      .map((p) => ({ placement: p, cls: classOfId(p.classId) }))
+      .filter(({ cls }) => teacherKey(cls?.teacher) === key);
+  };
+  const teacherConflictsForPlacement = (pl) => {
+    const cls = classOfId(pl.classId);
+    return teacherConflictsAt(pl.section, pl.slotIdx, cls?.teacher, { excludePlacementId: pl.id });
+  };
+  const teacherConflictLabels = (items) =>
+    [...new Set(items.map(({ placement, cls }) => `${cls?.name || "Class"} in Room ${placement.room}`))];
 
   const totalReg = catalog.reduce((s, k) => s + (k.reg || 0), 0);
   const tabPls = placements.filter((p) => p.section === tab);
@@ -454,6 +477,9 @@ export default function ClassroomScheduler() {
                 {libList.map((k) => {
                   const chips = placementChips(k.id);
                   const col = ratioColor(k.reg, k.cap);
+                  const teacherConflicts = teacherConflictLabels(
+                    placementsOf(k.id).flatMap((p) => teacherConflictsForPlacement(p))
+                  );
                   return (
                     <div
                       key={k.id}
@@ -489,6 +515,14 @@ export default function ClassroomScheduler() {
                         {k.teacher || <i style={{ color: "#b45309" }}>Teacher TBD</i>}
                         <b style={{ marginLeft: 8, color: col.text }}>{k.reg} / {k.cap}</b>
                       </div>
+                      {teacherConflicts.length > 0 && (
+                        <div
+                          style={teacherWarningStyle}
+                          title={"Same teacher also assigned to " + teacherConflicts.join(", ")}
+                        >
+                          Teacher conflict
+                        </div>
+                      )}
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
                         {chips.length === 0 ? (
                           <span style={{ ...chipStyle, background: "#fef3c7", color: "#b45309" }}>unscheduled</span>
@@ -589,6 +623,8 @@ export default function ClassroomScheduler() {
                     }
                     const col = ratioColor(cls.reg, cls.cap);
                     const pct = cls.cap ? Math.min(100, Math.round((cls.reg / cls.cap) * 100)) : 0;
+                    const teacherConflicts = teacherConflictLabels(teacherConflictsForPlacement(pl));
+                    const hasTeacherConflict = teacherConflicts.length > 0;
                     const otherDays = [...new Set(
                       placementsOf(cls.id).filter((p) => p.id !== pl.id).map((p) => sectionShort(p.section))
                     )];
@@ -603,12 +639,12 @@ export default function ClassroomScheduler() {
                           }}
                           onDragEnd={() => { setDrag(null); setDragOver(null); }}
                           style={{
-                            border: isOver && drag?.id !== pl.id ? "2px solid #0d7a72" : "1px solid #d6dad4",
+                            border: isOver && drag?.id !== pl.id ? "2px solid #0d7a72" : hasTeacherConflict ? "2px solid #dc2626" : "1px solid #d6dad4",
                             borderRadius: 8, background: col.bg,
                             padding: "8px 10px", minHeight: 86, display: "flex", flexDirection: "column", gap: 4,
                             opacity: drag?.type === "pl" && drag.id === pl.id ? 0.35 : 1,
                             cursor: "grab",
-                            boxShadow: isOver && drag?.id !== pl.id ? "0 0 0 3px rgba(13,122,114,.15)" : "none",
+                            boxShadow: isOver && drag?.id !== pl.id ? "0 0 0 3px rgba(13,122,114,.15)" : hasTeacherConflict ? "0 0 0 3px rgba(220,38,38,.12)" : "none",
                             transition: "opacity .15s, box-shadow .15s",
                           }}
                           title={isOver && drag?.id !== pl.id ? "Release to swap with this class" : "Drag to move (or into the library to unschedule) · click text to edit"}
@@ -623,6 +659,14 @@ export default function ClassroomScheduler() {
                               {cls.teacher || <i style={{ color: "#b45309" }}>Teacher TBD</i>}
                               {cls.note && <span style={{ marginLeft: 6, color: "#7c3aed" }}>⏱ {cls.note}</span>}
                             </div>
+                            {hasTeacherConflict && (
+                              <div
+                                style={teacherWarningStyle}
+                                title={"Same teacher also assigned to " + teacherConflicts.join(", ")}
+                              >
+                                Teacher conflict
+                              </div>
+                            )}
                             {otherDays.length > 0 && (
                               <div style={{ fontSize: 11, color: "#0f766e", marginTop: 2 }} title="Same class (one roster) also meets on these days">
                                 ⇄ also {otherDays.join(" · ")}
@@ -692,6 +736,9 @@ export default function ClassroomScheduler() {
             );
             return p ? (classOfId(p.classId)?.name || "another class") : null;
           }}
+          teacherConflictsAt={(section, slotIdx, teacher) =>
+            teacherConflictLabels(teacherConflictsAt(section, slotIdx, teacher, { excludeClassId: editing.classId }))
+          }
           contextLabel={
             editing.room != null
               ? `${SECTIONS.find((s) => s.id === tab)?.label} · ${curSlots[editing.slotIdx]} · Room ${editing.room}`
@@ -726,7 +773,7 @@ export default function ClassroomScheduler() {
 }
 
 // ───────────────────────── Class edit modal ─────────────────────────
-function ClassModal({ editing, cls, initialRows, slots, rooms, defaultSection, occupiedBy, contextLabel, onSave, onDelete, onClose }) {
+function ClassModal({ editing, cls, initialRows, slots, rooms, defaultSection, occupiedBy, teacherConflictsAt, contextLabel, onSave, onDelete, onClose }) {
   const c = cls || {};
   const [name, setName] = useState(c.name || "");
   const [teacher, setTeacher] = useState(c.teacher || "");
@@ -741,6 +788,13 @@ function ClassModal({ editing, cls, initialRows, slots, rooms, defaultSection, o
     if (other) return other;
     const dup = rows.some((o, j) => j !== rowIdx && o.section === row.section && o.slotIdx === row.slotIdx && o.room === room);
     return dup ? "this class" : null;
+  };
+  const teacherConflictsForRow = (row, rowIdx) => {
+    if (!teacherKey(teacher)) return [];
+    const draftConflict = rows.some((o, j) => j !== rowIdx && o.section === row.section && o.slotIdx === row.slotIdx)
+      ? ["another meeting row for this class"]
+      : [];
+    return [...new Set([...draftConflict, ...teacherConflictsAt(row.section, row.slotIdx, teacher)])];
   };
 
   const setRow = (i, patch) => setRows(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
@@ -803,47 +857,57 @@ function ClassModal({ editing, cls, initialRows, slots, rooms, defaultSection, o
           </span>
         )}
       </div>
-      {rows.map((r, i) => (
-        <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
-          <select
-            style={{ ...selStyle, flex: 1.2 }}
-            value={r.section}
-            onChange={(e) => setRow(i, { section: e.target.value, slotIdx: 0, room: "" })}
-          >
-            {SECTIONS.map((s) => (
-              <option key={s.id} value={s.id}>{s.label}</option>
-            ))}
-          </select>
-          <select
-            style={{ ...selStyle, flex: 1.2 }}
-            value={r.slotIdx}
-            onChange={(e) => setRow(i, { slotIdx: Number(e.target.value) })}
-          >
-            {(slots[r.section] || []).map((sl, idx) => (
-              <option key={idx} value={idx}>{sl}</option>
-            ))}
-          </select>
-          <select
-            style={{ ...selStyle, flex: 1.1 }}
-            value={r.room}
-            onChange={(e) => setRow(i, { room: e.target.value })}
-          >
-            <option value="">Room…</option>
-            {(rooms[roomGroup(r.section)] || []).map((rm) => {
-              const taken = takenBy(r, rm, i);
-              return (
-                <option key={rm} value={rm} disabled={!!taken}>
-                  {"Room " + rm + (taken ? " — " + taken : "")}
-                </option>
-              );
-            })}
-          </select>
-          <button style={{ ...miniBtn, color: "#b91c1c", flexShrink: 0 }} onClick={() => delRow(i)} title="Remove this meeting time">✕</button>
-        </div>
-      ))}
+      {rows.map((r, i) => {
+        const teacherConflicts = teacherConflictsForRow(r, i);
+        return (
+          <div key={i} style={{ marginBottom: 8 }}>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <select
+                style={{ ...selStyle, flex: 1.2 }}
+                value={r.section}
+                onChange={(e) => setRow(i, { section: e.target.value, slotIdx: 0, room: "" })}
+              >
+                {SECTIONS.map((s) => (
+                  <option key={s.id} value={s.id}>{s.label}</option>
+                ))}
+              </select>
+              <select
+                style={{ ...selStyle, flex: 1.2 }}
+                value={r.slotIdx}
+                onChange={(e) => setRow(i, { slotIdx: Number(e.target.value) })}
+              >
+                {(slots[r.section] || []).map((sl, idx) => (
+                  <option key={idx} value={idx}>{sl}</option>
+                ))}
+              </select>
+              <select
+                style={{ ...selStyle, flex: 1.1 }}
+                value={r.room}
+                onChange={(e) => setRow(i, { room: e.target.value })}
+              >
+                <option value="">Room…</option>
+                {(rooms[roomGroup(r.section)] || []).map((rm) => {
+                  const taken = takenBy(r, rm, i);
+                  return (
+                    <option key={rm} value={rm} disabled={!!taken}>
+                      {"Room " + rm + (taken ? " — " + taken : "")}
+                    </option>
+                  );
+                })}
+              </select>
+              <button style={{ ...miniBtn, color: "#b91c1c", flexShrink: 0 }} onClick={() => delRow(i)} title="Remove this meeting time">✕</button>
+            </div>
+            {teacherConflicts.length > 0 && (
+              <div style={{ ...teacherWarningStyle, marginTop: 5 }}>
+                Teacher conflict: {teacherConflicts.join(", ")}
+              </div>
+            )}
+          </div>
+        );
+      })}
       {rows.length === 0 && (
         <div style={{ fontSize: 12, color: "#b45309", marginBottom: 6 }}>
-          Not scheduled — the class stays in the library tray (you can also drag it onto the grid later).
+          Not scheduled — the class stays in the library sidebar (you can also drag it onto the grid later).
         </div>
       )}
       <button style={{ ...btnSecondary, fontSize: 13, padding: "6px 12px" }} onClick={addRow}>＋ Add meeting time</button>
@@ -1015,6 +1079,10 @@ const selStyle = {
 const chipStyle = {
   fontSize: 11, background: "#e6f4f3", color: "#0f766e", borderRadius: 4,
   padding: "1px 6px", whiteSpace: "nowrap", fontWeight: 600,
+};
+const teacherWarningStyle = {
+  fontSize: 11, background: "#fee2e2", color: "#b91c1c", border: "1px solid #fecaca",
+  borderRadius: 4, padding: "2px 6px", fontWeight: 700, lineHeight: 1.25,
 };
 const btnGhost = {
   background: "transparent", border: "1px solid rgba(255,255,255,.35)", color: "inherit",
