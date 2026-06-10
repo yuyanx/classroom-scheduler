@@ -6,6 +6,10 @@ const DEFAULT_ROOMS = {
   morning: ["1", "2+3", "4", "5", "6", "7", "8"],
   afternoon: ["1", "2", "3", "4", "5", "6", "7", "8"],
 };
+const DEFAULT_ROOM_CAPS = {
+  morning: { "1": 12, "2+3": 25, "4": 12, "5": 12, "6": 12, "7": 12, "8": 12 },
+  afternoon: { "1": 25, "2": 12, "3": 12, "4": 12, "5": 12, "6": 12, "7": 12, "8": 12 },
+};
 
 const SECTIONS = [
   { id: "morning", label: "Morning (Daily)", short: "AM" },
@@ -91,29 +95,78 @@ const DEFAULT_CLASSES = [
 ];
 
 // ───────────────────────── Data model ─────────────────────────
-// catalog:    one entry per class/cohort — { id, name, teacher, reg, cap, note }
+// catalog:    one entry per class/cohort — { id, name, teacher, reg, note }
 // placements: where a class meets       — { id, classId, section, slotIdx, room }
-// A class placed in several slots/days shares one roster: reg/cap/name edits apply everywhere.
+// roomCaps:   room capacity by group/name — { morning: { "2+3": 25 }, afternoon: { "1": 25 } }
+// A class placed in several slots/days shares one roster: reg/name edits apply everywhere.
+
+function defaultRoomCap(group, room) {
+  return DEFAULT_ROOM_CAPS[group]?.[room] ?? 12;
+}
+
+function cleanCap(value, fallback) {
+  const n = parseInt(value, 10);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+function normalizeData(raw) {
+  const rooms = raw.rooms || JSON.parse(JSON.stringify(DEFAULT_ROOMS));
+  const slots = raw.slots || JSON.parse(JSON.stringify(DEFAULT_SLOTS));
+  const placements = raw.placements || [];
+  const rawByClass = new Map((raw.catalog || []).map((k) => [k.id, k]));
+  const catalog = (raw.catalog || []).map(({ cap, ...k }) => ({
+    ...k,
+    reg: Math.max(0, parseInt(k.reg, 10) || 0),
+    note: k.note || "",
+  }));
+  const roomCaps = { morning: {}, afternoon: {} };
+
+  ["morning", "afternoon"].forEach((group) => {
+    (rooms[group] || []).forEach((room) => {
+      const saved = raw.roomCaps?.[group]?.[room];
+      let fallback = defaultRoomCap(group, room);
+      placements.forEach((p) => {
+        if (roomGroup(p.section) !== group || p.room !== room) return;
+        const oldClassCap = rawByClass.get(p.classId)?.cap;
+        if (oldClassCap != null) fallback = Math.max(fallback, cleanCap(oldClassCap, fallback));
+      });
+      roomCaps[group][room] = cleanCap(saved, fallback);
+    });
+  });
+
+  return {
+    rooms,
+    slots,
+    roomCaps,
+    catalog,
+    placements,
+    nextId: raw.nextId || 1000,
+  };
+}
 
 // Convert the pre-library format ({ classes: [...] }) into catalog + placements.
-// Grid entries that are fully identical (name/teacher/reg/cap/note) collapse into
+// Grid entries that are fully identical (name/teacher/reg/note) collapse into
 // one catalog entry with several placements — i.e. one class meeting on several days.
 function migrateOld(old) {
   const catalog = [];
   const placements = [];
+  const roomCaps = { morning: {}, afternoon: {} };
   let n = 1;
   const byKey = new Map();
   (old.classes || []).forEach((c) => {
-    const key = [c.name, c.teacher || "", c.reg || 0, c.cap ?? 12, c.note || ""].join("¦");
+    const group = roomGroup(c.section);
+    const cap = Math.max(0, parseInt(c.cap, 10) || defaultRoomCap(group, c.room));
+    roomCaps[group][c.room] = Math.max(roomCaps[group][c.room] || 0, cap);
+    const key = [c.name, c.teacher || "", c.reg || 0, c.note || ""].join("¦");
     let entry = byKey.get(key);
     if (!entry) {
-      entry = { id: "k" + n++, name: c.name, teacher: c.teacher || "", reg: c.reg || 0, cap: c.cap ?? 12, note: c.note || "" };
+      entry = { id: "k" + n++, name: c.name, teacher: c.teacher || "", reg: c.reg || 0, note: c.note || "" };
       byKey.set(key, entry);
       catalog.push(entry);
     }
     placements.push({ id: "p" + n++, classId: entry.id, section: c.section, slotIdx: c.slotIdx, room: c.room });
   });
-  return { rooms: old.rooms, slots: old.slots, catalog, placements, nextId: n };
+  return normalizeData({ rooms: old.rooms, slots: old.slots, roomCaps, catalog, placements, nextId: n });
 }
 
 const defaultData = () =>
@@ -130,7 +183,7 @@ const loadData = () => {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (parsed && parsed.catalog && parsed.placements) return parsed;
+      if (parsed && parsed.catalog && parsed.placements) return normalizeData(parsed);
       if (parsed && parsed.classes) return migrateOld(parsed); // pre-library data
     }
   } catch (e) { /* fall through */ }
@@ -179,9 +232,13 @@ export default function ClassroomScheduler() {
     setSaveError(!saveData(next));
   }, []);
 
-  const { rooms, slots, catalog, placements } = data;
+  const { rooms, slots, roomCaps, catalog, placements } = data;
   const curRooms = rooms[roomGroup(tab)] || [];
   const curSlots = slots[tab] || [];
+  const roomCapacity = (section, room) => {
+    const group = roomGroup(section);
+    return roomCaps?.[group]?.[room] ?? defaultRoomCap(group, room);
+  };
 
   const classOfId = (id) => catalog.find((k) => k.id === id);
   const placementAt = (slotIdx, room) =>
@@ -291,7 +348,7 @@ export default function ClassroomScheduler() {
     },
   };
 
-  // ── Registered count stepper (shared roster: updates every placement of the class) ──
+  // ── Signed-up count stepper (shared roster: updates every placement of the class) ──
   const bump = (classId, delta) => {
     persist({
       ...data,
@@ -350,6 +407,7 @@ export default function ClassroomScheduler() {
     persist({
       ...data,
       rooms: { morning: groups.morning.names, afternoon: groups.afternoon.names },
+      roomCaps: { morning: groups.morning.caps, afternoon: groups.afternoon.caps },
       placements: np,
     });
     setRoomMgrOpen(false);
@@ -476,7 +534,6 @@ export default function ClassroomScheduler() {
                 )}
                 {libList.map((k) => {
                   const chips = placementChips(k.id);
-                  const col = ratioColor(k.reg, k.cap);
                   const teacherConflicts = teacherConflictLabels(
                     placementsOf(k.id).flatMap((p) => teacherConflictsForPlacement(p))
                   );
@@ -513,7 +570,7 @@ export default function ClassroomScheduler() {
                       </div>
                       <div style={{ fontSize: 12, color: "#475569" }}>
                         {k.teacher || <i style={{ color: "#b45309" }}>Teacher TBD</i>}
-                        <b style={{ marginLeft: 8, color: col.text }}>{k.reg} / {k.cap}</b>
+                        <b style={{ marginLeft: 8, color: "#123c3a" }}>{k.reg} signed up</b>
                       </div>
                       {teacherConflicts.length > 0 && (
                         <div
@@ -579,9 +636,14 @@ export default function ClassroomScheduler() {
                 <th style={{ ...thStyle, minWidth: 130, position: "sticky", left: 0, background: "#fafaf8", zIndex: 2 }}>Time</th>
                 {curRooms.map((r) => (
                   <th key={r} style={thStyle}>
-                    <span style={{ display: "inline-block", background: "#123c3a", color: "#fff", borderRadius: 6, padding: "2px 10px", fontSize: 13 }}>
-                      Room {r}
-                    </span>
+                    <div style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+                      <span style={{ display: "inline-block", background: "#123c3a", color: "#fff", borderRadius: 6, padding: "2px 10px", fontSize: 13 }}>
+                        Room {r}
+                      </span>
+                      <span style={{ fontSize: 11, color: "#64748b", fontWeight: 700 }}>
+                        Cap {roomCapacity(tab, r)}
+                      </span>
+                    </div>
                   </th>
                 ))}
               </tr>
@@ -621,8 +683,9 @@ export default function ClassroomScheduler() {
                         </td>
                       );
                     }
-                    const col = ratioColor(cls.reg, cls.cap);
-                    const pct = cls.cap ? Math.min(100, Math.round((cls.reg / cls.cap) * 100)) : 0;
+                    const cap = roomCapacity(tab, room);
+                    const col = ratioColor(cls.reg, cap);
+                    const pct = cap ? Math.min(100, Math.round((cls.reg / cap) * 100)) : 0;
                     const teacherConflicts = teacherConflictLabels(teacherConflictsForPlacement(pl));
                     const hasTeacherConflict = teacherConflicts.length > 0;
                     const otherDays = [...new Set(
@@ -677,10 +740,10 @@ export default function ClassroomScheduler() {
                             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                               <button onClick={() => bump(cls.id, -1)} style={stepBtn}>−</button>
                               <span style={{ fontSize: 13, fontWeight: 700, color: col.text, minWidth: 48, textAlign: "center" }}>
-                                {cls.reg} / {cls.cap}
+                                {cls.reg} / {cap}
                               </span>
                               <button onClick={() => bump(cls.id, +1)} style={stepBtn}>＋</button>
-                              {cls.reg >= cls.cap && cls.cap > 0 && (
+                              {cls.reg >= cap && cap > 0 && (
                                 <span style={{ fontSize: 11, color: "#b91c1c", fontWeight: 700 }}>FULL</span>
                               )}
                             </div>
@@ -705,8 +768,8 @@ export default function ClassroomScheduler() {
               meeting times right in the dialog. Place the same class on several
               days (e.g. Tue + Thu) — it stays one class with one shared enrollment, so edits update everywhere
               (the Morning tab already means every day). Drag a scheduled card onto another to swap, or back into the
-              library to unschedule it. Click any card to edit, use ＋ − to adjust enrollment.
-              Green = open, amber = nearly full, red = full. Data is saved in this browser.
+              library to unschedule it. Click any card to edit, use ＋ − to adjust signed-up students.
+              Green = room has space, amber = nearly full, red = at or over room capacity. Data is saved in this browser.
             </p>
           </main>
         </div>
@@ -752,7 +815,7 @@ export default function ClassroomScheduler() {
 
       {/* Room manager modal */}
       {roomMgrOpen && (
-        <RoomModal rooms={rooms} placements={placements} onSave={saveRooms} onClose={() => setRoomMgrOpen(false)} />
+        <RoomModal rooms={rooms} roomCaps={roomCaps} placements={placements} onSave={saveRooms} onClose={() => setRoomMgrOpen(false)} />
       )}
 
       {/* Reset confirmation */}
@@ -778,7 +841,6 @@ function ClassModal({ editing, cls, initialRows, slots, rooms, defaultSection, o
   const [name, setName] = useState(c.name || "");
   const [teacher, setTeacher] = useState(c.teacher || "");
   const [reg, setReg] = useState(c.reg ?? 0);
-  const [cap, setCap] = useState(c.cap ?? 12);
   const [note, setNote] = useState(c.note || "");
   const [rows, setRows] = useState(initialRows); // meeting times: {id?, section, slotIdx, room}
 
@@ -820,7 +882,6 @@ function ClassModal({ editing, cls, initialRows, slots, rooms, defaultSection, o
         name: name.trim(),
         teacher: teacher.trim(),
         reg: Math.max(0, parseInt(reg, 10) || 0),
-        cap: Math.max(0, parseInt(cap, 10) || 0),
         note: note.trim(),
       },
       rows
@@ -838,11 +899,8 @@ function ClassModal({ editing, cls, initialRows, slots, rooms, defaultSection, o
         <Field label="Teacher" style={{ flex: 1.4, minWidth: 130 }}>
           <input style={inputStyle} value={teacher} onChange={(e) => setTeacher(e.target.value)} placeholder="e.g. Herrick" />
         </Field>
-        <Field label="Registered" style={{ flex: 1, minWidth: 80 }}>
+        <Field label="Signed up" style={{ flex: 1, minWidth: 90 }}>
           <input style={inputStyle} type="number" min="0" value={reg} onChange={(e) => setReg(e.target.value)} />
-        </Field>
-        <Field label="Capacity" style={{ flex: 1, minWidth: 80 }}>
-          <input style={inputStyle} type="number" min="0" value={cap} onChange={(e) => setCap(e.target.value)} />
         </Field>
       </div>
       <Field label="Note / actual time (optional)">
@@ -926,9 +984,9 @@ function ClassModal({ editing, cls, initialRows, slots, rooms, defaultSection, o
 }
 
 // ───────────────────────── Room manager (AM / PM groups) ─────────────────────────
-function RoomModal({ rooms, placements, onSave, onClose }) {
-  const [morning, setMorning] = useState(rooms.morning.map((r) => ({ orig: r, name: r })));
-  const [afternoon, setAfternoon] = useState(rooms.afternoon.map((r) => ({ orig: r, name: r })));
+function RoomModal({ rooms, roomCaps, placements, onSave, onClose }) {
+  const [morning, setMorning] = useState(rooms.morning.map((r) => ({ orig: r, name: r, cap: roomCaps?.morning?.[r] ?? defaultRoomCap("morning", r) })));
+  const [afternoon, setAfternoon] = useState(rooms.afternoon.map((r) => ({ orig: r, name: r, cap: roomCaps?.afternoon?.[r] ?? defaultRoomCap("afternoon", r) })));
 
   const countFor = (group, origName) =>
     placements.filter((p) => roomGroup(p.section) === group && p.room === origName).length;
@@ -946,10 +1004,15 @@ function RoomModal({ rooms, placements, onSave, onClose }) {
       if (n > 0 && !window.confirm(`Room "${list[i].name}" has ${n} class(es). Deleting it will unschedule them. Continue?`)) return;
       setList(list.filter((_, idx) => idx !== i));
     },
-    add: () => setList([...list, { orig: null, name: "" }]),
+    add: () => setList([...list, { orig: null, name: "", cap: 12 }]),
     edit: (i, v) => {
       const nl = [...list];
       nl[i] = { ...nl[i], name: v };
+      setList(nl);
+    },
+    editCap: (i, v) => {
+      const nl = [...list];
+      nl[i] = { ...nl[i], cap: v };
       setList(nl);
     },
   });
@@ -958,10 +1021,14 @@ function RoomModal({ rooms, placements, onSave, onClose }) {
     const build = (list) => {
       const names = list.map((r) => r.name.trim()).filter(Boolean);
       const renames = {};
+      const caps = {};
       list.forEach((r) => {
-        if (r.orig && r.name.trim() && r.orig !== r.name.trim()) renames[r.orig] = r.name.trim();
+        const name = r.name.trim();
+        if (!name) return;
+        if (r.orig && r.orig !== name) renames[r.orig] = name;
+        caps[name] = cleanCap(r.cap, 12);
       });
-      return { names, renames };
+      return { names, renames, caps };
     };
     const m = build(morning);
     const a = build(afternoon);
@@ -983,20 +1050,36 @@ function RoomModal({ rooms, placements, onSave, onClose }) {
         <div style={{ fontSize: 13, fontWeight: 700, color: "#123c3a", marginBottom: 8 }}>
           {title} ({list.length})
         </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 76px 44px 26px 26px 26px", gap: 5, alignItems: "center", marginBottom: 5, fontSize: 11, color: "#64748b", fontWeight: 700 }}>
+          <span>Room</span>
+          <span>Capacity</span>
+          <span>Used</span>
+          <span />
+          <span />
+          <span />
+        </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 280, overflowY: "auto" }}>
           {list.map((r, i) => (
-            <div key={i} style={{ display: "flex", gap: 5, alignItems: "center" }}>
+            <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 76px 44px 26px 26px 26px", gap: 5, alignItems: "center" }}>
               <input
-                style={{ ...inputStyle, flex: 1, padding: "6px 8px" }}
+                style={{ ...inputStyle, padding: "6px 8px" }}
                 value={r.name}
                 placeholder="Room name"
                 onChange={(e) => ops.edit(i, e.target.value)}
+              />
+              <input
+                style={{ ...inputStyle, padding: "6px 8px" }}
+                type="number"
+                min="0"
+                value={r.cap}
+                onChange={(e) => ops.editCap(i, e.target.value)}
               />
               {r.orig && (
                 <span style={{ fontSize: 11, color: "#94a3b8", whiteSpace: "nowrap" }}>
                   {countFor(group, r.orig)} cls
                 </span>
               )}
+              {!r.orig && <span />}
               <button style={miniBtn} onClick={() => ops.move(i, -1)} title="Move up">↑</button>
               <button style={miniBtn} onClick={() => ops.move(i, 1)} title="Move down">↓</button>
               <button style={{ ...miniBtn, color: "#b91c1c" }} onClick={() => ops.remove(i)} title="Delete">✕</button>
@@ -1014,7 +1097,7 @@ function RoomModal({ rooms, placements, onSave, onClose }) {
     <Overlay onClose={onClose} wide>
       <h3 style={{ marginTop: 0 }}>Manage rooms</h3>
       <p style={{ fontSize: 13, color: "#64748b", margin: "0 0 14px" }}>
-        Morning and afternoon rooms are managed separately (Room 2+3 is combined in the morning, split into 2 and 3 in the afternoon).
+        Morning and afternoon rooms are managed separately. Capacity is room capacity; class records only track signed-up students.
       </p>
       <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
         {renderGroup("Morning rooms", morning, setMorning, "morning")}
@@ -1042,7 +1125,7 @@ function Overlay({ children, onClose, wide }) {
         onClick={(e) => e.stopPropagation()}
         style={{
           background: "#fff", borderRadius: 12, padding: "22px 24px",
-          width: "100%", maxWidth: wide ? 620 : 460, boxShadow: "0 20px 50px rgba(0,0,0,.25)",
+          width: "100%", maxWidth: wide ? 760 : 460, boxShadow: "0 20px 50px rgba(0,0,0,.25)",
         }}
       >
         {children}
