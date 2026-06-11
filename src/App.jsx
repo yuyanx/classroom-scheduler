@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 
 // ───────────────────────── Default data (from 2026 Summer Jericho schedule) ─────────────────────────
 // Morning uses combined room 2+3; afternoons use rooms 2 and 3 separately
@@ -192,10 +192,14 @@ const loadData = () => {
 
 const saveData = (data) => {
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    return true;
+    const payload = JSON.stringify(data);
+    window.localStorage.setItem(STORAGE_KEY, payload);
+    if (window.localStorage.getItem(STORAGE_KEY) !== payload) {
+      return { ok: false, error: "Browser storage did not keep the saved data." };
+    }
+    return { ok: true };
   } catch (e) {
-    return false;
+    return { ok: false, error: e?.message || "Browser storage is unavailable." };
   }
 };
 
@@ -217,7 +221,12 @@ const teacherKey = (teacher) => {
 // ───────────────────────── Main component ─────────────────────────
 export default function ClassroomScheduler() {
   const [data, setData] = useState(loadData);
-  const [saveError, setSaveError] = useState(false);
+  const [saveStatus, setSaveStatus] = useState({
+    ok: true,
+    lastSavedAt: null,
+    error: "",
+    label: "Checking save...",
+  });
   const [tab, setTab] = useState("morning");
   const [editing, setEditing] = useState(null); // {isNew, classId?, placementId?, slotIdx?, room?}
   const [roomMgrOpen, setRoomMgrOpen] = useState(false);
@@ -227,10 +236,26 @@ export default function ClassroomScheduler() {
   const [libOpen, setLibOpen] = useState(true);
   const [libQuery, setLibQuery] = useState("");
 
+  const updateSaveStatus = useCallback((result) => {
+    const now = new Date();
+    setSaveStatus({
+      ok: result.ok,
+      lastSavedAt: result.ok ? now : null,
+      error: result.error || "",
+      label: result.ok ? `Saved to this browser at ${now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "Not saved",
+    });
+  }, []);
+
   const persist = useCallback((next) => {
     setData(next);
-    setSaveError(!saveData(next));
-  }, []);
+    updateSaveStatus(saveData(next));
+  }, [updateSaveStatus]);
+
+  useEffect(() => {
+    updateSaveStatus(saveData(data));
+  }, []); // Save loaded/normalized data once; user changes go through persist().
+
+  const saveNow = () => updateSaveStatus(saveData(data));
 
   const { rooms, slots, roomCaps, catalog, placements } = data;
   const curRooms = rooms[roomGroup(tab)] || [];
@@ -471,15 +496,27 @@ export default function ClassroomScheduler() {
             <span style={{ fontSize: 13, opacity: 0.85 }}>
               Total enrolled <b style={{ fontSize: 16 }}>{totalReg}</b>
             </span>
+            <span
+              title={saveStatus.ok ? "Changes are stored in this browser." : saveStatus.error}
+              style={{
+                fontSize: 12,
+                color: saveStatus.ok ? "#d1fae5" : "#fecaca",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {saveStatus.label}
+            </span>
+            <button onClick={saveNow} style={btnGhost}>Save now</button>
             <button onClick={() => setRoomMgrOpen(true)} style={btnGhost}>Manage Rooms</button>
             <button onClick={() => setConfirmReset(true)} style={{ ...btnGhost, opacity: 0.7 }}>Reset Data</button>
           </div>
         </div>
       </header>
 
-      {saveError && (
+      {!saveStatus.ok && (
         <div style={{ background: "#fef2f2", color: "#b91c1c", padding: "8px 24px", fontSize: 13 }}>
           Changes could not be saved to this browser. They may be lost when you close the page.
+          {saveStatus.error && <span> Details: {saveStatus.error}</span>}
         </div>
       )}
 

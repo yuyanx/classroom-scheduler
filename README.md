@@ -19,7 +19,8 @@ An interactive classroom scheduling board for the 2026 Summer program (Jericho).
 - **Drag & drop** a class card to move it to another time slot or room; drop onto another class to swap
 - Click any card to edit name / teacher / signed-up students / notes; ＋ − steppers for quick enrollment changes
 - Add, rename, reorder, set capacity for, or delete rooms and time slots
-- All changes saved automatically to the browser (localStorage); Reset Data restores the original schedule
+- All changes are verified and saved to the browser automatically; the header shows saved status and includes **Save now**
+- Reset Data restores the original schedule
 
 ## Project structure
 

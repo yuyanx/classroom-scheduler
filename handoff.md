@@ -160,7 +160,7 @@ warning when any of that class's placements conflict. Room conflicts remain hard
 
 ### Persistence
 
-`loadData()` / `saveData()` near the top of `App.jsx` are the only places that touch localStorage. Swapping these two functions is the complete scope of adding a backend.
+`loadData()` / `saveData()` near the top of `App.jsx` are the only places that touch localStorage. `saveData()` writes the JSON payload and reads it back to verify the browser actually kept it. The header shows a save status (`Saved to this browser at ...`), includes a manual **Save now** button, and shows a red warning banner when browser storage is blocked or unavailable. Swapping these two functions is the complete scope of adding a backend.
 
 ### Capacity color logic
 
@@ -185,6 +185,8 @@ warning when any of that class's placements conflict. Room conflicts remain hard
   class schedule editor, on affected calendar cards, and on affected sidebar cards.
 - 2026-06-10 — **room capacities**: moved capacity from class records to editable room capacities;
   class dialogs now only edit signed-up students, and calendar room headers show capacity.
+- 2026-06-10 — **explicit save status**: added verified localStorage writes, a visible saved-at
+  status, a manual Save now button, and a detailed warning when browser storage fails.
 
 ---
 
