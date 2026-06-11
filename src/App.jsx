@@ -774,19 +774,21 @@ export default function ClassroomScheduler() {
                             )}
                           </div>
                           <div style={{ marginTop: "auto", minWidth: 0 }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 3, minWidth: 0 }}>
                               <button onClick={() => bump(cls.id, -1)} style={stepBtn}>−</button>
-                              <span style={{ fontSize: 12, fontWeight: 700, color: col.text, minWidth: 0, flex: 1, textAlign: "center", whiteSpace: "nowrap" }}>
-                                {cls.reg} / {cap}
+                              <span style={{ fontSize: 11, fontWeight: 700, color: col.text, minWidth: 0, flex: 1, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden" }}>
+                                {cls.reg}/{cap}
                               </span>
                               <button onClick={() => bump(cls.id, +1)} style={stepBtn}>＋</button>
-                              {cls.reg >= cap && cap > 0 && (
-                                <span style={{ fontSize: 11, color: "#b91c1c", fontWeight: 700 }}>FULL</span>
-                              )}
                             </div>
                             <div style={{ height: 4, background: "#e2e8f0", borderRadius: 2, marginTop: 5, overflow: "hidden" }}>
                               <div style={{ width: pct + "%", height: "100%", background: col.bar, borderRadius: 2, transition: "width .25s" }} />
                             </div>
+                            {cls.reg >= cap && cap > 0 && (
+                              <div style={{ marginTop: 3, fontSize: 10, fontWeight: 800, color: "#b91c1c", textAlign: "center", letterSpacing: "0.08em" }}>
+                                FULL
+                              </div>
+                            )}
                           </div>
                         </div>
                       </td>
@@ -1221,6 +1223,6 @@ const miniBtn = {
   fontSize: 12, cursor: "pointer", color: "#475569", lineHeight: 1,
 };
 const stepBtn = {
-  width: 24, height: 24, flex: "0 0 24px", borderRadius: 6, border: "1px solid #cbd5d1", background: "#fff",
-  cursor: "pointer", fontSize: 14, lineHeight: 1, color: "#334155", padding: 0,
+  width: 20, height: 20, flex: "0 0 20px", borderRadius: 6, border: "1px solid #cbd5d1", background: "#fff",
+  cursor: "pointer", fontSize: 13, lineHeight: 1, color: "#334155", padding: 0,
 };
