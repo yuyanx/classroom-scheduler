@@ -152,13 +152,21 @@ class capacity; it only manages how many students are signed up for that class.
    the Class Library and changing its schedule rows uses this same path, so the calendar grid updates
    immediately after save.
 
-### Teacher conflict warnings
+### Conflicts: room (red, blocking) vs teacher (amber, soft)
 
-`teacherKey()` normalizes teacher names and ignores blank / `TBD` / `N/A` values. `teacherConflictsAt()`
-checks for another placement with the same normalized teacher in the same `(section, slotIdx)`.
-Teacher conflicts are non-blocking warnings: the class modal marks the affected schedule row before
-save, grid cards get a red border plus a "Teacher conflict" badge, and the sidebar card also shows a
-warning when any of that class's placements conflict. Room conflicts remain hard blockers.
+Room conflicts are hard errors, teacher overlaps are warnings — styled and worded distinctly so
+they can't be confused:
+
+- **Room conflict (red, `roomConflictStyle`)** — two classes in one cell. Prevented by disabled
+  room options in the modal dropdowns; if a selected room becomes taken (after changing the row's
+  day/slot), an inline red "Room conflict: Room X already has Y" error appears and save is blocked
+  with an alert. A class scheduled twice into the same day+slot is blocked the same way.
+- **Teacher overlap (amber, `teacherWarningStyle`)** — `teacherKey()` normalizes teacher names and
+  ignores blank / `TBD` / `N/A`; `teacherConflictsAt()` finds other placements with the same teacher
+  in the same `(section, slotIdx)`. Non-blocking: amber "⚠ Teacher overlap" notes under modal rows,
+  amber border + badge on grid cards, badge on sidebar cards, and a `window.confirm` summary on save.
+- **Open-room hints** — while a modal schedule row has no room selected, a muted line lists which
+  rooms are still free in that slot ("Open rooms: 1, 3" / "No open rooms in this time slot").
 
 ### Persistence
 

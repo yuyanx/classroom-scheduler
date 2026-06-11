@@ -614,7 +614,7 @@ export default function ClassroomScheduler() {
                           style={teacherWarningStyle}
                           title={"Same teacher also assigned to " + teacherConflicts.join(", ")}
                         >
-                          Teacher conflict
+                          ⚠ Teacher overlap
                         </div>
                       )}
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
@@ -739,13 +739,13 @@ export default function ClassroomScheduler() {
                           }}
                           onDragEnd={() => { setDrag(null); setDragOver(null); }}
                           style={{
-                            border: isOver && drag?.id !== pl.id ? "2px solid #0d7a72" : hasTeacherConflict ? "2px solid #dc2626" : "1px solid #d6dad4",
+                            border: isOver && drag?.id !== pl.id ? "2px solid #0d7a72" : hasTeacherConflict ? "2px solid #d97706" : "1px solid #d6dad4",
                             borderRadius: 8, background: col.bg,
                             boxSizing: "border-box", width: "100%", maxWidth: "100%", overflow: "hidden",
                             padding: "8px", minHeight: 118, display: "flex", flexDirection: "column", gap: 4,
                             opacity: drag?.type === "pl" && drag.id === pl.id ? 0.35 : 1,
                             cursor: "grab",
-                            boxShadow: isOver && drag?.id !== pl.id ? "0 0 0 3px rgba(13,122,114,.15)" : hasTeacherConflict ? "0 0 0 3px rgba(220,38,38,.12)" : "none",
+                            boxShadow: isOver && drag?.id !== pl.id ? "0 0 0 3px rgba(13,122,114,.15)" : hasTeacherConflict ? "0 0 0 3px rgba(217,119,6,.15)" : "none",
                             transition: "opacity .15s, box-shadow .15s",
                           }}
                         >
@@ -890,14 +890,6 @@ function ClassModal({ editing, cls, initialRows, slots, rooms, defaultSection, o
     const dup = rows.some((o, j) => j !== rowIdx && o.section === row.section && o.slotIdx === row.slotIdx && o.room === room);
     return dup ? "this class" : null;
   };
-  const teacherConflictsForRow = (row, rowIdx) => {
-    if (!teacherKey(teacher)) return [];
-    const draftConflict = rows.some((o, j) => j !== rowIdx && o.section === row.section && o.slotIdx === row.slotIdx)
-      ? ["another meeting row for this class"]
-      : [];
-    return [...new Set([...draftConflict, ...teacherConflictsAt(row.section, row.slotIdx, teacher)])];
-  };
-
   const setRow = (i, patch) => setRows(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   const addRow = () => setRows([...rows, { id: null, section: defaultSection, slotIdx: 0, room: "" }]);
   const delRow = (i) => setRows(rows.filter((_, j) => j !== i));
@@ -906,16 +898,28 @@ function ClassModal({ editing, cls, initialRows, slots, rooms, defaultSection, o
     if (!name.trim()) return;
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
+      const label = `${SECTIONS.find((s) => s.id === r.section)?.label} ${(slots[r.section] || [])[r.slotIdx]}`;
       if (!r.room) {
         alert("Pick a room for every meeting time (or remove the row).");
         return;
       }
+      if (rows.some((o, j) => j !== i && o.section === r.section && o.slotIdx === r.slotIdx)) {
+        alert(`This class has two meetings at the same time (${label}). Remove one of them.`);
+        return;
+      }
       const taken = takenBy(r, r.room, i);
       if (taken) {
-        alert(`Conflict: ${SECTIONS.find((s) => s.id === r.section)?.label} ${(slots[r.section] || [])[r.slotIdx]} Room ${r.room} is taken by ${taken}.`);
+        alert(`Room conflict: ${label} Room ${r.room} already has ${taken}. Pick a different room.`);
         return;
       }
     }
+    // Teacher overlaps are allowed, but confirm so they never slip through unnoticed
+    const overlaps = teacherKey(teacher)
+      ? [...new Set(rows.flatMap((r) => teacherConflictsAt(r.section, r.slotIdx, teacher)))]
+      : [];
+    if (overlaps.length > 0 && !window.confirm(
+      `${teacher.trim()} is also teaching at the same time: ${overlaps.join(", ")}.\n\nSave anyway?`
+    )) return;
     onSave(
       {
         name: name.trim(),
@@ -955,7 +959,11 @@ function ClassModal({ editing, cls, initialRows, slots, rooms, defaultSection, o
         )}
       </div>
       {rows.map((r, i) => {
-        const teacherConflicts = teacherConflictsForRow(r, i);
+        const roomTaken = r.room ? takenBy(r, r.room, i) : null;
+        const roomConflict = roomTaken && roomTaken !== "this class" ? roomTaken : null;
+        const slotDup = rows.some((o, j) => j !== i && o.section === r.section && o.slotIdx === r.slotIdx);
+        const teacherOverlaps = teacherKey(teacher) ? teacherConflictsAt(r.section, r.slotIdx, teacher) : [];
+        const openRooms = (rooms[roomGroup(r.section)] || []).filter((rm) => !takenBy(r, rm, i));
         return (
           <div key={i} style={{ marginBottom: 8 }}>
             <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -994,9 +1002,29 @@ function ClassModal({ editing, cls, initialRows, slots, rooms, defaultSection, o
               </select>
               <button style={{ ...miniBtn, color: "#b91c1c", flexShrink: 0 }} onClick={() => delRow(i)} title="Remove this meeting time">✕</button>
             </div>
-            {teacherConflicts.length > 0 && (
-              <div style={{ ...teacherWarningStyle, marginTop: 5 }}>
-                Teacher conflict: {teacherConflicts.join(", ")}
+            {roomConflict && (
+              <div style={{ ...roomConflictStyle, marginTop: 5 }}>
+                Room conflict: Room {r.room} already has {roomConflict} — pick a different room.
+              </div>
+            )}
+            {slotDup && (
+              <div style={{ ...roomConflictStyle, marginTop: 5 }}>
+                This class already has another meeting at this day & time.
+              </div>
+            )}
+            {teacherOverlaps.length > 0 && (
+              <div
+                style={{ ...teacherWarningStyle, marginTop: 5 }}
+                title="Same teacher in two rooms at once — allowed, but double-check before saving"
+              >
+                ⚠ Teacher overlap: {teacher.trim()} also has {teacherOverlaps.join(", ")} at this time
+              </div>
+            )}
+            {!r.room && !slotDup && (
+              <div style={{ fontSize: 11, color: "#64748b", marginTop: 5 }}>
+                {openRooms.length > 0
+                  ? "Open rooms: " + openRooms.join(", ")
+                  : "No open rooms in this time slot — try another slot."}
               </div>
             )}
           </div>
@@ -1203,6 +1231,10 @@ const chipStyle = {
   padding: "1px 6px", whiteSpace: "nowrap", fontWeight: 600,
 };
 const teacherWarningStyle = {
+  fontSize: 11, background: "#fffbeb", color: "#b45309", border: "1px solid #fde68a",
+  borderRadius: 4, padding: "2px 6px", fontWeight: 700, lineHeight: 1.25,
+};
+const roomConflictStyle = {
   fontSize: 11, background: "#fee2e2", color: "#b91c1c", border: "1px solid #fecaca",
   borderRadius: 4, padding: "2px 6px", fontWeight: 700, lineHeight: 1.25,
 };
