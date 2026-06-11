@@ -290,7 +290,15 @@ export default function ClassroomScheduler() {
   const [confirmReset, setConfirmReset] = useState(false);
   const [drag, setDrag] = useState(null); // {type:'lib'|'pl', id}
   const [dragOver, setDragOver] = useState(null); // "slotIdx|room" or "tray"
-  const [libOpen, setLibOpen] = useState(true);
+  const [libOpen, setLibOpenState] = useState(() => {
+    try { return window.localStorage.getItem("premier-ui-lib-open") !== "0"; } catch (e) { return true; }
+  });
+  const setLibOpen = (updater) =>
+    setLibOpenState((prev) => {
+      const v = typeof updater === "function" ? updater(prev) : updater;
+      try { window.localStorage.setItem("premier-ui-lib-open", v ? "1" : "0"); } catch (e) { /* ignore */ }
+      return v;
+    });
   const [libQuery, setLibQuery] = useState("");
 
   const remoteRef = useRef({ timer: null, retryTimer: null, lastSyncedAt: null, pendingSave: false, lastSaveFailed: false });
@@ -708,7 +716,33 @@ export default function ClassroomScheduler() {
 
       <div style={{ width: "100%", boxSizing: "border-box", padding: "16px 12px 40px", display: "flex", gap: 12, alignItems: "flex-start" }}>
         {/* Class Library */}
-        <aside style={{ flex: "0 0 240px", width: 240, position: "sticky", top: 16, alignSelf: "flex-start" }}>
+        <aside style={{ flex: `0 0 ${libOpen ? 240 : 46}px`, width: libOpen ? 240 : 46, position: "sticky", top: 16, alignSelf: "flex-start" }}>
+          {!libOpen && (
+            <div
+              {...trayHandlers}
+              onClick={() => setLibOpen(true)}
+              title="Show the Class Library"
+              style={{
+                background: dragOver === "tray" ? "#fff7ed" : "#fff",
+                border: "1px solid #d6dad4", borderRadius: 10,
+                padding: "12px 6px", display: "flex", flexDirection: "column", alignItems: "center", gap: 10,
+                cursor: "pointer",
+                outline: drag?.type === "pl" ? "2px dashed #d97706" : "none", outlineOffset: -4,
+              }}
+            >
+              <span style={{ fontSize: 14, color: "#123c3a" }}>▸</span>
+              <span style={{ writingMode: "vertical-rl", fontSize: 13, fontWeight: 700, color: "#123c3a", letterSpacing: "0.03em" }}>
+                Class Library
+              </span>
+              <span style={{ fontSize: 11, color: "#64748b", fontWeight: 700 }}>{catalog.length}</span>
+              {drag?.type === "pl" && (
+                <span style={{ writingMode: "vertical-rl", fontSize: 11, color: "#b45309", fontWeight: 700 }}>
+                  ⤓ drop here to unschedule
+                </span>
+              )}
+            </div>
+          )}
+          {libOpen && (
           <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: 10, height: "calc(100vh - 112px)", minHeight: 420, maxHeight: 780, display: "flex", flexDirection: "column", overflow: "hidden" }}>
             <div style={{ padding: "12px 14px", borderBottom: libOpen ? "1px solid #eceeea" : "none" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -821,6 +855,7 @@ export default function ClassroomScheduler() {
               </div>
             )}
           </div>
+          )}
         </aside>
 
         <div style={{ flex: 1, minWidth: 0 }}>

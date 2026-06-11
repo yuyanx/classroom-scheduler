@@ -131,6 +131,10 @@ max-width wrapper, and the grid uses compact fixed-layout columns so all 8 after
 standard 1280px viewport. Keep drag-and-drop handlers attached to the sidebar list so dropping a
 scheduled grid card there still unschedules it without deleting the catalog entry.
 
+The sidebar collapses to a 46px vertical rail (header ▾ toggle to hide, click the rail to reopen);
+the preference persists in localStorage (`premier-ui-lib-open`). The collapsed rail keeps the
+tray drop handlers, so dragging a scheduled card onto it still unschedules.
+
 ### Rooms and capacity
 
 Rooms remain ordered string arrays under `rooms.morning` and `rooms.afternoon`; capacities live in
@@ -241,6 +245,8 @@ app runs exactly as the old browser-only version.
   note) and day columns showing each meeting's time + room; unscheduled classes sort first in amber,
   then rows order by earliest start time of day (slot labels parsed as AM for morning / PM for day
   tabs), tie-broken by day then name.
+- 2026-06-11 — **collapsible library sidebar**: collapses to a slim rail (persisted preference);
+  the rail still accepts drag-to-unschedule drops and shows the class count.
 
 ---
 
