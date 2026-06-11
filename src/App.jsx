@@ -134,12 +134,21 @@ function normalizeData(raw) {
     });
   });
 
+  // Teacher roster: stored list ∪ every teacher named on a class (dedup case-insensitively)
+  const teacherMap = new Map();
+  [...(Array.isArray(raw.teachers) ? raw.teachers : []), ...catalog.map((k) => k.teacher)].forEach((t) => {
+    const key = teacherKey(t);
+    if (key && !teacherMap.has(key)) teacherMap.set(key, String(t).trim());
+  });
+  const teachers = [...teacherMap.values()].sort((a, b) => a.localeCompare(b));
+
   return {
     rooms,
     slots,
     roomCaps,
     catalog,
     placements,
+    teachers,
     nextId: raw.nextId || 1000,
   };
 }
@@ -230,6 +239,7 @@ export default function ClassroomScheduler() {
   const [tab, setTab] = useState("morning");
   const [editing, setEditing] = useState(null); // {isNew, classId?, placementId?, slotIdx?, room?}
   const [roomMgrOpen, setRoomMgrOpen] = useState(false);
+  const [teacherMgrOpen, setTeacherMgrOpen] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [drag, setDrag] = useState(null); // {type:'lib'|'pl', id}
   const [dragOver, setDragOver] = useState(null); // "slotIdx|room" or "tray"
@@ -257,7 +267,7 @@ export default function ClassroomScheduler() {
 
   const saveNow = () => updateSaveStatus(saveData(data));
 
-  const { rooms, slots, roomCaps, catalog, placements } = data;
+  const { rooms, slots, roomCaps, catalog, placements, teachers } = data;
   const curRooms = rooms[roomGroup(tab)] || [];
   const curSlots = slots[tab] || [];
   const roomCapacity = (section, room) => {
@@ -292,6 +302,7 @@ export default function ClassroomScheduler() {
   const totalReg = catalog.reduce((s, k) => s + (k.reg || 0), 0);
   const tabPls = placements.filter((p) => p.section === tab);
   const tabReg = tabPls.reduce((s, p) => s + ((classOfId(p.classId) || {}).reg || 0), 0);
+  const noTeacherCount = catalog.filter((k) => !teacherKey(k.teacher)).length;
 
   // Chips like "Mon 2:00" for everywhere a class is scheduled
   const placementChips = (classId) =>
@@ -395,7 +406,12 @@ export default function ClassroomScheduler() {
       id: r.id || "p" + nid++,
       classId, section: r.section, slotIdx: r.slotIdx, room: r.room,
     }));
-    persist({ ...data, catalog: newCatalog, placements: [...others, ...mine], nextId: nid });
+    // A teacher picked via "Add new teacher…" joins the roster on save
+    const tKey = teacherKey(form.teacher);
+    const newTeachers = tKey && !(teachers || []).some((t) => teacherKey(t) === tKey)
+      ? [...(teachers || []), form.teacher].sort((a, b) => a.localeCompare(b))
+      : teachers;
+    persist({ ...data, catalog: newCatalog, placements: [...others, ...mine], teachers: newTeachers, nextId: nid });
     setEditing(null);
   };
 
@@ -436,6 +452,19 @@ export default function ClassroomScheduler() {
       placements: np,
     });
     setRoomMgrOpen(false);
+  };
+
+  // ── Teacher roster management (rename cascades to classes; removal sets them to TBD) ──
+  const saveTeachers = ({ names, renames, removed }) => {
+    let nc = catalog;
+    Object.entries(renames).forEach(([oldName, newName]) => {
+      nc = nc.map((k) => (teacherKey(k.teacher) === teacherKey(oldName) ? { ...k, teacher: newName } : k));
+    });
+    removed.forEach((oldName) => {
+      nc = nc.map((k) => (teacherKey(k.teacher) === teacherKey(oldName) ? { ...k, teacher: "" } : k));
+    });
+    persist({ ...data, teachers: names, catalog: nc });
+    setTeacherMgrOpen(false);
   };
 
   // ── Time slot management ──
@@ -659,13 +688,42 @@ export default function ClassroomScheduler() {
                 {s.label}
               </button>
             ))}
+            <button
+              onClick={() => setTab("byTeacher")}
+              style={{
+                padding: "8px 14px",
+                borderRadius: "10px 10px 0 0",
+                border: "1px solid #d6dad4",
+                borderBottom: "none",
+                cursor: "pointer",
+                fontSize: 14,
+                fontWeight: tab === "byTeacher" ? 700 : 400,
+                background: tab === "byTeacher" ? "#fff" : "#e8eae6",
+                color: tab === "byTeacher" ? "#123c3a" : "#64748b",
+              }}
+            >
+              👤 By Teacher
+            </button>
             <span style={{ marginLeft: "auto", alignSelf: "center", fontSize: 13, color: "#64748b" }}>
-              {tabPls.length} classes · {tabReg} students in this view
+              {tab === "byTeacher"
+                ? `${(teachers || []).length} teachers · ${noTeacherCount} classes need a teacher`
+                : `${tabPls.length} classes · ${tabReg} students in this view`}
             </span>
           </nav>
 
-          {/* Schedule grid */}
+          {/* Schedule grid / teacher view */}
           <main>
+            {tab === "byTeacher" ? (
+              <TeacherScheduleView
+                teachers={teachers || []}
+                catalog={catalog}
+                placements={placements}
+                slots={slots}
+                onEditClass={(classId) => setEditing({ isNew: false, classId })}
+                onManageTeachers={() => setTeacherMgrOpen(true)}
+              />
+            ) : (
+            <>
             <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto" }}>
           <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 96 + curRooms.length * 112, tableLayout: "fixed" }}>
             <thead>
@@ -810,6 +868,8 @@ export default function ClassroomScheduler() {
               library to unschedule it. Click any card to edit, use ＋ − to adjust signed-up students.
               Green = room has space, amber = nearly full, red = at or over room capacity. Data is saved in this browser.
             </p>
+            </>
+            )}
           </main>
         </div>
       </div>
@@ -831,7 +891,8 @@ export default function ClassroomScheduler() {
           }
           slots={slots}
           rooms={rooms}
-          defaultSection={tab}
+          teachers={teachers || []}
+          defaultSection={tab === "byTeacher" ? "morning" : tab}
           occupiedBy={(section, slotIdx, room) => {
             const p = placements.find(
               (x) => x.section === section && x.slotIdx === slotIdx && x.room === room && x.classId !== editing.classId
@@ -857,6 +918,11 @@ export default function ClassroomScheduler() {
         <RoomModal rooms={rooms} roomCaps={roomCaps} placements={placements} onSave={saveRooms} onClose={() => setRoomMgrOpen(false)} />
       )}
 
+      {/* Teacher manager modal */}
+      {teacherMgrOpen && (
+        <TeacherModal teachers={teachers || []} catalog={catalog} onSave={saveTeachers} onClose={() => setTeacherMgrOpen(false)} />
+      )}
+
       {/* Reset confirmation */}
       {confirmReset && (
         <Overlay onClose={() => setConfirmReset(false)}>
@@ -875,7 +941,7 @@ export default function ClassroomScheduler() {
 }
 
 // ───────────────────────── Class edit modal ─────────────────────────
-function ClassModal({ editing, cls, initialRows, slots, rooms, defaultSection, occupiedBy, teacherConflictsAt, contextLabel, onSave, onDelete, onClose }) {
+function ClassModal({ editing, cls, initialRows, slots, rooms, teachers, defaultSection, occupiedBy, teacherConflictsAt, contextLabel, onSave, onDelete, onClose }) {
   const c = cls || {};
   const [name, setName] = useState(c.name || "");
   const [teacher, setTeacher] = useState(c.teacher || "");
@@ -940,7 +1006,25 @@ function ClassModal({ editing, cls, initialRows, slots, rooms, defaultSection, o
           <input style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. SAT Math" autoFocus />
         </Field>
         <Field label="Teacher" style={{ flex: 1.4, minWidth: 130 }}>
-          <input style={inputStyle} value={teacher} onChange={(e) => setTeacher(e.target.value)} placeholder="e.g. Herrick" />
+          <select
+            style={{ ...selStyle, width: "100%", padding: "8px 10px", fontSize: 14 }}
+            value={teacher}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === "__new__") {
+                const name = (prompt("New teacher name:") || "").trim();
+                if (name && teacherKey(name)) setTeacher(name);
+              } else {
+                setTeacher(v);
+              }
+            }}
+          >
+            <option value="">(Teacher TBD)</option>
+            {((teacher && !(teachers || []).includes(teacher)) ? [teacher, ...(teachers || [])] : (teachers || [])).map((t) => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+            <option value="__new__">＋ Add new teacher…</option>
+          </select>
         </Field>
         <Field label="Signed up" style={{ flex: 1, minWidth: 90 }}>
           <input style={inputStyle} type="number" min="0" value={reg} onChange={(e) => setReg(e.target.value)} />
@@ -1045,6 +1129,172 @@ function ClassModal({ editing, cls, initialRows, slots, rooms, defaultSection, o
           <button style={btnSecondary} onClick={onClose}>Cancel</button>
           <button style={btnPrimary} onClick={submit} disabled={!name.trim()}>Save</button>
         </div>
+      </div>
+    </Overlay>
+  );
+}
+
+// ───────────────────────── By-teacher schedule view ─────────────────────────
+function TeacherScheduleView({ teachers, catalog, placements, slots, onEditClass, onManageTeachers }) {
+  const classOfId = (id) => catalog.find((k) => k.id === id);
+
+  const entriesFor = (key, sectionId) =>
+    placements
+      .filter((p) => p.section === sectionId)
+      .map((p) => ({ p, cls: classOfId(p.classId) }))
+      .filter(({ cls }) => cls && teacherKey(cls.teacher) === key)
+      .sort((a, b) => a.p.slotIdx - b.p.slotIdx);
+
+  const classCount = (key) => catalog.filter((k) => teacherKey(k.teacher) === key).length;
+  const tbdHasAny = catalog.some((k) => !teacherKey(k.teacher));
+
+  const renderCell = (list, sectionId) => {
+    const bySlot = {};
+    list.forEach(({ p }) => { bySlot[p.slotIdx] = (bySlot[p.slotIdx] || 0) + 1; });
+    return (
+      <td key={sectionId} style={{ ...tdStyle, verticalAlign: "top" }}>
+        {list.length === 0 ? (
+          <span style={{ color: "#cbd5d1", fontSize: 12 }}>—</span>
+        ) : (
+          list.map(({ p, cls }) => {
+            const clash = bySlot[p.slotIdx] > 1;
+            return (
+              <div
+                key={p.id}
+                onClick={() => onEditClass(cls.id)}
+                title={clash ? "Two classes at the same time — click to edit" : "Click to edit this class"}
+                style={{
+                  fontSize: 12, lineHeight: 1.3, cursor: "pointer", padding: "2px 4px", borderRadius: 4,
+                  background: clash ? "#fffbeb" : "transparent",
+                  color: clash ? "#b45309" : "#334155",
+                  fontWeight: clash ? 700 : 400,
+                }}
+              >
+                {slotShort((slots[p.section] || [])[p.slotIdx])} {cls.name} · Rm {p.room}{clash ? " ⚠" : ""}
+              </div>
+            );
+          })
+        )}
+      </td>
+    );
+  };
+
+  const renderRow = (label, key, count, highlight) => (
+    <tr key={label}>
+      <td style={{ ...tdStyle, position: "sticky", left: 0, background: "#fafaf8", zIndex: 1, verticalAlign: "top", whiteSpace: "nowrap" }}>
+        <div style={{ fontWeight: 700, fontSize: 13, color: highlight ? "#b45309" : "#123c3a" }}>{label}</div>
+        <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>{count} class{count === 1 ? "" : "es"}</div>
+      </td>
+      {SECTIONS.map((s) => renderCell(entriesFor(key, s.id), s.id))}
+    </tr>
+  );
+
+  return (
+    <>
+      <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto" }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 130 + SECTIONS.length * 130, tableLayout: "fixed" }}>
+          <thead>
+            <tr>
+              <th style={{ ...thStyle, width: 130, position: "sticky", left: 0, background: "#fafaf8", zIndex: 2 }}>Teacher</th>
+              {SECTIONS.map((s) => (
+                <th key={s.id} style={thStyle}>{s.label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {teachers.map((t) => renderRow(t, teacherKey(t), classCount(teacherKey(t)), false))}
+            {tbdHasAny && renderRow("(Teacher TBD)", "", catalog.filter((k) => !teacherKey(k.teacher)).length, true)}
+            {teachers.length === 0 && !tbdHasAny && (
+              <tr>
+                <td colSpan={SECTIONS.length + 1} style={{ ...tdStyle, color: "#94a3b8", fontSize: 13 }}>
+                  No teachers yet — assign teachers to classes, or add them here.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+        <div style={{ padding: "10px 14px", borderTop: "1px solid #eceeea" }}>
+          <button onClick={onManageTeachers} style={{ ...btnGhost, color: "#123c3a", borderColor: "#cbd5d1" }}>
+            Manage teachers
+          </button>
+        </div>
+      </div>
+      <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
+        👤 Each row is one teacher's week (Morning = every day). Click any class to edit it.
+        <span style={{ color: "#b45309", fontWeight: 700 }}> Amber ⚠ </span>
+        marks two classes at the same time. <b>Manage teachers</b> renames or removes teachers —
+        renames apply to all their classes; removing a teacher sets their classes to TBD.
+      </p>
+    </>
+  );
+}
+
+// ───────────────────────── Teacher manager ─────────────────────────
+function TeacherModal({ teachers, catalog, onSave, onClose }) {
+  const [list, setList] = useState(teachers.map((t) => ({ orig: t, name: t })));
+
+  const countFor = (origName) => catalog.filter((k) => teacherKey(k.teacher) === teacherKey(origName)).length;
+
+  const remove = (i) => {
+    const n = list[i].orig ? countFor(list[i].orig) : 0;
+    if (n > 0 && !window.confirm(`${list[i].name} teaches ${n} class(es). Removing them sets those classes to "Teacher TBD". Continue?`)) return;
+    setList(list.filter((_, j) => j !== i));
+  };
+  const add = () => setList([...list, { orig: null, name: "" }]);
+  const edit = (i, v) => {
+    const nl = [...list];
+    nl[i] = { ...nl[i], name: v };
+    setList(nl);
+  };
+
+  const submit = () => {
+    const names = list.map((r) => r.name.trim()).filter((n) => n && teacherKey(n));
+    const keys = names.map((n) => teacherKey(n));
+    if (new Set(keys).size !== keys.length) {
+      alert("Teacher names must be unique.");
+      return;
+    }
+    const renames = {};
+    list.forEach((r) => {
+      if (r.orig && r.name.trim() && teacherKey(r.name) && r.orig !== r.name.trim()) renames[r.orig] = r.name.trim();
+    });
+    const removed = teachers.filter((t) => !list.some((r) => r.orig === t));
+    onSave({ names: names.sort((a, b) => a.localeCompare(b)), renames, removed });
+  };
+
+  return (
+    <Overlay onClose={onClose}>
+      <h3 style={{ marginTop: 0 }}>Manage teachers</h3>
+      <p style={{ fontSize: 13, color: "#64748b", margin: "0 0 14px" }}>
+        Renaming a teacher updates every class they teach. Removing one sets their classes to "Teacher TBD".
+      </p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 320, overflowY: "auto" }}>
+        {list.map((r, i) => (
+          <div key={i} style={{ display: "flex", gap: 5, alignItems: "center" }}>
+            <input
+              style={{ ...inputStyle, flex: 1, padding: "6px 8px" }}
+              value={r.name}
+              placeholder="Teacher name"
+              onChange={(e) => edit(i, e.target.value)}
+            />
+            {r.orig && (
+              <span style={{ fontSize: 11, color: "#94a3b8", whiteSpace: "nowrap" }}>
+                {countFor(r.orig)} cls
+              </span>
+            )}
+            <button style={{ ...miniBtn, color: "#b91c1c" }} onClick={() => remove(i)} title="Remove teacher">✕</button>
+          </div>
+        ))}
+        {list.length === 0 && (
+          <span style={{ fontSize: 13, color: "#94a3b8" }}>No teachers — add one below.</span>
+        )}
+      </div>
+      <button style={{ ...btnSecondary, marginTop: 10, fontSize: 13, padding: "6px 12px" }} onClick={add}>
+        ＋ Add teacher
+      </button>
+      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20 }}>
+        <button style={btnSecondary} onClick={onClose}>Cancel</button>
+        <button style={btnPrimary} onClick={submit}>Save</button>
       </div>
     </Overlay>
   );

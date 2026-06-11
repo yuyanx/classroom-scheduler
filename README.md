@@ -13,6 +13,9 @@ An interactive classroom scheduling board for the 2026 Summer program (Jericho).
   the library sidebar. Drag a card onto the grid to schedule it — place the same class on several days
   and it stays one record with one shared enrollment (edits sync everywhere). Drag a scheduled card
   back into the library to unschedule it without deleting it.
+- **Teacher roster**: pick teachers from a dropdown when editing a class (or add new ones inline);
+  the **👤 By Teacher** tab shows each teacher's weekly schedule with amber ⚠ warnings when someone
+  is double-booked, and renaming a teacher in **Manage teachers** updates every class they teach
 - Room capacities are managed in **Manage Rooms** and shown under each room header on the calendar
 - Scheduled class cards compare signed-up students against the assigned room capacity with a color-coded progress bar
   (green = room has space, amber = nearly full, red = at or over room capacity)

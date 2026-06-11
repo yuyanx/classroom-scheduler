@@ -51,7 +51,8 @@ classroom-scheduler/
 
 Components inside `App.jsx` (top to bottom): default data + `migrateOld()` →
 `ClassroomScheduler` (main: left library sidebar, tabs, grid, all state ops) →
-`ClassModal` (class fields + schedule-rows editor) → `RoomModal` → `Overlay` / `Field` → style objects.
+`ClassModal` (class fields + schedule-rows editor) → `TeacherScheduleView` (By Teacher tab) →
+`TeacherModal` → `RoomModal` → `Overlay` / `Field` → style objects.
 
 ---
 
@@ -99,6 +100,7 @@ All state lives in one object persisted to localStorage:
   placements: [
     { id, classId, section, slotIdx, room }     // where a class meets
   ],
+  teachers: ["Herrick", "Joshua", ...],         // roster; class.teacher stays a plain string
   nextId: <number>
 }
 ```
@@ -151,6 +153,19 @@ class capacity; it only manages how many students are signed up for that class.
    rows keep existing placement ids where present, new rows get fresh ids. Opening a class from
    the Class Library and changing its schedule rows uses this same path, so the calendar grid updates
    immediately after save.
+
+### Teacher roster & By Teacher view
+
+`teachers` is a sorted list of names; class `teacher` fields remain plain strings (no teacher ids).
+`normalizeData()` rebuilds the roster on load as stored list ∪ every teacher named on a class, deduped
+case-insensitively via `teacherKey()`. The class dialog's Teacher field is a dropdown over the roster
+plus "(Teacher TBD)" and "＋ Add new teacher…" (prompt; the name joins the roster when the class is
+saved). The **👤 By Teacher** tab (`tab === "byTeacher"`, not a real section) replaces the grid with a
+teachers × days table — each cell lists that teacher's classes with time + room, amber ⚠ when one
+teacher has two classes in the same slot, click-to-edit. Its "Manage teachers" button opens
+`TeacherModal`: rename cascades to all classes (matched via `teacherKey`), removal sets classes to
+TBD, a "(Teacher TBD)" row in the view collects unassigned classes. When `tab === "byTeacher"` the
+class dialog's `defaultSection` falls back to `"morning"`.
 
 ### Conflicts: room (red, blocking) vs teacher (amber, soft)
 
