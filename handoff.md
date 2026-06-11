@@ -139,7 +139,8 @@ tray drop handlers, so dragging a scheduled card onto it still unschedules.
 
 Rooms remain ordered string arrays under `rooms.morning` and `rooms.afternoon`; capacities live in
 the parallel `roomCaps` object keyed by the same room names. `RoomModal` edits room names, ordering,
-and capacity together. Calendar room headers display `Cap N`, and scheduled cards compare the class
+and capacity together; clicking a room header on the calendar (`editRoomCap`) prompts for just that
+room's capacity (afternoon capacities apply to all PM days). Calendar room headers display `Cap N`, and scheduled cards compare the class
 `reg` count against the capacity of the room they are placed in. The Class Library no longer edits a
 class capacity; it only manages how many students are signed up for that class.
 

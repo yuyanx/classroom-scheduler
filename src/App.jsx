@@ -611,6 +611,21 @@ export default function ClassroomScheduler() {
     setRoomMgrOpen(false);
   };
 
+  // ── Quick capacity edit from a calendar room header ──
+  const editRoomCap = (room) => {
+    const group = roomGroup(tab);
+    const current = roomCapacity(tab, room);
+    const scope = group === "morning" ? "morning" : "all afternoon days";
+    const raw = prompt(`Capacity for Room ${room} (applies to ${scope}):`, current);
+    if (raw == null) return;
+    const n = parseInt(raw, 10);
+    if (!Number.isFinite(n) || n < 0) {
+      alert("Enter a number of 0 or more.");
+      return;
+    }
+    persist({ ...data, roomCaps: { ...roomCaps, [group]: { ...(roomCaps[group] || {}), [room]: n } } });
+  };
+
   // ── Teacher roster management (rename cascades to classes; removal sets them to TBD) ──
   const saveTeachers = ({ names, renames, removed }) => {
     let nc = catalog;
@@ -935,12 +950,16 @@ export default function ClassroomScheduler() {
                 <th style={{ ...thStyle, width: 96, position: "sticky", left: 0, background: "#fafaf8", zIndex: 2 }}>Time</th>
                 {curRooms.map((r) => (
                   <th key={r} style={thStyle}>
-                    <div style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+                    <div
+                      onClick={() => editRoomCap(r)}
+                      title={`Click to change Room ${r}'s capacity`}
+                      style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", gap: 3, cursor: "pointer" }}
+                    >
                       <span style={{ display: "inline-block", background: "#123c3a", color: "#fff", borderRadius: 6, padding: "2px 10px", fontSize: 13 }}>
                         Room {r}
                       </span>
-                      <span style={{ fontSize: 11, color: "#64748b", fontWeight: 700 }}>
-                        Cap {roomCapacity(tab, r)}
+                      <span style={{ fontSize: 11, color: "#64748b", fontWeight: 700, borderBottom: "1px dashed #b9c0bb" }}>
+                        Cap {roomCapacity(tab, r)} ✎
                       </span>
                     </div>
                   </th>
