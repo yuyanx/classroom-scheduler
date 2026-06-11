@@ -191,6 +191,8 @@ warning when any of that class's placements conflict. Room conflicts remain hard
   status, a manual Save now button, and a detailed warning when browser storage fails.
 - 2026-06-11 — **wider schedule pane**: removed the centered max-width wrapper, narrowed the library
   sidebar, and compacted grid columns so all rooms/day tabs fit on screen.
+- 2026-06-11 — **grid card containment**: tightened schedule-card typography/controls, fixed card
+  overflow inside compact columns, and removed the long native drag tooltip from cards.
 
 ---
 

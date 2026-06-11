@@ -706,7 +706,7 @@ export default function ClassroomScheduler() {
                           <button
                             onClick={() => setEditing({ isNew: true, slotIdx: si, room })}
                             style={{
-                              width: "100%", minHeight: 86,
+                              width: "100%", minHeight: 118,
                               border: isOver ? "2px solid #0d7a72" : "1.5px dashed #cbd5d1",
                               borderRadius: 8,
                               background: isOver ? "#f0fdfa" : "transparent",
@@ -741,21 +741,21 @@ export default function ClassroomScheduler() {
                           style={{
                             border: isOver && drag?.id !== pl.id ? "2px solid #0d7a72" : hasTeacherConflict ? "2px solid #dc2626" : "1px solid #d6dad4",
                             borderRadius: 8, background: col.bg,
-                            padding: "8px 10px", minHeight: 86, display: "flex", flexDirection: "column", gap: 4,
+                            boxSizing: "border-box", width: "100%", maxWidth: "100%", overflow: "hidden",
+                            padding: "8px", minHeight: 118, display: "flex", flexDirection: "column", gap: 4,
                             opacity: drag?.type === "pl" && drag.id === pl.id ? 0.35 : 1,
                             cursor: "grab",
                             boxShadow: isOver && drag?.id !== pl.id ? "0 0 0 3px rgba(13,122,114,.15)" : hasTeacherConflict ? "0 0 0 3px rgba(220,38,38,.12)" : "none",
                             transition: "opacity .15s, box-shadow .15s",
                           }}
-                          title={isOver && drag?.id !== pl.id ? "Release to swap with this class" : "Drag to move (or into the library to unschedule) · click text to edit"}
                         >
                           <div
                             onClick={() => setEditing({ isNew: false, classId: cls.id, placementId: pl.id, slotIdx: si, room })}
                             style={{ cursor: "pointer" }}
                             title="Click to edit"
                           >
-                            <div style={{ fontWeight: 700, fontSize: 14, lineHeight: 1.25 }}>{cls.name}</div>
-                            <div style={{ fontSize: 12, color: "#475569", marginTop: 2 }}>
+                            <div style={{ fontWeight: 700, fontSize: 13, lineHeight: 1.2, overflowWrap: "anywhere" }}>{cls.name}</div>
+                            <div style={{ fontSize: 12, color: "#475569", marginTop: 2, overflowWrap: "anywhere" }}>
                               {cls.teacher || <i style={{ color: "#b45309" }}>Teacher TBD</i>}
                               {cls.note && <span style={{ marginLeft: 6, color: "#7c3aed" }}>⏱ {cls.note}</span>}
                             </div>
@@ -768,15 +768,15 @@ export default function ClassroomScheduler() {
                               </div>
                             )}
                             {otherDays.length > 0 && (
-                              <div style={{ fontSize: 11, color: "#0f766e", marginTop: 2 }} title="Same class (one roster) also meets on these days">
+                              <div style={{ fontSize: 11, color: "#0f766e", marginTop: 2, overflowWrap: "anywhere" }} title="Same class (one roster) also meets on these days">
                                 ⇄ also {otherDays.join(" · ")}
                               </div>
                             )}
                           </div>
-                          <div style={{ marginTop: "auto" }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <div style={{ marginTop: "auto", minWidth: 0 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
                               <button onClick={() => bump(cls.id, -1)} style={stepBtn}>−</button>
-                              <span style={{ fontSize: 13, fontWeight: 700, color: col.text, minWidth: 48, textAlign: "center" }}>
+                              <span style={{ fontSize: 12, fontWeight: 700, color: col.text, minWidth: 0, flex: 1, textAlign: "center", whiteSpace: "nowrap" }}>
                                 {cls.reg} / {cap}
                               </span>
                               <button onClick={() => bump(cls.id, +1)} style={stepBtn}>＋</button>
@@ -1186,7 +1186,7 @@ const thStyle = {
   fontSize: 13, fontWeight: 600, color: "#475569", textAlign: "center", background: "#fafaf8",
 };
 const tdStyle = {
-  padding: 8, borderBottom: "1px solid #eceeea", borderRight: "1px solid #eceeea", verticalAlign: "top",
+  padding: 6, borderBottom: "1px solid #eceeea", borderRight: "1px solid #eceeea", verticalAlign: "top",
 };
 const inputStyle = {
   width: "100%", boxSizing: "border-box", padding: "8px 10px", fontSize: 14,
@@ -1221,6 +1221,6 @@ const miniBtn = {
   fontSize: 12, cursor: "pointer", color: "#475569", lineHeight: 1,
 };
 const stepBtn = {
-  width: 24, height: 24, borderRadius: 6, border: "1px solid #cbd5d1", background: "#fff",
-  cursor: "pointer", fontSize: 14, lineHeight: 1, color: "#334155",
+  width: 24, height: 24, flex: "0 0 24px", borderRadius: 6, border: "1px solid #cbd5d1", background: "#fff",
+  cursor: "pointer", fontSize: 14, lineHeight: 1, color: "#334155", padding: 0,
 };
