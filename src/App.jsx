@@ -190,8 +190,8 @@ const STORAGE_KEY = "premier-classroom-schedule";
 // ───────────────────────── Shared storage (Supabase) ─────────────────────────
 // One shared schedule for everyone. The anon key is designed to be public; what
 // it can do is limited by the table's RLS policies. Empty key = browser-only mode.
-const SUPABASE_URL = "https://oskrgygiewyqdsopakpp.supabase.co";
-const SUPABASE_KEY = ""; // ← paste the anon/publishable key to enable shared sync
+const SUPABASE_URL = "https://zbvedbwbxdzcsnftvyph.supabase.co";
+const SUPABASE_KEY = "sb_publishable_cDEmeJDF7lwuafg8ZYKF4Q_Sl_fUSTE";
 const REMOTE_ENABLED = Boolean(SUPABASE_URL && SUPABASE_KEY);
 const REMOTE_ROW_ID = 1;
 const REMOTE_POLL_MS = 30000;

@@ -4,7 +4,7 @@
 
 **Premier Plus · Classroom Scheduler** — an interactive scheduling board for the 2026 Summer program at Jericho. Staff define classes in a **Class Library**, then schedule them onto a weekly grid (rooms × time slots) either by drag-and-drop or by editing meeting times in the class dialog. Class signed-up counts, rooms, room capacities, and time slots are all editable in place.
 
-No backend. All state is stored in the visitor's browser (`localStorage`, key: `premier-classroom-schedule`). Two users opening the site see independent copies.
+State is one shared schedule in Supabase (project `zbvedbwbxdzcsnftvyph`, table `public.schedule`, single row `id=1`, `data` jsonb) — everyone who opens the site sees and edits the same copy, last write wins. `localStorage` (key: `premier-classroom-schedule`) remains the offline fallback/cache. With `SUPABASE_KEY` empty the app degrades to browser-only copies.
 
 ---
 
@@ -183,9 +183,20 @@ they can't be confused:
 - **Open-room hints** — while a modal schedule row has no room selected, a muted line lists which
   rooms are still free in that slot ("Open rooms: 1, 3" / "No open rooms in this time slot").
 
-### Persistence
+### Persistence (shared via Supabase)
 
-`loadData()` / `saveData()` near the top of `App.jsx` are the only places that touch localStorage. `saveData()` writes the JSON payload and reads it back to verify the browser actually kept it. The header shows a save status (`Saved to this browser at ...`), includes a manual **Save now** button, and shows a red warning banner when browser storage is blocked or unavailable. Swapping these two functions is the complete scope of adding a backend.
+The shared schedule lives in Supabase: `SUPABASE_URL` / `SUPABASE_KEY` consts at the top of
+`App.jsx`, table `public.schedule`, one row (`id = REMOTE_ROW_ID = 1`) with the whole data object
+as jsonb. Plain `fetch` against the PostgREST API — no SDK dependency. `remoteLoad()` /
+`remoteSave()` / `remoteUpdatedAt()` are the only network functions. Flow: on mount, load the row
+(seeding it from the local copy if it doesn't exist yet); `persist()` updates state, writes the
+localStorage cache, and debounce-saves to Supabase (600 ms) with header status
+("Saving…" / "Saved for everyone at …"); a 30 s poll picks up other computers' changes when this
+tab has no pending save (last write wins, whole-document). Offline / RLS errors show a red banner;
+**Save now** retries. The anon key ships in the bundle by design — write access is limited only by
+the permissive RLS policies (anyone with the URL can edit; add auth/PIN if that changes).
+`saveData()` (localStorage) still verifies its write by reading back; with `SUPABASE_KEY` empty the
+app runs exactly as the old browser-only version.
 
 ### Capacity color logic
 
