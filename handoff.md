@@ -238,7 +238,9 @@ app runs exactly as the old browser-only version.
   with status, 30 s polling, automatic retry (5 s / on reconnect / tab-close flush with keepalive);
   removed the header Save now button — a "Retry now" button appears in the failure banner instead.
 - 2026-06-11 — **By Class view**: 📋 tab with one row per class (teacher, signed-up, meets-N×/week,
-  note) and day columns showing each meeting's time + room; unscheduled classes sort first in amber.
+  note) and day columns showing each meeting's time + room; unscheduled classes sort first in amber,
+  then rows order by earliest start time of day (slot labels parsed as AM for morning / PM for day
+  tabs), tie-broken by day then name.
 
 ---
 

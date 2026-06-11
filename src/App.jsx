@@ -1312,13 +1312,35 @@ function ClassScheduleView({ catalog, placements, slots, onEditClass }) {
       .filter((p) => p.classId === classId && p.section === sectionId)
       .sort((a, b) => a.slotIdx - b.slotIdx);
 
+  // Start time in minutes since midnight; slot labels carry no AM/PM, so the
+  // section decides (morning = AM, day tabs = PM). Unparseable labels sort last.
+  const startMinutes = (sectionId, slotIdx) => {
+    const m = /^(\d{1,2})(?::(\d{2}))?/.exec(slotShort((slots[sectionId] || [])[slotIdx]) || "");
+    if (!m) return 24 * 60;
+    let h = parseInt(m[1], 10);
+    if (roomGroup(sectionId) === "afternoon" && h < 12) h += 12;
+    return h * 60 + parseInt(m[2] || "0", 10);
+  };
+
+  // A class's earliest meeting: [time of day, day, slot] — null when unscheduled
+  const earliestKey = (classId) => {
+    let best = null;
+    placements.forEach((p) => {
+      if (p.classId !== classId) return;
+      const key = [startMinutes(p.section, p.slotIdx), sectionIdx(p.section), p.slotIdx];
+      if (!best || key[0] < best[0] || (key[0] === best[0] && (key[1] < best[1] || (key[1] === best[1] && key[2] < best[2])))) best = key;
+    });
+    return best;
+  };
+
   const rows = catalog
     .slice()
     .sort((a, b) => {
-      const ap = placements.some((p) => p.classId === a.id);
-      const bp = placements.some((p) => p.classId === b.id);
-      if (ap !== bp) return ap ? 1 : -1; // unscheduled first, same as the library
-      return a.name.localeCompare(b.name);
+      const ka = earliestKey(a.id);
+      const kb = earliestKey(b.id);
+      if (!ka !== !kb) return ka ? 1 : -1; // unscheduled first, same as the library
+      if (!ka && !kb) return a.name.localeCompare(b.name);
+      return ka[0] - kb[0] || ka[1] - kb[1] || ka[2] - kb[2] || a.name.localeCompare(b.name);
     });
 
   return (
