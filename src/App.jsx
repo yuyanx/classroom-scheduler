@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 
 // ───────────────────────── Default data (from 2026 Summer Jericho schedule) ─────────────────────────
 // Morning uses combined room 2+3; afternoons use rooms 2 and 3 separately
@@ -187,6 +187,52 @@ const defaultData = () =>
 
 const STORAGE_KEY = "premier-classroom-schedule";
 
+// ───────────────────────── Shared storage (Supabase) ─────────────────────────
+// One shared schedule for everyone. The anon key is designed to be public; what
+// it can do is limited by the table's RLS policies. Empty key = browser-only mode.
+const SUPABASE_URL = "https://oskrgygiewyqdsopakpp.supabase.co";
+const SUPABASE_KEY = ""; // ← paste the anon/publishable key to enable shared sync
+const REMOTE_ENABLED = Boolean(SUPABASE_URL && SUPABASE_KEY);
+const REMOTE_ROW_ID = 1;
+const REMOTE_POLL_MS = 30000;
+
+const sbHeaders = () => ({
+  apikey: SUPABASE_KEY,
+  Authorization: `Bearer ${SUPABASE_KEY}`,
+  "Content-Type": "application/json",
+});
+
+async function remoteLoad() {
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/schedule?id=eq.${REMOTE_ROW_ID}&select=data,updated_at`,
+    { headers: sbHeaders() }
+  );
+  if (!res.ok) throw new Error(`Could not load shared schedule (HTTP ${res.status})`);
+  const rows = await res.json();
+  return rows[0] || null; // { data, updated_at } | null (no row yet)
+}
+
+async function remoteUpdatedAt() {
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/schedule?id=eq.${REMOTE_ROW_ID}&select=updated_at`,
+    { headers: sbHeaders() }
+  );
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const rows = await res.json();
+  return rows[0]?.updated_at || null;
+}
+
+async function remoteSave(data) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/schedule?on_conflict=id`, {
+    method: "POST",
+    headers: { ...sbHeaders(), Prefer: "resolution=merge-duplicates,return=representation" },
+    body: JSON.stringify({ id: REMOTE_ROW_ID, data, updated_at: new Date().toISOString() }),
+  });
+  if (!res.ok) throw new Error(`Could not save shared schedule (HTTP ${res.status})`);
+  const rows = await res.json();
+  return rows[0]?.updated_at || null;
+}
+
 const loadData = () => {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -246,6 +292,10 @@ export default function ClassroomScheduler() {
   const [libOpen, setLibOpen] = useState(true);
   const [libQuery, setLibQuery] = useState("");
 
+  const remoteRef = useRef({ timer: null, lastSyncedAt: null, pendingSave: false });
+
+  const timeLabel = () => new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
   const updateSaveStatus = useCallback((result) => {
     const now = new Date();
     setSaveStatus({
@@ -256,16 +306,84 @@ export default function ClassroomScheduler() {
     });
   }, []);
 
+  const setStatus = (ok, label, error = "") =>
+    setSaveStatus({ ok, lastSavedAt: ok ? new Date() : null, error, label });
+
+  const flushRemoteSave = async (payload) => {
+    remoteRef.current.pendingSave = true;
+    try {
+      const ts = await remoteSave(payload);
+      remoteRef.current.lastSyncedAt = ts || new Date().toISOString();
+      remoteRef.current.pendingSave = false;
+      setStatus(true, `Saved for everyone at ${timeLabel()}`);
+    } catch (e) {
+      remoteRef.current.pendingSave = false;
+      setStatus(false, "Not saved", e?.message || "Network error");
+    }
+  };
+
   const persist = useCallback((next) => {
     setData(next);
-    updateSaveStatus(saveData(next));
+    if (!REMOTE_ENABLED) {
+      updateSaveStatus(saveData(next));
+      return;
+    }
+    saveData(next); // keep a local cache as offline fallback
+    setSaveStatus((s) => ({ ...s, ok: true, error: "", label: "Saving…" }));
+    remoteRef.current.pendingSave = true;
+    clearTimeout(remoteRef.current.timer);
+    remoteRef.current.timer = setTimeout(() => flushRemoteSave(next), 600);
   }, [updateSaveStatus]);
 
   useEffect(() => {
-    updateSaveStatus(saveData(data));
-  }, []); // Save loaded/normalized data once; user changes go through persist().
+    if (!REMOTE_ENABLED) {
+      updateSaveStatus(saveData(data));
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setSaveStatus((s) => ({ ...s, label: "Loading shared schedule…" }));
+      try {
+        const row = await remoteLoad();
+        if (cancelled) return;
+        if (row) {
+          remoteRef.current.lastSyncedAt = row.updated_at;
+          setData(normalizeData(row.data));
+          setStatus(true, `Shared schedule loaded at ${timeLabel()}`);
+        } else {
+          // First run ever: publish this browser's copy as the shared schedule
+          await flushRemoteSave(data);
+        }
+      } catch (e) {
+        if (!cancelled) setStatus(false, "Offline — using this browser's copy", e?.message || "");
+      }
+    })();
+    // Light polling keeps other open computers in sync (last write wins)
+    const iv = setInterval(async () => {
+      if (remoteRef.current.pendingSave || document.hidden) return;
+      try {
+        const ts = await remoteUpdatedAt();
+        if (ts && remoteRef.current.lastSyncedAt && ts > remoteRef.current.lastSyncedAt) {
+          const row = await remoteLoad();
+          if (row && !remoteRef.current.pendingSave) {
+            remoteRef.current.lastSyncedAt = row.updated_at;
+            setData(normalizeData(row.data));
+            setStatus(true, `Updated from another computer at ${timeLabel()}`);
+          }
+        }
+      } catch (e) { /* ignore transient poll errors */ }
+    }, REMOTE_POLL_MS);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, []);
 
-  const saveNow = () => updateSaveStatus(saveData(data));
+  const saveNow = () => {
+    if (!REMOTE_ENABLED) {
+      updateSaveStatus(saveData(data));
+      return;
+    }
+    clearTimeout(remoteRef.current.timer);
+    flushRemoteSave(data);
+  };
 
   const { rooms, slots, roomCaps, catalog, placements, teachers } = data;
   const curRooms = rooms[roomGroup(tab)] || [];
@@ -526,7 +644,9 @@ export default function ClassroomScheduler() {
               Total enrolled <b style={{ fontSize: 16 }}>{totalReg}</b>
             </span>
             <span
-              title={saveStatus.ok ? "Changes are stored in this browser." : saveStatus.error}
+              title={saveStatus.ok
+                ? (REMOTE_ENABLED ? "Everyone opening this site sees this shared schedule." : "Changes are stored in this browser.")
+                : saveStatus.error}
               style={{
                 fontSize: 12,
                 color: saveStatus.ok ? "#d1fae5" : "#fecaca",
@@ -544,7 +664,9 @@ export default function ClassroomScheduler() {
 
       {!saveStatus.ok && (
         <div style={{ background: "#fef2f2", color: "#b91c1c", padding: "8px 24px", fontSize: 13 }}>
-          Changes could not be saved to this browser. They may be lost when you close the page.
+          {REMOTE_ENABLED
+            ? "Changes are not reaching the shared schedule — they are kept in this browser for now. Use Save now to retry."
+            : "Changes could not be saved to this browser. They may be lost when you close the page."}
           {saveStatus.error && <span> Details: {saveStatus.error}</span>}
         </div>
       )}
@@ -866,7 +988,8 @@ export default function ClassroomScheduler() {
               days (e.g. Tue + Thu) — it stays one class with one shared enrollment, so edits update everywhere
               (the Morning tab already means every day). Drag a scheduled card onto another to swap, or back into the
               library to unschedule it. Click any card to edit, use ＋ − to adjust signed-up students.
-              Green = room has space, amber = nearly full, red = at or over room capacity. Data is saved in this browser.
+              Green = room has space, amber = nearly full, red = at or over room capacity.{" "}
+              {REMOTE_ENABLED ? "Everyone sees this same shared schedule." : "Data is saved in this browser."}
             </p>
             </>
             )}
@@ -928,7 +1051,8 @@ export default function ClassroomScheduler() {
         <Overlay onClose={() => setConfirmReset(false)}>
           <h3 style={{ marginTop: 0 }}>Reset all data?</h3>
           <p style={{ fontSize: 14, color: "#475569" }}>
-            This restores the original schedule from the registration sheet. All changes will be lost.
+            This restores the original schedule from the registration sheet. All changes will be lost
+            {REMOTE_ENABLED ? " — for everyone using this site" : ""}.
           </p>
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
             <button style={btnSecondary} onClick={() => setConfirmReset(false)}>Cancel</button>
