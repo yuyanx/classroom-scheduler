@@ -485,7 +485,7 @@ export default function ClassroomScheduler() {
     <div style={{ minHeight: "100vh", background: "#f4f5f3", fontFamily: "'Inter','Helvetica Neue',Arial,sans-serif", color: "#1e293b" }}>
       {/* Header */}
       <header style={{ background: "#123c3a", color: "#fff", padding: "18px 24px" }}>
-        <div style={{ maxWidth: 1320, margin: "0 auto", display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 16 }}>
+        <div style={{ width: "100%", boxSizing: "border-box", display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 16 }}>
           <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, letterSpacing: "0.02em" }}>
             Premier Plus · Classroom Scheduler
           </h1>
@@ -520,9 +520,9 @@ export default function ClassroomScheduler() {
         </div>
       )}
 
-      <div style={{ maxWidth: 1500, margin: "0 auto", padding: "16px 24px 40px", display: "flex", gap: 16, alignItems: "flex-start" }}>
+      <div style={{ width: "100%", boxSizing: "border-box", padding: "16px 12px 40px", display: "flex", gap: 12, alignItems: "flex-start" }}>
         {/* Class Library */}
-        <aside style={{ flex: "0 0 300px", width: 300, position: "sticky", top: 16, alignSelf: "flex-start" }}>
+        <aside style={{ flex: "0 0 240px", width: 240, position: "sticky", top: 16, alignSelf: "flex-start" }}>
           <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: 10, height: "calc(100vh - 112px)", minHeight: 420, maxHeight: 780, display: "flex", flexDirection: "column", overflow: "hidden" }}>
             <div style={{ padding: "12px 14px", borderBottom: libOpen ? "1px solid #eceeea" : "none" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -542,12 +542,12 @@ export default function ClassroomScheduler() {
               {libOpen && (
                 <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                   <input
-                    style={{ ...inputStyle, minWidth: 0, flex: 1, padding: "6px 10px", fontSize: 13 }}
+                    style={{ ...inputStyle, minWidth: 0, flex: 1, padding: "6px 8px", fontSize: 13 }}
                     placeholder="Search class or teacher…"
                     value={libQuery}
                     onChange={(e) => setLibQuery(e.target.value)}
                   />
-                  <button style={{ ...btnPrimary, padding: "7px 11px", fontSize: 13, flexShrink: 0 }} onClick={() => setEditing({ isNew: true })}>
+                  <button style={{ ...btnPrimary, padding: "7px 9px", fontSize: 13, flexShrink: 0 }} onClick={() => setEditing({ isNew: true })}>
                     ＋ New
                   </button>
                 </div>
@@ -557,7 +557,7 @@ export default function ClassroomScheduler() {
               <div
                 {...trayHandlers}
                 style={{
-                  padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8, minHeight: 0, flex: 1, alignItems: "stretch",
+                  padding: "10px", display: "flex", flexDirection: "column", gap: 8, minHeight: 0, flex: 1, alignItems: "stretch",
                   overflowY: "auto", overscrollBehavior: "contain",
                   background: dragOver === "tray" ? "#fff7ed" : "transparent",
                   outline: drag?.type === "pl" ? "2px dashed #d97706" : "none",
@@ -645,7 +645,7 @@ export default function ClassroomScheduler() {
                 key={s.id}
                 onClick={() => setTab(s.id)}
                 style={{
-                  padding: "8px 18px",
+                  padding: "8px 14px",
                   borderRadius: "10px 10px 0 0",
                   border: "1px solid #d6dad4",
                   borderBottom: "none",
@@ -667,10 +667,10 @@ export default function ClassroomScheduler() {
           {/* Schedule grid */}
           <main>
             <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 140 + curRooms.length * 145 }}>
+          <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 96 + curRooms.length * 112, tableLayout: "fixed" }}>
             <thead>
               <tr>
-                <th style={{ ...thStyle, minWidth: 130, position: "sticky", left: 0, background: "#fafaf8", zIndex: 2 }}>Time</th>
+                <th style={{ ...thStyle, width: 96, position: "sticky", left: 0, background: "#fafaf8", zIndex: 2 }}>Time</th>
                 {curRooms.map((r) => (
                   <th key={r} style={thStyle}>
                     <div style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
@@ -688,7 +688,7 @@ export default function ClassroomScheduler() {
             <tbody>
               {curSlots.map((slot, si) => (
                 <tr key={si}>
-                  <td style={{ ...tdStyle, position: "sticky", left: 0, background: "#fafaf8", zIndex: 1, verticalAlign: "top" }}>
+                  <td style={{ ...tdStyle, width: 96, position: "sticky", left: 0, background: "#fafaf8", zIndex: 1, verticalAlign: "top" }}>
                     <div style={{ fontWeight: 700, fontSize: 14, color: "#123c3a" }}>{slot}</div>
                     <div style={{ marginTop: 6, display: "flex", gap: 6 }}>
                       <button onClick={() => renameSlot(si)} style={miniBtn} title="Rename time slot">✎</button>

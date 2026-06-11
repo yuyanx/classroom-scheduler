@@ -123,9 +123,11 @@ Six tabs: `morning` (daily AM), then `mon`–`fri` (afternoon PM). Morning uses 
 ### Layout
 
 The Class Library is a left sidebar (`aside`) inside the main content row. The sidebar has a fixed
-width of 300px and its card list scrolls independently with `overflowY: auto`; the schedule tabs and
-grid live in the flexible right pane. Keep drag-and-drop handlers attached to the sidebar list so
-dropping a scheduled grid card there still unschedules it without deleting the catalog entry.
+width of 240px and its card list scrolls independently with `overflowY: auto`; the schedule tabs and
+grid live in the flexible right pane. The content row uses the full browser width, not a centered
+max-width wrapper, and the grid uses compact fixed-layout columns so all 8 afternoon rooms fit at a
+standard 1280px viewport. Keep drag-and-drop handlers attached to the sidebar list so dropping a
+scheduled grid card there still unschedules it without deleting the catalog entry.
 
 ### Rooms and capacity
 
@@ -187,6 +189,8 @@ warning when any of that class's placements conflict. Room conflicts remain hard
   class dialogs now only edit signed-up students, and calendar room headers show capacity.
 - 2026-06-10 — **explicit save status**: added verified localStorage writes, a visible saved-at
   status, a manual Save now button, and a detailed warning when browser storage fails.
+- 2026-06-11 — **wider schedule pane**: removed the centered max-width wrapper, narrowed the library
+  sidebar, and compacted grid columns so all rooms/day tabs fit on screen.
 
 ---
 
