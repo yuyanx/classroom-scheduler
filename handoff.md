@@ -192,8 +192,10 @@ as jsonb. Plain `fetch` against the PostgREST API — no SDK dependency. `remote
 (seeding it from the local copy if it doesn't exist yet); `persist()` updates state, writes the
 localStorage cache, and debounce-saves to Supabase (600 ms) with header status
 ("Saving…" / "Saved for everyone at …"); a 30 s poll picks up other computers' changes when this
-tab has no pending save (last write wins, whole-document). Offline / RLS errors show a red banner;
-**Save now** retries. The anon key ships in the bundle by design — write access is limited only by
+tab has no pending save (last write wins, whole-document). Failed saves retry automatically every
+5 s (and on the browser `online` event); a `pagehide` listener flushes a still-debouncing save with
+`keepalive: true` so closing the tab doesn't drop the last edit. Offline / RLS errors show a red
+banner with a "Retry now" button — there is no always-visible save button since saving is automatic. The anon key ships in the bundle by design — write access is limited only by
 the permissive RLS policies (anyone with the URL can edit; add auth/PIN if that changes).
 `saveData()` (localStorage) still verifies its write by reading back; with `SUPABASE_KEY` empty the
 app runs exactly as the old browser-only version.
@@ -227,6 +229,14 @@ app runs exactly as the old browser-only version.
   sidebar, and compacted grid columns so all rooms/day tabs fit on screen.
 - 2026-06-11 — **grid card containment**: tightened schedule-card typography/controls, fixed card
   overflow inside compact columns, and removed the long native drag tooltip from cards.
+- 2026-06-11 — **conflict semantics split**: room conflicts are red blocking errors (inline in the
+  dialog and at save), teacher overlaps are amber warnings with a save-time confirm, plus
+  open-room hints in schedule rows.
+- 2026-06-11 — **teacher roster + By Teacher view**: managed teacher list, dropdown picker in the
+  class dialog, per-teacher weekly schedule tab with double-booking highlights, Manage teachers modal.
+- 2026-06-11 — **shared schedule via Supabase**: one shared row for everyone, debounced auto-save
+  with status, 30 s polling, automatic retry (5 s / on reconnect / tab-close flush with keepalive);
+  removed the header Save now button — a "Retry now" button appears in the failure banner instead.
 
 ---
 

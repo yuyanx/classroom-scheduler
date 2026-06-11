@@ -222,11 +222,12 @@ async function remoteUpdatedAt() {
   return rows[0]?.updated_at || null;
 }
 
-async function remoteSave(data) {
+async function remoteSave(data, opts = {}) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/schedule?on_conflict=id`, {
     method: "POST",
     headers: { ...sbHeaders(), Prefer: "resolution=merge-duplicates,return=representation" },
     body: JSON.stringify({ id: REMOTE_ROW_ID, data, updated_at: new Date().toISOString() }),
+    keepalive: opts.keepalive || false, // lets the save finish while the tab is closing
   });
   if (!res.ok) throw new Error(`Could not save shared schedule (HTTP ${res.status})`);
   const rows = await res.json();
@@ -292,7 +293,9 @@ export default function ClassroomScheduler() {
   const [libOpen, setLibOpen] = useState(true);
   const [libQuery, setLibQuery] = useState("");
 
-  const remoteRef = useRef({ timer: null, lastSyncedAt: null, pendingSave: false });
+  const remoteRef = useRef({ timer: null, retryTimer: null, lastSyncedAt: null, pendingSave: false, lastSaveFailed: false });
+  const dataRef = useRef(data);
+  dataRef.current = data; // latest data for retries and the tab-close flush
 
   const timeLabel = () => new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
@@ -315,10 +318,18 @@ export default function ClassroomScheduler() {
       const ts = await remoteSave(payload);
       remoteRef.current.lastSyncedAt = ts || new Date().toISOString();
       remoteRef.current.pendingSave = false;
+      remoteRef.current.lastSaveFailed = false;
+      clearTimeout(remoteRef.current.retryTimer);
       setStatus(true, `Saved for everyone at ${timeLabel()}`);
     } catch (e) {
       remoteRef.current.pendingSave = false;
+      remoteRef.current.lastSaveFailed = true;
       setStatus(false, "Not saved", e?.message || "Network error");
+      // Keep retrying with the latest data until a save lands
+      clearTimeout(remoteRef.current.retryTimer);
+      remoteRef.current.retryTimer = setTimeout(() => {
+        if (!remoteRef.current.pendingSave) flushRemoteSave(dataRef.current);
+      }, 5000);
     }
   };
 
@@ -373,7 +384,27 @@ export default function ClassroomScheduler() {
         }
       } catch (e) { /* ignore transient poll errors */ }
     }, REMOTE_POLL_MS);
-    return () => { cancelled = true; clearInterval(iv); };
+    // Retry as soon as the connection returns (only when a save actually failed)
+    const onOnline = () => {
+      if (remoteRef.current.lastSaveFailed && !remoteRef.current.pendingSave) flushRemoteSave(dataRef.current);
+    };
+    window.addEventListener("online", onOnline);
+    // Flush a still-debouncing save when the tab closes, so the last edit isn't lost
+    const onPageHide = () => {
+      if (remoteRef.current.timer) {
+        clearTimeout(remoteRef.current.timer);
+        remoteRef.current.timer = null;
+        remoteSave(dataRef.current, { keepalive: true }).catch(() => {});
+      }
+    };
+    window.addEventListener("pagehide", onPageHide);
+    return () => {
+      cancelled = true;
+      clearInterval(iv);
+      clearTimeout(remoteRef.current.retryTimer);
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("pagehide", onPageHide);
+    };
   }, []);
 
   const saveNow = () => {
@@ -655,7 +686,6 @@ export default function ClassroomScheduler() {
             >
               {saveStatus.label}
             </span>
-            <button onClick={saveNow} style={btnGhost}>Save now</button>
             <button onClick={() => setRoomMgrOpen(true)} style={btnGhost}>Manage Rooms</button>
             <button onClick={() => setConfirmReset(true)} style={{ ...btnGhost, opacity: 0.7 }}>Reset Data</button>
           </div>
@@ -663,11 +693,16 @@ export default function ClassroomScheduler() {
       </header>
 
       {!saveStatus.ok && (
-        <div style={{ background: "#fef2f2", color: "#b91c1c", padding: "8px 24px", fontSize: 13 }}>
-          {REMOTE_ENABLED
-            ? "Changes are not reaching the shared schedule — they are kept in this browser for now. Use Save now to retry."
-            : "Changes could not be saved to this browser. They may be lost when you close the page."}
-          {saveStatus.error && <span> Details: {saveStatus.error}</span>}
+        <div style={{ background: "#fef2f2", color: "#b91c1c", padding: "8px 24px", fontSize: 13, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <span>
+            {REMOTE_ENABLED
+              ? "Changes are not reaching the shared schedule — they are kept in this browser and retried automatically."
+              : "Changes could not be saved to this browser. They may be lost when you close the page."}
+            {saveStatus.error && <span> Details: {saveStatus.error}</span>}
+          </span>
+          <button onClick={saveNow} style={{ ...btnSecondary, color: "#b91c1c", borderColor: "#fca5a5", padding: "4px 10px", fontSize: 12 }}>
+            Retry now
+          </button>
         </div>
       )}
 
