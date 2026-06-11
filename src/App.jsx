@@ -845,26 +845,31 @@ export default function ClassroomScheduler() {
                 {s.label}
               </button>
             ))}
-            <button
-              onClick={() => setTab("byTeacher")}
-              style={{
-                padding: "8px 14px",
-                borderRadius: "10px 10px 0 0",
-                border: "1px solid #d6dad4",
-                borderBottom: "none",
-                cursor: "pointer",
-                fontSize: 14,
-                fontWeight: tab === "byTeacher" ? 700 : 400,
-                background: tab === "byTeacher" ? "#fff" : "#e8eae6",
-                color: tab === "byTeacher" ? "#123c3a" : "#64748b",
-              }}
-            >
-              👤 By Teacher
-            </button>
+            {[{ id: "byClass", label: "📋 By Class" }, { id: "byTeacher", label: "👤 By Teacher" }].map((v) => (
+              <button
+                key={v.id}
+                onClick={() => setTab(v.id)}
+                style={{
+                  padding: "8px 14px",
+                  borderRadius: "10px 10px 0 0",
+                  border: "1px solid #d6dad4",
+                  borderBottom: "none",
+                  cursor: "pointer",
+                  fontSize: 14,
+                  fontWeight: tab === v.id ? 700 : 400,
+                  background: tab === v.id ? "#fff" : "#e8eae6",
+                  color: tab === v.id ? "#123c3a" : "#64748b",
+                }}
+              >
+                {v.label}
+              </button>
+            ))}
             <span style={{ marginLeft: "auto", alignSelf: "center", fontSize: 13, color: "#64748b" }}>
               {tab === "byTeacher"
                 ? `${(teachers || []).length} teachers · ${noTeacherCount} classes need a teacher`
-                : `${tabPls.length} classes · ${tabReg} students in this view`}
+                : tab === "byClass"
+                  ? `${catalog.length} classes · ${unscheduledCount} unscheduled`
+                  : `${tabPls.length} classes · ${tabReg} students in this view`}
             </span>
           </nav>
 
@@ -878,6 +883,13 @@ export default function ClassroomScheduler() {
                 slots={slots}
                 onEditClass={(classId) => setEditing({ isNew: false, classId })}
                 onManageTeachers={() => setTeacherMgrOpen(true)}
+              />
+            ) : tab === "byClass" ? (
+              <ClassScheduleView
+                catalog={catalog}
+                placements={placements}
+                slots={slots}
+                onEditClass={(classId) => setEditing({ isNew: false, classId })}
               />
             ) : (
             <>
@@ -1050,7 +1062,7 @@ export default function ClassroomScheduler() {
           slots={slots}
           rooms={rooms}
           teachers={teachers || []}
-          defaultSection={tab === "byTeacher" ? "morning" : tab}
+          defaultSection={tab === "byTeacher" || tab === "byClass" ? "morning" : tab}
           occupiedBy={(section, slotIdx, room) => {
             const p = placements.find(
               (x) => x.section === section && x.slotIdx === slotIdx && x.room === room && x.classId !== editing.classId
@@ -1290,6 +1302,97 @@ function ClassModal({ editing, cls, initialRows, slots, rooms, teachers, default
         </div>
       </div>
     </Overlay>
+  );
+}
+
+// ───────────────────────── By-class schedule view ─────────────────────────
+function ClassScheduleView({ catalog, placements, slots, onEditClass }) {
+  const meetingsFor = (classId, sectionId) =>
+    placements
+      .filter((p) => p.classId === classId && p.section === sectionId)
+      .sort((a, b) => a.slotIdx - b.slotIdx);
+
+  const rows = catalog
+    .slice()
+    .sort((a, b) => {
+      const ap = placements.some((p) => p.classId === a.id);
+      const bp = placements.some((p) => p.classId === b.id);
+      if (ap !== bp) return ap ? 1 : -1; // unscheduled first, same as the library
+      return a.name.localeCompare(b.name);
+    });
+
+  return (
+    <>
+      <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto" }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 180 + SECTIONS.length * 118, tableLayout: "fixed" }}>
+          <thead>
+            <tr>
+              <th style={{ ...thStyle, width: 180, position: "sticky", left: 0, background: "#fafaf8", zIndex: 2 }}>Class</th>
+              {SECTIONS.map((s) => (
+                <th key={s.id} style={thStyle}>{s.label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((k) => {
+              const meetCount = placements.filter((p) => p.classId === k.id).length;
+              const scheduled = meetCount > 0;
+              return (
+                <tr
+                  key={k.id}
+                  onClick={() => onEditClass(k.id)}
+                  style={{ cursor: "pointer", background: scheduled ? "transparent" : "#fffbeb" }}
+                  title="Click to edit this class"
+                >
+                  <td style={{ ...tdStyle, position: "sticky", left: 0, background: scheduled ? "#fafaf8" : "#fffbeb", zIndex: 1, verticalAlign: "top" }}>
+                    <div style={{ fontWeight: 700, fontSize: 13, color: "#123c3a", overflowWrap: "anywhere" }}>{k.name}</div>
+                    <div style={{ fontSize: 11, color: "#475569", marginTop: 2 }}>
+                      {k.teacher || <i style={{ color: "#b45309" }}>Teacher TBD</i>}
+                      <b style={{ marginLeft: 6, color: "#123c3a" }}>{k.reg} signed up</b>
+                    </div>
+                    {k.note && (
+                      <div style={{ fontSize: 11, color: "#7c3aed", marginTop: 2 }}>⏱ {k.note}</div>
+                    )}
+                    <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>
+                      {scheduled
+                        ? `meets ${meetCount}×/week`
+                        : <span style={{ ...chipStyle, background: "#fef3c7", color: "#b45309" }}>unscheduled</span>}
+                    </div>
+                  </td>
+                  {SECTIONS.map((s) => {
+                    const list = meetingsFor(k.id, s.id);
+                    return (
+                      <td key={s.id} style={{ ...tdStyle, verticalAlign: "top" }}>
+                        {list.length === 0 ? (
+                          <span style={{ color: "#cbd5d1", fontSize: 12 }}>—</span>
+                        ) : (
+                          list.map((p) => (
+                            <div key={p.id} style={{ fontSize: 12, lineHeight: 1.3, padding: "2px 0", color: "#334155" }}>
+                              {slotShort((slots[p.section] || [])[p.slotIdx])} · Rm {p.room}
+                            </div>
+                          ))
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={SECTIONS.length + 1} style={{ ...tdStyle, color: "#94a3b8", fontSize: 13 }}>
+                  No classes yet — add one in the Class Library.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
+        📋 One row per class — every meeting time and room across the week (Morning = every day).
+        Amber rows are not scheduled yet. Click a row to edit the class.
+      </p>
+    </>
   );
 }
 

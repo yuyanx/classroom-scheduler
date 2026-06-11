@@ -51,8 +51,8 @@ classroom-scheduler/
 
 Components inside `App.jsx` (top to bottom): default data + `migrateOld()` →
 `ClassroomScheduler` (main: left library sidebar, tabs, grid, all state ops) →
-`ClassModal` (class fields + schedule-rows editor) → `TeacherScheduleView` (By Teacher tab) →
-`TeacherModal` → `RoomModal` → `Overlay` / `Field` → style objects.
+`ClassModal` (class fields + schedule-rows editor) → `ClassScheduleView` (By Class tab) →
+`TeacherScheduleView` (By Teacher tab) → `TeacherModal` → `RoomModal` → `Overlay` / `Field` → style objects.
 
 ---
 
@@ -120,7 +120,7 @@ localStorage that predates room capacities.
 
 ### Sections / tabs
 
-Six tabs: `morning` (daily AM), then `mon`–`fri` (afternoon PM). Morning uses `rooms.morning`; all afternoon tabs share `rooms.afternoon`. A class placed in `morning` meets every day by convention; a PM class meeting twice a week simply has placements on two day tabs.
+Six tabs: `morning` (daily AM), then `mon`–`fri` (afternoon PM). Morning uses `rooms.morning`; all afternoon tabs share `rooms.afternoon`. A class placed in `morning` meets every day by convention; a PM class meeting twice a week simply has placements on two day tabs. Two pseudo-tabs (`tab === "byClass"` / `"byTeacher"`, not real sections) swap the grid for read-only overview tables — one row per class / per teacher, columns = days, click-to-edit. Code that uses `tab` as a section must guard for them (see `defaultSection`).
 
 ### Layout
 
@@ -237,6 +237,8 @@ app runs exactly as the old browser-only version.
 - 2026-06-11 — **shared schedule via Supabase**: one shared row for everyone, debounced auto-save
   with status, 30 s polling, automatic retry (5 s / on reconnect / tab-close flush with keepalive);
   removed the header Save now button — a "Retry now" button appears in the failure banner instead.
+- 2026-06-11 — **By Class view**: 📋 tab with one row per class (teacher, signed-up, meets-N×/week,
+  note) and day columns showing each meeting's time + room; unscheduled classes sort first in amber.
 
 ---
 
