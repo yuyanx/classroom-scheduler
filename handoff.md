@@ -88,17 +88,18 @@ All state lives in one object persisted to localStorage / the Supabase row:
     default: [540, 1020],        // [startMin, endMin] — 9:00 AM–5:00 PM
     sat: [540, 780]              // optional per-day override (Sat 9:00 AM–1:00 PM)
   },
-  rooms: [                       // ONE list for the whole week, ordered
+  rooms: [                       // ONE plain list for the whole week, ordered
     { id: "1", cap: 25 },
     { id: "2", cap: 12 }, { id: "3", cap: 12 },
-    { id: "2+3", cap: 25, occupies: ["2", "3"] },    // combined room
     ...
   ],
   catalog: [
     { id, name, teacher, reg, note }                 // one entry per class/cohort
   ],
   placements: [
-    { id, classId, day: "tue", start: 870, end: 960, room: "5" }  // minutes since midnight
+    // minutes since midnight; rooms is usually one room — several = a combined classroom
+    { id, classId, day: "tue", start: 870, end: 960, rooms: ["5"] },
+    { id, classId, day: "mon", start: 540, end: 630, rooms: ["2", "3"] },
   ],
   teachers: ["Herrick", "Joshua", ...],              // roster; class.teacher stays a plain string
   nextId: <number>
@@ -106,14 +107,16 @@ All state lives in one object persisted to localStorage / the Supabase row:
 ```
 
 The **catalog** is the master class list (shown in the Class Library sidebar); **placements** put a
-class onto the calendar. A placement is `(day, start, end, room)` — continuous minutes, not slot
+class onto the calendar. A placement is `(day, start, end, rooms[])` — continuous minutes, not slot
 indexes. A class placed several times has several placements sharing one catalog entry — one
 roster, so signed-up count/name edits apply everywhere. A catalog entry with no placements is
 "unscheduled" and sits in the library sidebar.
 
-**Combined rooms:** a room with `occupies: ["2","3"]` collides with rooms 2 and 3 (and they with
-it, and with each other through shared members). `roomsCollide(a, b)` tests member-set
-intersection; the calendar shows gray stripes in member columns while a combined room is in use.
+**Combined classrooms:** a placement with several rooms (`rooms: ["2","3"]`) occupies them all —
+the class renders in every member room's column (purple "⇆ Rooms 2+3 combined" note) and its
+capacity is the sum of the rooms' capacities (`capOfRooms`). Two placements conflict when they
+overlap in time and share any room (`shareRoom` = array intersection). Rooms are combined per
+class meeting via the room chips in `ClassModal` — there is no special combined-room entity.
 
 **Migration chain (idempotent, in `upgrade()`):**
 - v0 `{ classes: [...] }` → `migrateOld()` → v1 catalog + placements (unchanged from before)
@@ -121,8 +124,10 @@ intersection; the calendar shows gray stripes in member columns while a combined
   placement per weekday; slot labels parse to minutes (bare hours: 8–11 = AM, 12 = noon, 1–7 = PM);
   a class-level note that is a time range (the old "actual time" workaround, e.g. `2:30–4:00`)
   overrides the slot times and is cleared; AM/PM room groups merge into one list (max capacity
-  wins; `"2+3"`-style names become combined rooms with `occupies`)
-- v2 → `normalizeV2()` validates/cleans
+  wins; placements in `"2+3"`-style morning rooms become multi-room placements `["2","3"]`)
+- v2 → `normalizeV2()` validates/cleans; it also accepts the short-lived earlier v2 shape where
+  combined rooms were standalone entries with `occupies` — those dissolve into their members and
+  single `room` strings become `rooms` arrays
 `upgrade()` runs on every load **and on every shared-row poll**, so if an old client writes v1 data
 back to the shared row, the next v2 client re-upgrades it (hours overrides may be lost; placements
 survive). After deploying, ask everyone to refresh open tabs.
@@ -164,32 +169,34 @@ tray drop handlers, so dragging a scheduled card onto it still unschedules.
 
 ### Rooms and capacity
 
-`rooms` is one ordered array of `{ id, cap, occupies? }` for the whole week. `RoomModal` edits
-names, ordering, capacity, and the "Combines" list together (renames cascade to placements and
-`occupies` references; deleting a room unschedules its classes); clicking a room header on the
+`rooms` is one ordered array of `{ id, cap }` for the whole week. `RoomModal` edits names,
+ordering, and capacity (renames cascade into placement `rooms` arrays; deleting a room removes it
+from placements, and a placement left with no rooms is unscheduled); clicking a room header on the
 calendar (`editRoomCap`) prompts for just that room's capacity (applies all week). Calendar room
-headers display `Cap N` plus a purple "= 2 + 3 combined" note on combined rooms, and scheduled
-cards compare the class `reg` count against the capacity of the room they are placed in. The Class
-Library only manages how many students are signed up for a class.
+headers display `Cap N`, and scheduled cards compare the class `reg` count against the total
+capacity of the rooms they occupy. The Class Library only manages how many students are signed up
+for a class.
 
 ### Three ways to schedule a class
 
 1. **Drag & drop.** Drag payloads are strings in `dataTransfer` (+ mirrored in `drag` state with
-   the dragged duration and grab offset): `"lib:<classId>"` from a library card (duration = the
-   class's existing meeting length, else 90 min); `"pl:<placementId>"` from a calendar card.
-   Columns show a snapped ghost while dragging; a drop that would overlap another class in a
-   colliding room is rejected (red ghost + flash banner). Dropping onto the library sidebar
-   removes the placement (unschedules without deleting). There is no swap-on-drop anymore —
-   move one card aside first.
+   the dragged duration, room set, and grab offset): `"lib:<classId>"` from a library card
+   (duration = the class's existing meeting length, else 90 min); `"pl:<placementId>"` from a
+   calendar card. Columns show a snapped ghost while dragging; a drop that would overlap another
+   class in a shared room is rejected (red ghost + flash banner). A combined (multi-room)
+   placement keeps its room set while dragging — the drag changes its day/time only and the ghost
+   appears in every room it occupies; change its rooms in the dialog. Dropping onto the library
+   sidebar removes the placement (unschedules without deleting). There is no swap-on-drop
+   anymore — move one card aside first.
 2. **Click an empty time** on a column — opens the class dialog pre-filled with that day, snapped
    start time (+90 min), and room.
 3. **Schedule rows in `ClassModal`.** The dialog holds a local `rows` state
-   (`{id?, day, start, end, room}` per meeting time; native `<input type="time">` fields). Room
-   options are disabled when taken (by another class on the board, or another overlapping row in
-   the same dialog, member-room collisions included); `submit()` re-validates and alerts on
-   conflict. The **⇄ Mon–Fri** button copies a row to every weekday. On save, `saveClass(form,
-   rows)` rebuilds the class's placements: rows keep existing placement ids where present, new
-   rows get fresh ids.
+   (`{id?, day, start, end, rooms[]}` per meeting time; native `<input type="time">` fields and a
+   row of room chips — click several chips to combine rooms; the label shows the combined
+   capacity). Chips are disabled when taken (by another class on the board, or another overlapping
+   row in the same dialog); `submit()` re-validates and alerts on conflict. The **⇄ Mon–Fri**
+   button copies a row to every weekday. On save, `saveClass(form, rows)` rebuilds the class's
+   placements: rows keep existing placement ids where present, new rows get fresh ids.
 
 ### Teacher roster & By Teacher view
 
@@ -286,10 +293,13 @@ app runs exactly as the old browser-only version.
 - 2026-06-12 — **day calendar (v2 data model)**: merged the Morning/PM tabs into one continuous
   per-day calendar (Mon–Sat, rooms × time axis); placements moved from `(section, slotIdx)` to
   `(day, start, end)` minutes with free start times (15-min snap) and drag-to-resize; added
-  Saturday with per-day scheduling hours; one room list with combined rooms (`occupies`) that
-  block their members; idempotent `upgrade()` migration (morning → 5 weekday placements,
-  note-time overrides become real times); remote sync disabled on localhost. Swap-on-drop was
-  removed (drops on occupied space are rejected instead).
+  Saturday with per-day scheduling hours; idempotent `upgrade()` migration (morning → 5 weekday
+  placements, note-time overrides become real times); remote sync disabled on localhost.
+  Swap-on-drop was removed (drops on occupied space are rejected instead).
+- 2026-06-12 — **per-placement combined classrooms**: replaced the standalone "2+3" room (and its
+  `occupies` blocking) with multi-room placements — `placement.rooms` is an array, the class
+  renders in every combined room's column, capacity is the rooms' total, and rooms are picked via
+  chips in the class dialog (click several to combine). Conflicts = time overlap + shared room.
 
 ---
 

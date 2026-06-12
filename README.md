@@ -13,15 +13,16 @@ An interactive classroom scheduling board for the 2026 Summer program (Jericho).
 - Each day has its own scheduling window (e.g. Saturday runs 9:00 AM–1:00 PM) — edit it
   with **✎ Edit hours** under the grid; the grid stretches automatically if a class is
   placed outside the window
-- **Combined rooms**: Room 2+3 is a real room that automatically blocks Rooms 2 and 3 while
-  in use (and vice versa) — blocked time shows as gray stripes; define combined rooms in
-  **Manage Rooms** via the "Combines" column
+- **Combined classrooms**: select several room chips in the class dialog and the class occupies
+  those rooms together — it appears in each combined room's column on the calendar (purple ⇆ note)
+  and its capacity is the rooms' total (e.g. SAT across Rooms 2+3 every morning); no special
+  room entry needed
 - **Class Library**: define every class once (name / teacher / signed-up students); unscheduled classes wait in
   the library sidebar. Drag a card onto the calendar to schedule it — place the same class on several days
   (hover a day tab while dragging to switch days) and it stays one record with one shared enrollment.
   Drag a scheduled card back into the library to unschedule it without deleting it.
 - Click any empty time on the calendar to create a class right there; the class dialog's
-  meeting-time rows (day · start–end · room) include a **⇄ Mon–Fri** button that repeats a
+  meeting-time rows (day · start–end · room chips) include a **⇄ Mon–Fri** button that repeats a
   meeting on every weekday — the old "Morning (Daily)" pattern in one click
 - **Drag & drop** a card to move it; drag a card's bottom edge to change its length
 - Conflict handling: overlapping classes in one room are a hard conflict (red border, drops are

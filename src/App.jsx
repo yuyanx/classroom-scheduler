@@ -145,32 +145,33 @@ const DEFAULT_CLASSES = [
 // ───────────────────────── Data model (v2) ─────────────────────────
 // days:       which days the program runs — ordered subset of ALL_DAYS
 // hours:      { default: [startMin, endMin], <day>: [start, end] } scheduling window per day
-// rooms:      [{ id, cap, occupies?: ["2","3"] }] — one list for the whole week;
-//             a room with `occupies` is a combined space that blocks its member rooms
+// rooms:      [{ id, cap }] — one plain list for the whole week
 // catalog:    one entry per class/cohort — { id, name, teacher, reg, note }
-// placements: where a class meets — { id, classId, day, start, end, room }
+// placements: where a class meets — { id, classId, day, start, end, rooms: ["2","3"] }
+//             rooms is usually one room; several rooms = a combined classroom, and the
+//             class shows on the calendar in every combined room's column
 // A class placed several times shares one roster: reg/name edits apply everywhere.
 
 const DEFAULT_HOURS = { default: [540, 1020], sat: [540, 780] };
 
 function normalizeV2(raw) {
-  let rooms = (Array.isArray(raw.rooms) ? raw.rooms : [])
+  // Earlier v2 builds modeled combined rooms as standalone entries ({ occupies: [...] });
+  // these dissolve into their member rooms and their placements get a rooms[] array.
+  const rawRooms = (Array.isArray(raw.rooms) ? raw.rooms : [])
     .map((r) => (typeof r === "string" ? { id: r, cap: 12 } : r))
-    .filter((r) => r && r.id != null && String(r.id).trim())
-    .map((r) => ({
-      id: String(r.id).trim(),
-      cap: cleanCap(r.cap, 12),
-      ...(Array.isArray(r.occupies) && r.occupies.length ? { occupies: r.occupies.map(String) } : {}),
-    }));
+    .filter((r) => r && r.id != null && String(r.id).trim());
+  const dissolved = new Map(); // legacy combined-room id -> member room ids
+  rawRooms.forEach((r) => {
+    if (Array.isArray(r.occupies) && r.occupies.length) dissolved.set(String(r.id).trim(), r.occupies.map(String));
+  });
+  let rooms = rawRooms
+    .filter((r) => !dissolved.has(String(r.id).trim()))
+    .map((r) => ({ id: String(r.id).trim(), cap: cleanCap(r.cap, 12) }));
   const seen = new Set();
   rooms = rooms.filter((r) => (seen.has(r.id) ? false : (seen.add(r.id), true)));
   if (rooms.length === 0) rooms = [{ id: "1", cap: 12 }];
   const roomIds = new Set(rooms.map((r) => r.id));
-  rooms = rooms.map((r) => {
-    if (!r.occupies) return r;
-    const occ = [...new Set(r.occupies.filter((o) => o !== r.id && roomIds.has(o)))];
-    return occ.length ? { id: r.id, cap: r.cap, occupies: occ } : { id: r.id, cap: r.cap };
-  });
+  const roomPos = new Map(rooms.map((r, i) => [r.id, i]));
 
   const wanted = (Array.isArray(raw.days) ? raw.days : []).filter((d) => ALL_DAYS.includes(d));
   const days = wanted.length ? ALL_DAYS.filter((d) => wanted.includes(d)) : ["mon", "tue", "wed", "thu", "fri", "sat"];
@@ -192,16 +193,20 @@ function normalizeV2(raw) {
   }));
   const classIds = new Set(catalog.map((k) => k.id));
 
-  const placements = (raw.placements || [])
-    .filter(
-      (p) =>
-        p && classIds.has(p.classId) && days.includes(p.day) && roomIds.has(p.room) &&
-        Number.isFinite(p.start) && Number.isFinite(p.end) && p.end > p.start
-    )
-    .map((p) => ({
+  const placements = [];
+  (raw.placements || []).forEach((p) => {
+    if (!p || !classIds.has(p.classId) || !days.includes(p.day)) return;
+    if (!Number.isFinite(p.start) || !Number.isFinite(p.end) || !(p.end > p.start)) return;
+    const wanted = Array.isArray(p.rooms) ? p.rooms : p.room != null ? [p.room] : [];
+    const prooms = [...new Set(
+      wanted.flatMap((r) => dissolved.get(String(r)) || [String(r)]).filter((r) => roomIds.has(r))
+    )].sort((a, b) => roomPos.get(a) - roomPos.get(b));
+    if (!prooms.length) return;
+    placements.push({
       id: p.id, classId: p.classId, day: p.day,
-      start: Math.round(p.start), end: Math.round(p.end), room: p.room,
-    }));
+      start: Math.round(p.start), end: Math.round(p.end), rooms: prooms,
+    });
+  });
 
   // Teacher roster: stored list ∪ every teacher named on a class (dedup case-insensitively)
   const teacherMap = new Map();
@@ -244,26 +249,22 @@ function migrateOld(old) {
 // - "morning" placements expand to one placement per weekday (shared roster keeps them one class)
 // - slot labels parse into minutes; a class-level note that is a time range (the old
 //   "actual time" workaround, e.g. "2:30–4:00") overrides the slot and is cleared
-// - "2+3"-style rooms become combined rooms that occupy their member rooms
+// - "2+3"-style rooms become multi-room placements (the class occupies Rooms 2 and 3 together)
 function migrateV1toV2(v1) {
   const aft = (v1.rooms?.afternoon || []).slice();
   const mor = v1.rooms?.morning || [];
   const names = aft.slice();
+  const splitNames = new Map(); // "2+3" -> ["2","3"]
   mor.forEach((n) => {
     if (names.includes(n)) return;
-    const members = n.split("+").map((s) => s.trim()).filter((m) => names.includes(m));
-    if (members.length) names.splice(Math.max(...members.map((m) => names.indexOf(m))) + 1, 0, n);
+    const members = [...new Set(n.split("+").map((s) => s.trim()).filter((m) => m && names.includes(m)))];
+    if (members.length > 1) splitNames.set(n, members);
     else names.push(n);
   });
   const capOf = (n) =>
     Math.max(cleanCap(v1.roomCaps?.morning?.[n], 0), cleanCap(v1.roomCaps?.afternoon?.[n], 0)) ||
     Math.max(DEFAULT_ROOM_CAPS.morning[n] || 0, DEFAULT_ROOM_CAPS.afternoon[n] || 0) || 12;
-  const rooms = names.map((n) => {
-    const members = n.includes("+")
-      ? [...new Set(n.split("+").map((s) => s.trim()).filter((m) => m && m !== n && names.includes(m)))]
-      : [];
-    return members.length ? { id: n, cap: capOf(n), occupies: members } : { id: n, cap: capOf(n) };
-  });
+  const rooms = names.map((n) => ({ id: n, cap: capOf(n) }));
 
   const noteRange = new Map();
   const catalog = (v1.catalog || []).map((k) => {
@@ -285,7 +286,11 @@ function migrateV1toV2(v1) {
       (p.section === "morning" ? [540, 630] : [750, 840]);
     const onDays = p.section === "morning" ? WEEKDAYS : [p.section];
     onDays.forEach((d) => {
-      placements.push({ id: "p" + n++, classId: p.classId, day: d, start: range[0], end: range[1], room: p.room });
+      placements.push({
+        id: "p" + n++, classId: p.classId, day: d,
+        start: range[0], end: range[1],
+        rooms: splitNames.get(p.room) || [p.room],
+      });
     });
   });
 
@@ -587,18 +592,13 @@ export default function ClassroomScheduler() {
     if (!days.includes(tab) && tab !== "byClass" && tab !== "byTeacher") setTab(days[0]);
   }, [days, tab]);
 
-  // ── Room collision sets: a combined room ("2+3") collides with its members and vice versa ──
-  const memberSets = {};
-  rooms.forEach((r) => { memberSets[r.id] = new Set([r.id, ...(r.occupies || [])]); });
-  const roomsCollide = (a, b) => {
-    if (a === b) return true;
-    const A = memberSets[a], B = memberSets[b];
-    if (!A || !B) return false;
-    for (const x of A) if (B.has(x)) return true;
-    return false;
-  };
-  const roomOf = (id) => rooms.find((r) => r.id === id);
-  const roomCap = (id) => roomOf(id)?.cap ?? 12;
+  // ── Rooms: a placement may span several rooms (combined classroom) ──
+  const roomPos = new Map(rooms.map((r, i) => [r.id, i]));
+  const sortRoomIds = (list) => [...list].sort((a, b) => (roomPos.get(a) ?? 99) - (roomPos.get(b) ?? 99));
+  const roomsLabel = (list) => sortRoomIds(list).join("+");
+  const shareRoom = (a, b) => a.some((x) => b.includes(x));
+  const roomCap = (id) => rooms.find((r) => r.id === id)?.cap ?? 12;
+  const capOfRooms = (list) => list.reduce((s, id) => s + roomCap(id), 0);
 
   const classOfId = (id) => catalog.find((k) => k.id === id);
   const placementsOf = (classId) => placements.filter((p) => p.classId === classId);
@@ -609,7 +609,7 @@ export default function ClassroomScheduler() {
         p.id !== opts.excludeId &&
         (opts.excludeClassId == null || p.classId !== opts.excludeClassId) &&
         overlaps(p, cand) &&
-        roomsCollide(p.room, cand.room)
+        shareRoom(p.rooms, cand.rooms)
     );
 
   const teacherBusy = (cand, teacher, opts = {}) => {
@@ -626,7 +626,7 @@ export default function ClassroomScheduler() {
   };
   const teacherConflictLabels = (items) =>
     [...new Set(items.map(({ placement, cls }) =>
-      `${cls?.name || "Class"} (${DAY_SHORT[placement.day]} ${fmtRange(placement.start, placement.end)} · Rm ${placement.room})`
+      `${cls?.name || "Class"} (${DAY_SHORT[placement.day]} ${fmtRange(placement.start, placement.end)} · Rm ${placement.rooms.join("+")})`
     ))];
 
   const totalReg = catalog.reduce((s, k) => s + (k.reg || 0), 0);
@@ -670,7 +670,7 @@ export default function ClassroomScheduler() {
     const nid = data.nextId || 1000;
     persist({
       ...data,
-      placements: [...placements, { id: "p" + nid, classId, day: cand.day, start: cand.start, end: cand.end, room: cand.room }],
+      placements: [...placements, { id: "p" + nid, classId, day: cand.day, start: cand.start, end: cand.end, rooms: cand.rooms }],
       nextId: nid + 1,
     });
   };
@@ -681,11 +681,11 @@ export default function ClassroomScheduler() {
   const movePlacement = (plId, cand) => {
     const src = placements.find((p) => p.id === plId);
     if (!src) return;
-    if (src.day === cand.day && src.start === cand.start && src.room === cand.room) return;
+    if (src.day === cand.day && src.start === cand.start && src.rooms.join("|") === cand.rooms.join("|")) return;
     persist({
       ...data,
       placements: placements.map((p) =>
-        p.id === plId ? { ...p, day: cand.day, start: cand.start, end: cand.end, room: cand.room } : p
+        p.id === plId ? { ...p, day: cand.day, start: cand.start, end: cand.end, rooms: cand.rooms } : p
       ),
     });
   };
@@ -704,13 +704,16 @@ export default function ClassroomScheduler() {
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
       const start = snapStartFromEvent(e, drag.dur);
-      const key = roomId + ":" + start;
+      // A combined (multi-room) class keeps its room set while dragging — the drag changes
+      // its day/time only, and the ghost shows in every room it occupies.
+      const candRooms = drag.rooms && drag.rooms.length > 1 ? drag.rooms : [roomId];
+      const key = candRooms.join("+") + ":" + start;
       if (ghostRef.current === key) return;
       ghostRef.current = key;
-      const cand = { day: tab, start, end: start + drag.dur, room: roomId };
+      const cand = { day: tab, start, end: start + drag.dur, rooms: candRooms };
       const clashes = roomConflictsFor(cand, { excludeId: drag.type === "pl" ? drag.id : undefined });
       setGhost({
-        room: roomId, start, dur: drag.dur,
+        rooms: candRooms, start, dur: drag.dur,
         names: [...new Set(clashes.map((c) => classOfId(c.classId)?.name || "another class"))],
       });
       setDragOver(null);
@@ -721,11 +724,12 @@ export default function ClassroomScheduler() {
       const [type, id] = raw.split(":");
       const dur = drag?.dur || DEFAULT_DURATION;
       const start = snapStartFromEvent(e, dur);
-      const cand = { day: tab, start, end: start + dur, room: roomId };
+      const candRooms = drag?.rooms && drag.rooms.length > 1 ? drag.rooms : [roomId];
+      const cand = { day: tab, start, end: start + dur, rooms: candRooms };
       const clashes = roomConflictsFor(cand, { excludeId: type === "pl" ? id : undefined });
       if (clashes.length) {
         const names = [...new Set(clashes.map((c) => classOfId(c.classId)?.name || "another class"))];
-        flashMsg(`Can't place it there — Room ${roomId} ${fmtRange(cand.start, cand.end)} overlaps ${names.join(", ")}.`);
+        flashMsg(`Can't place it there — Room${candRooms.length > 1 ? "s" : ""} ${roomsLabel(candRooms)} ${fmtRange(cand.start, cand.end)} overlaps ${names.join(", ")}.`);
       } else if (type === "lib") {
         addPlacementAt(id, cand);
       } else if (type === "pl") {
@@ -776,7 +780,7 @@ export default function ClassroomScheduler() {
     const limit = Math.min(
       gridEnd,
       ...placements
-        .filter((o) => o.id !== p.id && o.day === p.day && o.start >= p.start && roomsCollide(o.room, p.room))
+        .filter((o) => o.id !== p.id && o.day === p.day && o.start >= p.start && shareRoom(o.rooms, p.rooms))
         .map((o) => o.start)
     );
     let cur = p.end;
@@ -822,7 +826,7 @@ export default function ClassroomScheduler() {
     const others = placements.filter((p) => p.classId !== classId);
     const mine = rows.map((r) => ({
       id: r.id || "p" + nid++,
-      classId, day: r.day, start: r.start, end: r.end, room: r.room,
+      classId, day: r.day, start: r.start, end: r.end, rooms: sortRoomIds(r.rooms),
     }));
     // A teacher picked via "Add new teacher…" joins the roster on save
     const tKey = teacherKey(form.teacher);
@@ -853,14 +857,16 @@ export default function ClassroomScheduler() {
     });
   };
 
-  // ── Room management (one list for the whole week; renames cascade, deletions unschedule) ──
+  // ── Room management (one list for the whole week; renames cascade into placements) ──
+  // Deleting a room drops it from every placement; a placement left with no rooms is unscheduled.
   const saveRooms = ({ list, renames }) => {
-    let np = placements;
-    Object.entries(renames).forEach(([oldName, newName]) => {
-      np = np.map((p) => (p.room === oldName ? { ...p, room: newName } : p));
-    });
     const ids = new Set(list.map((r) => r.id));
-    np = np.filter((p) => ids.has(p.room));
+    const np = placements
+      .map((p) => ({
+        ...p,
+        rooms: [...new Set(p.rooms.map((r) => renames[r] || r))].filter((r) => ids.has(r)),
+      }))
+      .filter((p) => p.rooms.length > 0);
     persist({ ...data, rooms: list, placements: np });
     setRoomMgrOpen(false);
   };
@@ -931,10 +937,11 @@ export default function ClassroomScheduler() {
     const top = (p.start - gridStart) * PX_PER_MIN;
     const h = (end - p.start) * PX_PER_MIN;
     const { lane, lanes } = laneInfo || { lane: 0, lanes: 1 };
-    const cap = roomCap(p.room);
+    const combined = p.rooms.length > 1;
+    const cap = capOfRooms(p.rooms);
     const col = ratioColor(cls.reg, cap);
     const pct = cap ? Math.min(100, Math.round((cls.reg / cap) * 100)) : 0;
-    const roomClashes = roomConflictsFor({ day: p.day, start: p.start, end, room: p.room }, { excludeId: p.id });
+    const roomClashes = roomConflictsFor({ day: p.day, start: p.start, end, rooms: p.rooms }, { excludeId: p.id });
     const teacherConflicts = teacherConflictLabels(teacherConflictsForPlacement(p));
     const hasRoomClash = roomClashes.length > 0;
     const hasTeacherConflict = teacherConflicts.length > 0;
@@ -948,12 +955,13 @@ export default function ClassroomScheduler() {
           e.dataTransfer.setData("text/plain", "pl:" + p.id);
           e.dataTransfer.effectAllowed = "move";
           const rect = e.currentTarget.getBoundingClientRect();
-          setDrag({ type: "pl", id: p.id, dur: p.end - p.start, grabOffset: (e.clientY - rect.top) / PX_PER_MIN });
+          setDrag({ type: "pl", id: p.id, dur: p.end - p.start, rooms: p.rooms, grabOffset: (e.clientY - rect.top) / PX_PER_MIN });
         }}
         onDragEnd={() => { setDrag(null); setGhost(null); ghostRef.current = null; setDragOver(null); }}
         onClick={(e) => { e.stopPropagation(); setEditing({ isNew: false, classId: cls.id, placementId: p.id }); }}
         title={
           `${cls.name} · ${fmtRange(p.start, end)}` +
+          (combined ? ` · combined Rooms ${roomsLabel(p.rooms)} (drags move its time; change rooms in the dialog)` : "") +
           (hasRoomClash ? ` · ROOM CONFLICT with ${[...new Set(roomClashes.map((c) => classOfId(c.classId)?.name))].join(", ")}` : "") +
           (hasTeacherConflict ? ` · same teacher also has ${teacherConflicts.join(", ")}` : "") +
           " — drag to move · drag the bottom edge to change length · click to edit"
@@ -989,6 +997,11 @@ export default function ClassroomScheduler() {
           {fmtRange(p.start, end)}
           {h >= 56 && <> · {cls.teacher || <i style={{ color: "#b45309" }}>TBD</i>}</>}
         </div>
+        {combined && h >= 44 && (
+          <div style={{ fontSize: 10.5, color: "#7c3aed", fontWeight: 700 }} title={`This class uses Rooms ${roomsLabel(p.rooms)} at the same time`}>
+            ⇆ Rooms {roomsLabel(p.rooms)} combined
+          </div>
+        )}
         {h >= 78 && hasRoomClash && <div style={roomConflictStyle}>Room conflict</div>}
         {h >= 78 && !hasRoomClash && hasTeacherConflict && <div style={teacherWarningStyle}>Teacher conflict</div>}
         {h >= 100 && otherDays.length > 0 && (
@@ -1318,11 +1331,6 @@ export default function ClassroomScheduler() {
                         <span style={{ fontSize: 11, color: "#64748b", fontWeight: 700, borderBottom: "1px dashed #b9c0bb" }}>
                           Cap {r.cap} ✎
                         </span>
-                        {r.occupies && (
-                          <span style={{ fontSize: 10, color: "#7c3aed", fontWeight: 700 }} title={`Using Room ${r.id} blocks Rooms ${r.occupies.join(" & ")} (and vice versa)`}>
-                            = {r.occupies.join(" + ")} combined
-                          </span>
-                        )}
                       </div>
                     </div>
                   ))}
@@ -1345,9 +1353,8 @@ export default function ClassroomScheduler() {
                     ))}
                   </div>
                   {rooms.map((room) => {
-                    const colPls = tabPls.filter((p) => p.room === room.id);
+                    const colPls = tabPls.filter((p) => p.rooms.includes(room.id));
                     const lanes = layoutLanes(colPls);
-                    const blockedBy = tabPls.filter((p) => p.room !== room.id && roomsCollide(p.room, room.id));
                     return (
                       <div
                         key={room.id}
@@ -1355,23 +1362,8 @@ export default function ClassroomScheduler() {
                         title="Click an empty time to add a class here — or drag a card from the Class Library"
                         style={{ flex: 1, minWidth: 110, position: "relative", height: gridH, boxSizing: "border-box", borderLeft: "1px solid #eceeea" }}
                       >
-                        {blockedBy.map((p) => (
-                          <div
-                            key={"x" + p.id}
-                            style={{
-                              position: "absolute", left: 1, right: 1,
-                              top: (p.start - gridStart) * PX_PER_MIN + 1,
-                              height: (p.end - p.start) * PX_PER_MIN - 2,
-                              background: "repeating-linear-gradient(135deg, #f1f3f0 0px, #f1f3f0 5px, #e7eae6 5px, #e7eae6 10px)",
-                              borderRadius: 6, pointerEvents: "none", zIndex: 0,
-                              display: "flex", alignItems: "center", justifyContent: "center",
-                            }}
-                          >
-                            <span style={{ fontSize: 10, color: "#94a3b8", fontWeight: 700 }}>Rm {p.room} in use</span>
-                          </div>
-                        ))}
                         {colPls.map((p) => renderBlock(p, lanes.get(p.id)))}
-                        {ghost && ghost.room === room.id && (
+                        {ghost && ghost.rooms.includes(room.id) && (
                           <div
                             style={{
                               position: "absolute",
@@ -1408,8 +1400,9 @@ export default function ClassroomScheduler() {
             <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
               🖱 Define classes in the <b>Class Library</b>, then drag them anywhere on the day — classes can start
               at any time (no fixed slots). Place the same class on several days (drag it over a day tab to switch
-              while dragging) — it stays one class with one shared enrollment. Combined rooms (purple note) block
-              their member rooms automatically. Drag a card back into the library to unschedule it. Red border =
+              while dragging) — it stays one class with one shared enrollment. To combine classrooms, open the class
+              and click several room chips — the class then appears in every combined room's column (purple ⇆ note)
+              and its capacity is the rooms' total. Drag a card back into the library to unschedule it. Red border =
               two classes overlap in one room; amber = the teacher is double-booked.
               Green = room has space, amber = nearly full, red = at or over room capacity.{" "}
               {REMOTE_ENABLED ? "Everyone sees this same shared schedule." : "Data is saved in this browser."}
@@ -1430,19 +1423,18 @@ export default function ClassroomScheduler() {
               ? placementsOf(editing.classId)
                   .slice()
                   .sort((a, b) => dayIdx(a.day) - dayIdx(b.day) || a.start - b.start)
-                  .map((p) => ({ id: p.id, day: p.day, start: p.start, end: p.end, room: p.room }))
+                  .map((p) => ({ id: p.id, day: p.day, start: p.start, end: p.end, rooms: p.rooms }))
               : editing.room != null
-                ? [{ id: null, day: editing.day, start: editing.start, end: editing.start + DEFAULT_DURATION, room: editing.room }]
+                ? [{ id: null, day: editing.day, start: editing.start, end: editing.start + DEFAULT_DURATION, rooms: [editing.room] }]
                 : []
           }
           days={days}
           rooms={rooms}
           teachers={teachers || []}
           defaultDay={days.includes(tab) ? tab : days[0]}
-          roomsCollide={roomsCollide}
           occupiedBy={(cand) => {
             const f = placements.find(
-              (x) => x.classId !== editing.classId && overlaps(x, cand) && roomsCollide(x.room, cand.room)
+              (x) => x.classId !== editing.classId && overlaps(x, cand) && shareRoom(x.rooms, cand.rooms)
             );
             return f ? (classOfId(f.classId)?.name || "another class") : null;
           }}
@@ -1489,21 +1481,25 @@ export default function ClassroomScheduler() {
 }
 
 // ───────────────────────── Class edit modal ─────────────────────────
-function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultDay, roomsCollide, occupiedBy, teacherConflictsAt, contextLabel, onSave, onDelete, onClose }) {
+function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultDay, occupiedBy, teacherConflictsAt, contextLabel, onSave, onDelete, onClose }) {
   const c = cls || {};
   const [name, setName] = useState(c.name || "");
   const [teacher, setTeacher] = useState(c.teacher || "");
   const [reg, setReg] = useState(c.reg ?? 0);
   const [note, setNote] = useState(c.note || "");
-  const [rows, setRows] = useState(initialRows); // meeting times: {id?, day, start, end, room}
+  const [rows, setRows] = useState(initialRows); // meeting times: {id?, day, start, end, rooms: []}
+
+  const roomPos = new Map(rooms.map((r, i) => [r.id, i]));
+  const sortRoomIds = (list) => [...list].sort((a, b) => (roomPos.get(a) ?? 99) - (roomPos.get(b) ?? 99));
+  const capOf = (list) => list.reduce((s, id) => s + (rooms.find((r) => r.id === id)?.cap ?? 0), 0);
 
   // Taken = occupied by another class on the board, or by another row in this dialog
   const takenBy = (row, roomId, rowIdx) => {
     if (!roomId) return null;
-    const other = occupiedBy({ day: row.day, start: row.start, end: row.end, room: roomId });
+    const other = occupiedBy({ day: row.day, start: row.start, end: row.end, rooms: [roomId] });
     if (other) return other;
     const dup = rows.some(
-      (o, j) => j !== rowIdx && o.room && o.day === row.day && o.start < row.end && row.start < o.end && roomsCollide(o.room, roomId)
+      (o, j) => j !== rowIdx && o.day === row.day && o.start < row.end && row.start < o.end && o.rooms.includes(roomId)
     );
     return dup ? "this class" : null;
   };
@@ -1513,7 +1509,7 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
   const setRow = (i, patch) => setRows(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   const addRow = () => {
     const last = rows[rows.length - 1];
-    setRows([...rows, { id: null, day: defaultDay, start: last ? last.start : 540, end: last ? last.end : 540 + DEFAULT_DURATION, room: "" }]);
+    setRows([...rows, { id: null, day: defaultDay, start: last ? last.start : 540, end: last ? last.end : 540 + DEFAULT_DURATION, rooms: [] }]);
   };
   const delRow = (i) => setRows(rows.filter((_, j) => j !== i));
   // Copy a meeting to every weekday — the old "Morning (Daily)" pattern in one click
@@ -1521,7 +1517,7 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
     const r = rows[i];
     const adds = WEEKDAYS.filter(
       (d) => days.includes(d) && !rows.some((o) => o.day === d && o.start === r.start && o.end === r.end)
-    ).map((d) => ({ id: null, day: d, start: r.start, end: r.end, room: r.room }));
+    ).map((d) => ({ id: null, day: d, start: r.start, end: r.end, rooms: r.rooms.slice() }));
     if (adds.length) setRows([...rows, ...adds]);
   };
 
@@ -1530,8 +1526,8 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
       const label = `${DAY_LABEL[r.day]} ${fmtRange(r.start, r.end)}`;
-      if (!r.room) {
-        alert("Pick a room for every meeting time (or remove the row).");
+      if (r.rooms.length === 0) {
+        alert("Pick at least one room for every meeting time (or remove the row).");
         return;
       }
       if (!(r.end > r.start)) {
@@ -1542,9 +1538,9 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
         alert(`This class has two overlapping meetings (${label}). Adjust one of them.`);
         return;
       }
-      const taken = takenBy(r, r.room, i);
-      if (taken) {
-        alert(`Room conflict: ${label} Room ${r.room} already has ${taken}. Pick a different room or time.`);
+      const taken = r.rooms.map((id) => ({ id, by: takenBy(r, id, i) })).filter((x) => x.by);
+      if (taken.length) {
+        alert(`Room conflict: ${label} Room ${taken[0].id} already has ${taken[0].by}. Pick a different room or time.`);
         return;
       }
     }
@@ -1612,18 +1608,18 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
         )}
       </div>
       {rows.map((r, i) => {
-        const roomTaken = r.room ? takenBy(r, r.room, i) : null;
-        const roomConflict = roomTaken && roomTaken !== "this class" ? roomTaken : null;
+        const selTaken = r.rooms
+          .map((id) => ({ id, by: takenBy(r, id, i) }))
+          .filter((x) => x.by && x.by !== "this class");
         const dupHere = timeDup(r, i);
         const teacherOverlaps = teacherKey(teacher)
           ? teacherConflictsAt({ day: r.day, start: r.start, end: r.end }, teacher)
           : [];
-        const openRooms = rooms.filter((rm) => !takenBy(r, rm.id, i)).map((rm) => rm.id);
         return (
-          <div key={i} style={{ marginBottom: 8 }}>
+          <div key={i} style={{ marginBottom: 10 }}>
             <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
               <select
-                style={{ ...selStyle, flex: "1 1 90px" }}
+                style={{ ...selStyle, flex: "1 1 110px" }}
                 value={r.day}
                 onChange={(e) => setRow(i, { day: e.target.value })}
               >
@@ -1656,21 +1652,6 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
                 }}
                 title="End time"
               />
-              <select
-                style={{ ...selStyle, flex: "1 1 110px" }}
-                value={r.room}
-                onChange={(e) => setRow(i, { room: e.target.value })}
-              >
-                <option value="">Room…</option>
-                {rooms.map((rm) => {
-                  const taken = takenBy(r, rm.id, i);
-                  return (
-                    <option key={rm.id} value={rm.id} disabled={!!taken}>
-                      {"Room " + rm.id + (rm.occupies ? ` (= ${rm.occupies.join("+")})` : "") + (taken ? " — " + taken : "")}
-                    </option>
-                  );
-                })}
-              </select>
               <button
                 style={{ ...miniBtn, width: "auto", padding: "0 8px", flexShrink: 0 }}
                 onClick={() => repeatRow(i)}
@@ -1680,9 +1661,46 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
               </button>
               <button style={{ ...miniBtn, color: "#b91c1c", flexShrink: 0 }} onClick={() => delRow(i)} title="Remove this meeting time">✕</button>
             </div>
-            {roomConflict && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center", marginTop: 6 }}>
+              <span style={{ fontSize: 11, color: "#64748b", fontWeight: 700, marginRight: 2 }}>Rooms</span>
+              {rooms.map((rm) => {
+                const on = r.rooms.includes(rm.id);
+                const taken = !on ? takenBy(r, rm.id, i) : null;
+                return (
+                  <button
+                    key={rm.id}
+                    onClick={() => setRow(i, { rooms: on ? r.rooms.filter((x) => x !== rm.id) : sortRoomIds([...r.rooms, rm.id]) })}
+                    disabled={!!taken}
+                    title={
+                      taken
+                        ? `Room ${rm.id} is taken by ${taken} then`
+                        : on
+                          ? `Remove Room ${rm.id}`
+                          : r.rooms.length
+                            ? `Combine with Room ${rm.id}`
+                            : `Use Room ${rm.id}`
+                    }
+                    style={{
+                      border: "1px solid " + (on ? "#123c3a" : "#cbd5d1"),
+                      background: on ? "#123c3a" : "#fff",
+                      color: on ? "#fff" : taken ? "#b6bcc4" : "#334155",
+                      borderRadius: 6, padding: "3px 10px", fontSize: 12, fontWeight: 600,
+                      cursor: taken ? "not-allowed" : "pointer", opacity: taken ? 0.55 : 1,
+                    }}
+                  >
+                    {rm.id}
+                  </button>
+                );
+              })}
+              <span style={{ fontSize: 11, color: r.rooms.length ? "#64748b" : "#b45309" }}>
+                {r.rooms.length === 0
+                  ? "— pick a room (click two to combine)"
+                  : `capacity ${capOf(r.rooms)}${r.rooms.length > 1 ? ` · Rooms ${sortRoomIds(r.rooms).join("+")} combined` : ""}`}
+              </span>
+            </div>
+            {selTaken.length > 0 && (
               <div style={{ ...roomConflictStyle, marginTop: 5 }}>
-                Room conflict: Room {r.room} already has {roomConflict} then — pick a different room or time.
+                Room conflict: Room {selTaken[0].id} already has {selTaken[0].by} then — pick a different room or time.
               </div>
             )}
             {dupHere && (
@@ -1696,13 +1714,6 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
                 title="Same teacher in two rooms at once — allowed, but double-check before saving"
               >
                 ⚠ Teacher overlap: {teacher.trim()} also has {teacherOverlaps.join(", ")}
-              </div>
-            )}
-            {!r.room && !dupHere && (
-              <div style={{ fontSize: 11, color: "#64748b", marginTop: 5 }}>
-                {openRooms.length > 0
-                  ? "Open rooms: " + openRooms.join(", ")
-                  : "No open rooms at this time — try another time."}
               </div>
             )}
           </div>
@@ -1803,7 +1814,7 @@ function ClassScheduleView({ catalog, placements, days, onEditClass }) {
                         ) : (
                           list.map((p) => (
                             <div key={p.id} style={{ fontSize: 12, lineHeight: 1.3, padding: "2px 0", color: "#334155" }}>
-                              {fmtRange(p.start, p.end)} · Rm {p.room}
+                              {fmtRange(p.start, p.end)} · Rm {p.rooms.join("+")}
                             </div>
                           ))
                         )}
@@ -1866,7 +1877,7 @@ function TeacherScheduleView({ teachers, catalog, placements, days, onEditClass,
                   fontWeight: isClash ? 700 : 400,
                 }}
               >
-                {fmtRange(p.start, p.end)} {cls.name} · Rm {p.room}{isClash ? " ⚠" : ""}
+                {fmtRange(p.start, p.end)} {cls.name} · Rm {p.rooms.join("+")}{isClash ? " ⚠" : ""}
               </div>
             );
           })
@@ -1996,13 +2007,11 @@ function TeacherModal({ teachers, catalog, onSave, onClose }) {
   );
 }
 
-// ───────────────────────── Room manager (one list, with combined rooms) ─────────────────────────
+// ───────────────────────── Room manager (one list for the whole week) ─────────────────────────
 function RoomModal({ rooms, placements, onSave, onClose }) {
-  const [list, setList] = useState(
-    rooms.map((r) => ({ orig: r.id, name: r.id, cap: r.cap, occ: (r.occupies || []).join(", ") }))
-  );
+  const [list, setList] = useState(rooms.map((r) => ({ orig: r.id, name: r.id, cap: r.cap })));
 
-  const countFor = (origName) => placements.filter((p) => p.room === origName).length;
+  const countFor = (origName) => placements.filter((p) => p.rooms.includes(origName)).length;
 
   const move = (i, dir) => {
     const j = i + dir;
@@ -2013,10 +2022,10 @@ function RoomModal({ rooms, placements, onSave, onClose }) {
   };
   const remove = (i) => {
     const n = list[i].orig ? countFor(list[i].orig) : 0;
-    if (n > 0 && !window.confirm(`Room "${list[i].name}" has ${n} class(es). Deleting it will unschedule them. Continue?`)) return;
+    if (n > 0 && !window.confirm(`Room "${list[i].name}" is used by ${n} class meeting(s). Deleting it removes it from them (a meeting left with no rooms is unscheduled). Continue?`)) return;
     setList(list.filter((_, idx) => idx !== i));
   };
-  const add = () => setList([...list, { orig: null, name: "", cap: 12, occ: "" }]);
+  const add = () => setList([...list, { orig: null, name: "", cap: 12 }]);
   const patch = (i, p) => {
     const nl = [...list];
     nl[i] = { ...nl[i], ...p };
@@ -2033,43 +2042,27 @@ function RoomModal({ rooms, placements, onSave, onClose }) {
       alert("Room names must be unique.");
       return;
     }
-    const nameSet = new Set(names);
     const renames = {};
     list.forEach((r) => {
       if (r.orig && r.name.trim() && r.orig !== r.name.trim()) renames[r.orig] = r.name.trim();
     });
-    const out = [];
-    for (const r of list) {
-      const id = r.name.trim();
-      if (!id) continue;
-      const occ = [...new Set(
-        (r.occ || "")
-          .split(/[,，+]/)
-          .map((s) => s.trim())
-          .filter((s) => s && s !== id)
-      )];
-      const bad = occ.filter((o) => !nameSet.has(o));
-      if (bad.length) {
-        alert(`Room ${id}: "${bad.join(", ")}" in its combined-rooms list ${bad.length === 1 ? "is" : "are"} not a room name above.`);
-        return;
-      }
-      out.push(occ.length ? { id, cap: cleanCap(r.cap, 12), occupies: occ } : { id, cap: cleanCap(r.cap, 12) });
-    }
+    const out = list
+      .filter((r) => r.name.trim())
+      .map((r) => ({ id: r.name.trim(), cap: cleanCap(r.cap, 12) }));
     onSave({ list: out, renames });
   };
 
   return (
-    <Overlay onClose={onClose} wide>
+    <Overlay onClose={onClose}>
       <h3 style={{ marginTop: 0 }}>Manage rooms</h3>
       <p style={{ fontSize: 13, color: "#64748b", margin: "0 0 14px" }}>
-        One room list for the whole week. A <b>combined room</b> (e.g. "2+3" with combines <i>2, 3</i>) is a
-        room whose use blocks its member rooms at the same time — and vice versa. Capacity is room capacity;
-        class records only track signed-up students.
+        One room list for the whole week. To combine classrooms for a class (e.g. SAT across Rooms 2+3),
+        open the class and select several room chips — no special room entry is needed here. Capacity is
+        room capacity; a combined class gets the rooms' total.
       </p>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 76px 110px 44px 26px 26px 26px", gap: 5, alignItems: "center", marginBottom: 5, fontSize: 11, color: "#64748b", fontWeight: 700 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 76px 44px 26px 26px 26px", gap: 5, alignItems: "center", marginBottom: 5, fontSize: 11, color: "#64748b", fontWeight: 700 }}>
         <span>Room</span>
         <span>Capacity</span>
-        <span>Combines</span>
         <span>Used</span>
         <span />
         <span />
@@ -2077,7 +2070,7 @@ function RoomModal({ rooms, placements, onSave, onClose }) {
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 320, overflowY: "auto" }}>
         {list.map((r, i) => (
-          <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 76px 110px 44px 26px 26px 26px", gap: 5, alignItems: "center" }}>
+          <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 76px 44px 26px 26px 26px", gap: 5, alignItems: "center" }}>
             <input
               style={{ ...inputStyle, padding: "6px 8px" }}
               value={r.name}
@@ -2090,13 +2083,6 @@ function RoomModal({ rooms, placements, onSave, onClose }) {
               min="0"
               value={r.cap}
               onChange={(e) => patch(i, { cap: e.target.value })}
-            />
-            <input
-              style={{ ...inputStyle, padding: "6px 8px" }}
-              value={r.occ}
-              placeholder="e.g. 2, 3"
-              title="Member rooms this combined room takes over (leave empty for a normal room)"
-              onChange={(e) => patch(i, { occ: e.target.value })}
             />
             {r.orig ? (
               <span style={{ fontSize: 11, color: "#94a3b8", whiteSpace: "nowrap" }}>
