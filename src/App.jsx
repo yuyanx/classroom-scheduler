@@ -286,6 +286,7 @@ export default function ClassroomScheduler() {
   const [tab, setTab] = useState("morning");
   const [editing, setEditing] = useState(null); // {isNew, classId?, placementId?, slotIdx?, room?}
   const [roomMgrOpen, setRoomMgrOpen] = useState(false);
+  const [roomCapEditing, setRoomCapEditing] = useState(null); // {room, group, value, error}
   const [teacherMgrOpen, setTeacherMgrOpen] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [drag, setDrag] = useState(null); // {type:'lib'|'pl', id}
@@ -612,18 +613,22 @@ export default function ClassroomScheduler() {
   };
 
   // ── Quick capacity edit from a calendar room header ──
-  const editRoomCap = (room) => {
+  const openRoomCapEditor = (room) => {
     const group = roomGroup(tab);
     const current = roomCapacity(tab, room);
-    const scope = group === "morning" ? "morning" : "all afternoon days";
-    const raw = prompt(`Capacity for Room ${room} (applies to ${scope}):`, current);
-    if (raw == null) return;
-    const n = parseInt(raw, 10);
+    setRoomCapEditing({ room, group, value: String(current), error: "" });
+  };
+
+  const saveRoomCap = () => {
+    if (!roomCapEditing) return;
+    const n = parseInt(roomCapEditing.value, 10);
     if (!Number.isFinite(n) || n < 0) {
-      alert("Enter a number of 0 or more.");
+      setRoomCapEditing({ ...roomCapEditing, error: "Enter a number of 0 or more." });
       return;
     }
+    const { group, room } = roomCapEditing;
     persist({ ...data, roomCaps: { ...roomCaps, [group]: { ...(roomCaps[group] || {}), [room]: n } } });
+    setRoomCapEditing(null);
   };
 
   // ── Teacher roster management (rename cascades to classes; removal sets them to TBD) ──
@@ -950,10 +955,11 @@ export default function ClassroomScheduler() {
                 <th style={{ ...thStyle, width: 96, position: "sticky", left: 0, background: "#fafaf8", zIndex: 2 }}>Time</th>
                 {curRooms.map((r) => (
                   <th key={r} style={thStyle}>
-                    <div
-                      onClick={() => editRoomCap(r)}
+                    <button
+                      type="button"
+                      onClick={() => openRoomCapEditor(r)}
                       title={`Click to change Room ${r}'s capacity`}
-                      style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", gap: 3, cursor: "pointer" }}
+                      style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", gap: 3, cursor: "pointer", background: "transparent", border: 0, padding: 0, font: "inherit" }}
                     >
                       <span style={{ display: "inline-block", background: "#123c3a", color: "#fff", borderRadius: 6, padding: "2px 10px", fontSize: 13 }}>
                         Room {r}
@@ -961,7 +967,7 @@ export default function ClassroomScheduler() {
                       <span style={{ fontSize: 11, color: "#64748b", fontWeight: 700, borderBottom: "1px dashed #b9c0bb" }}>
                         Cap {roomCapacity(tab, r)} ✎
                       </span>
-                    </div>
+                    </button>
                   </th>
                 ))}
               </tr>
@@ -1140,6 +1146,19 @@ export default function ClassroomScheduler() {
       {/* Room manager modal */}
       {roomMgrOpen && (
         <RoomModal rooms={rooms} roomCaps={roomCaps} placements={placements} onSave={saveRooms} onClose={() => setRoomMgrOpen(false)} />
+      )}
+
+      {/* Quick room capacity modal */}
+      {roomCapEditing && (
+        <RoomCapModal
+          room={roomCapEditing.room}
+          group={roomCapEditing.group}
+          value={roomCapEditing.value}
+          error={roomCapEditing.error}
+          onChange={(value) => setRoomCapEditing({ ...roomCapEditing, value, error: "" })}
+          onSave={saveRoomCap}
+          onClose={() => setRoomCapEditing(null)}
+        />
       )}
 
       {/* Teacher manager modal */}
@@ -1639,6 +1658,52 @@ function TeacherModal({ teachers, catalog, onSave, onClose }) {
 }
 
 // ───────────────────────── Room manager (AM / PM groups) ─────────────────────────
+function RoomCapModal({ room, group, value, error, onChange, onSave, onClose }) {
+  const scope = group === "morning" ? "Morning schedule" : "All afternoon days";
+  return (
+    <Overlay onClose={onClose}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 16 }}>
+        <div style={{
+          width: 38, height: 38, borderRadius: 8, background: "#e6f4f3", color: "#123c3a",
+          display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 800,
+          border: "1px solid #c9e4e1",
+        }}>
+          {room}
+        </div>
+        <div style={{ flex: 1 }}>
+          <h3 style={{ margin: "0 0 4px", color: "#123c3a" }}>Room capacity</h3>
+          <p style={{ margin: 0, fontSize: 13, color: "#64748b", lineHeight: 1.4 }}>
+            Room {room} · {scope}
+          </p>
+        </div>
+      </div>
+
+      <Field label="Capacity" style={{ marginBottom: error ? 6 : 14 }}>
+        <input
+          style={{ ...inputStyle, fontSize: 18, fontWeight: 700, color: "#123c3a" }}
+          type="number"
+          min="0"
+          step="1"
+          inputMode="numeric"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") onSave();
+            if (e.key === "Escape") onClose();
+          }}
+          autoFocus
+        />
+      </Field>
+      {error && <div style={{ ...roomConflictStyle, marginBottom: 14 }}>{error}</div>}
+
+      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 18 }}>
+        <button style={btnSecondary} onClick={onClose}>Cancel</button>
+        <button style={btnPrimary} onClick={onSave}>Save capacity</button>
+      </div>
+    </Overlay>
+  );
+}
+
 function RoomModal({ rooms, roomCaps, placements, onSave, onClose }) {
   const [morning, setMorning] = useState(rooms.morning.map((r) => ({ orig: r, name: r, cap: roomCaps?.morning?.[r] ?? defaultRoomCap("morning", r) })));
   const [afternoon, setAfternoon] = useState(rooms.afternoon.map((r) => ({ orig: r, name: r, cap: roomCaps?.afternoon?.[r] ?? defaultRoomCap("afternoon", r) })));
