@@ -2,9 +2,9 @@
 
 ## What this is
 
-**Premier Plus · Classroom Scheduler** — an interactive scheduling board for the 2026 Summer program at Jericho. Staff define classes in a **Class Library**, then schedule them onto a weekly grid (rooms × time slots) either by drag-and-drop or by editing meeting times in the class dialog. Class signed-up counts, rooms, room capacities, and time slots are all editable in place.
+**Premier Plus · Classroom Scheduler** — an interactive scheduling board for the 2026 Summer program at Jericho. Staff define classes in a **Class Library**, then schedule them onto a per-day calendar (rooms as columns × a continuous time axis, Mon–Sat) by drag-and-drop, by clicking an empty time, or by editing meeting times in the class dialog. Classes can start at any time (15-minute snap, no fixed slots). Class signed-up counts, rooms, room capacities, and per-day hours are all editable in place.
 
-State is one shared schedule in Supabase (project `zbvedbwbxdzcsnftvyph`, table `public.schedule`, single row `id=1`, `data` jsonb) — everyone who opens the site sees and edits the same copy, last write wins. `localStorage` (key: `premier-classroom-schedule`) remains the offline fallback/cache. With `SUPABASE_KEY` empty the app degrades to browser-only copies.
+State is one shared schedule in Supabase (project `zbvedbwbxdzcsnftvyph`, table `public.schedule`, single row `id=1`, `data` jsonb) — everyone who opens the site sees and edits the same copy, last write wins. `localStorage` (key: `premier-classroom-schedule`) remains the offline fallback/cache. With `SUPABASE_KEY` empty the app degrades to browser-only copies. **On `localhost` the remote sync is disabled by design** (`IS_LOCAL_DEV` in `App.jsx`), so local development never touches the live shared schedule.
 
 ---
 
@@ -49,8 +49,9 @@ classroom-scheduler/
 └── handoff.md            # This file
 ```
 
-Components inside `App.jsx` (top to bottom): default data + `migrateOld()` →
-`ClassroomScheduler` (main: left library sidebar, tabs, grid, all state ops) →
+Components inside `App.jsx` (top to bottom): time helpers + default data + migrations
+(`migrateOld()` → `migrateV1toV2()` → `normalizeV2()`, entry point `upgrade()`) →
+`ClassroomScheduler` (main: left library sidebar, day tabs, day calendar with drag/resize, all state ops) →
 `ClassModal` (class fields + schedule-rows editor) → `ClassScheduleView` (By Class tab) →
 `TeacherScheduleView` (By Teacher tab) → `TeacherModal` → `RoomModal` → `Overlay` / `Field` → style objects.
 
@@ -75,52 +76,78 @@ After rebuilding, commit `app.js` along with your `src/` changes so Vercel serve
 
 ## Architecture — key concepts in App.jsx
 
-### Data model
+### Data model (v2 — day calendar)
 
-All state lives in one object persisted to localStorage:
+All state lives in one object persisted to localStorage / the Supabase row:
 
 ```js
 {
-  rooms: {
-    morning: ["1", "2+3", "4", "5", "6", "7", "8"],   // Morning uses combined 2+3
-    afternoon: ["1", "2", "3", "4", "5", "6", "7", "8"]
+  version: 2,
+  days: ["mon", "tue", "wed", "thu", "fri", "sat"],  // ordered subset of mon–sun
+  hours: {
+    default: [540, 1020],        // [startMin, endMin] — 9:00 AM–5:00 PM
+    sat: [540, 780]              // optional per-day override (Sat 9:00 AM–1:00 PM)
   },
-  roomCaps: {
-    morning: { "1": 12, "2+3": 25, "4": 12, ... },
-    afternoon: { "1": 25, "2": 12, "3": 12, ... }
-  },
-  slots: {
-    morning: ["9:00–10:30", "10:30–12:00"],
-    mon: ["12:30–2:00", "2:00–3:30", "3:30–5:00"],
-    // ... tue, wed, thu, fri
-  },
+  rooms: [                       // ONE list for the whole week, ordered
+    { id: "1", cap: 25 },
+    { id: "2", cap: 12 }, { id: "3", cap: 12 },
+    { id: "2+3", cap: 25, occupies: ["2", "3"] },    // combined room
+    ...
+  ],
   catalog: [
-    { id, name, teacher, reg, note }            // one entry per class/cohort
+    { id, name, teacher, reg, note }                 // one entry per class/cohort
   ],
   placements: [
-    { id, classId, section, slotIdx, room }     // where a class meets
+    { id, classId, day: "tue", start: 870, end: 960, room: "5" }  // minutes since midnight
   ],
-  teachers: ["Herrick", "Joshua", ...],         // roster; class.teacher stays a plain string
+  teachers: ["Herrick", "Joshua", ...],              // roster; class.teacher stays a plain string
   nextId: <number>
 }
 ```
 
 The **catalog** is the master class list (shown in the Class Library sidebar); **placements** put a
-class into grid cells. A grid cell is addressed by `(section, slotIdx, room)`; the cell's class is
-found by joining `placement.classId` → catalog. A class placed on several days has several
-placements sharing one catalog entry — one roster, so signed-up count/name edits apply everywhere.
-A catalog entry with no placements is "unscheduled" and sits in the library sidebar.
+class onto the calendar. A placement is `(day, start, end, room)` — continuous minutes, not slot
+indexes. A class placed several times has several placements sharing one catalog entry — one
+roster, so signed-up count/name edits apply everywhere. A catalog entry with no placements is
+"unscheduled" and sits in the library sidebar.
 
-**Migration:** `migrateOld()` in `App.jsx` converts the pre-library localStorage shape
-(`{ classes: [{section, slotIdx, room, name, ...}] }`) on load. Grid entries that were fully
-identical (name/teacher/reg/note) are merged into one catalog entry with multiple placements.
-Old class-level `cap` values are used to infer `roomCaps` during migration / normalization, then
-removed from catalog entries. `normalizeData()` also adds `roomCaps` for existing catalog-format
-localStorage that predates room capacities.
+**Combined rooms:** a room with `occupies: ["2","3"]` collides with rooms 2 and 3 (and they with
+it, and with each other through shared members). `roomsCollide(a, b)` tests member-set
+intersection; the calendar shows gray stripes in member columns while a combined room is in use.
 
-### Sections / tabs
+**Migration chain (idempotent, in `upgrade()`):**
+- v0 `{ classes: [...] }` → `migrateOld()` → v1 catalog + placements (unchanged from before)
+- v1 (sections/slotIdx, AM+PM room groups) → `migrateV1toV2()`: `morning` placements expand to one
+  placement per weekday; slot labels parse to minutes (bare hours: 8–11 = AM, 12 = noon, 1–7 = PM);
+  a class-level note that is a time range (the old "actual time" workaround, e.g. `2:30–4:00`)
+  overrides the slot times and is cleared; AM/PM room groups merge into one list (max capacity
+  wins; `"2+3"`-style names become combined rooms with `occupies`)
+- v2 → `normalizeV2()` validates/cleans
+`upgrade()` runs on every load **and on every shared-row poll**, so if an old client writes v1 data
+back to the shared row, the next v2 client re-upgrades it (hours overrides may be lost; placements
+survive). After deploying, ask everyone to refresh open tabs.
 
-Six tabs: `morning` (daily AM), then `mon`–`fri` (afternoon PM). Morning uses `rooms.morning`; all afternoon tabs share `rooms.afternoon`. A class placed in `morning` meets every day by convention; a PM class meeting twice a week simply has placements on two day tabs. Two pseudo-tabs (`tab === "byClass"` / `"byTeacher"`, not real sections) swap the grid for read-only overview tables — one row per class / per teacher, columns = days, click-to-edit. Code that uses `tab` as a section must guard for them (see `defaultSection`).
+### Days / tabs
+
+One tab per entry in `days` (Mon–Sat by default), plus two pseudo-tabs (`tab === "byClass"` /
+`"byTeacher"`) that swap the calendar for read-only overview tables — one row per class / per
+teacher, columns = days, click-to-edit. Code that uses `tab` as a day must guard for the
+pseudo-tabs (see `isDayTab` / `defaultDay`). There is no "Morning (Daily)" section anymore — a
+daily class is simply five placements (the class dialog's **⇄ Mon–Fri** button creates them in
+one click, and hovering a day tab mid-drag switches days so a card can be dropped on another day).
+
+### Day grid rendering & interactions
+
+The grid is absolutely-positioned blocks in room columns: `top = (start − gridStart) ×
+PX_PER_MIN`, `height = duration × PX_PER_MIN` (1.1 px/min, 15-min snap via `SNAP`). The visible
+range is the day's `hours` window, stretched to fit any placement outside it. Overlapping
+placements in one room render side by side via `layoutLanes()` (cluster + lane assignment).
+Interactions: HTML5 drag to move (a translucent ghost previews the snapped target; red ghost =
+room conflict, drop rejected with a flash banner), pointer-event drag on a card's bottom edge to
+resize (clamped at the next conflicting placement), click an empty time to create a class there,
+drag a card onto the library to unschedule. Room conflicts are hard (red border, blocked drops);
+teacher overlaps are amber warnings — same semantics as before, but tested by interval overlap
+(`overlaps()`) instead of slot equality.
 
 ### Layout
 
@@ -137,27 +164,32 @@ tray drop handlers, so dragging a scheduled card onto it still unschedules.
 
 ### Rooms and capacity
 
-Rooms remain ordered string arrays under `rooms.morning` and `rooms.afternoon`; capacities live in
-the parallel `roomCaps` object keyed by the same room names. `RoomModal` edits room names, ordering,
-and capacity together; clicking a room header on the calendar (`editRoomCap`) prompts for just that
-room's capacity (afternoon capacities apply to all PM days). Calendar room headers display `Cap N`, and scheduled cards compare the class
-`reg` count against the capacity of the room they are placed in. The Class Library no longer edits a
-class capacity; it only manages how many students are signed up for that class.
+`rooms` is one ordered array of `{ id, cap, occupies? }` for the whole week. `RoomModal` edits
+names, ordering, capacity, and the "Combines" list together (renames cascade to placements and
+`occupies` references; deleting a room unschedules its classes); clicking a room header on the
+calendar (`editRoomCap`) prompts for just that room's capacity (applies all week). Calendar room
+headers display `Cap N` plus a purple "= 2 + 3 combined" note on combined rooms, and scheduled
+cards compare the class `reg` count against the capacity of the room they are placed in. The Class
+Library only manages how many students are signed up for a class.
 
-### Two ways to schedule a class
+### Three ways to schedule a class
 
-1. **Drag & drop.** Drag payloads are strings in `dataTransfer` (+ mirrored in `drag` state):
-   `"lib:<classId>"` from a library card — dropping on an *empty* grid cell creates a placement
-   (occupied cells reject it); `"pl:<placementId>"` from a grid card — dropping on a cell
-   moves it (occupied target = swap), dropping back onto the library sidebar removes the
-   placement (unschedules without deleting).
-2. **Schedule rows in `ClassModal`.** The dialog holds a local `rows` state
-   (`{id?, section, slotIdx, room}` per meeting time). Room options are disabled when taken
-   (by another class on the board, or another row in the same dialog); `submit()` re-validates
-   and alerts on conflict. On save, `saveClass(form, rows)` rebuilds the class's placements:
-   rows keep existing placement ids where present, new rows get fresh ids. Opening a class from
-   the Class Library and changing its schedule rows uses this same path, so the calendar grid updates
-   immediately after save.
+1. **Drag & drop.** Drag payloads are strings in `dataTransfer` (+ mirrored in `drag` state with
+   the dragged duration and grab offset): `"lib:<classId>"` from a library card (duration = the
+   class's existing meeting length, else 90 min); `"pl:<placementId>"` from a calendar card.
+   Columns show a snapped ghost while dragging; a drop that would overlap another class in a
+   colliding room is rejected (red ghost + flash banner). Dropping onto the library sidebar
+   removes the placement (unschedules without deleting). There is no swap-on-drop anymore —
+   move one card aside first.
+2. **Click an empty time** on a column — opens the class dialog pre-filled with that day, snapped
+   start time (+90 min), and room.
+3. **Schedule rows in `ClassModal`.** The dialog holds a local `rows` state
+   (`{id?, day, start, end, room}` per meeting time; native `<input type="time">` fields). Room
+   options are disabled when taken (by another class on the board, or another overlapping row in
+   the same dialog, member-room collisions included); `submit()` re-validates and alerts on
+   conflict. The **⇄ Mon–Fri** button copies a row to every weekday. On save, `saveClass(form,
+   rows)` rebuilds the class's placements: rows keep existing placement ids where present, new
+   rows get fresh ids.
 
 ### Teacher roster & By Teacher view
 
@@ -165,28 +197,31 @@ class capacity; it only manages how many students are signed up for that class.
 `normalizeData()` rebuilds the roster on load as stored list ∪ every teacher named on a class, deduped
 case-insensitively via `teacherKey()`. The class dialog's Teacher field is a dropdown over the roster
 plus "(Teacher TBD)" and "＋ Add new teacher…" (prompt; the name joins the roster when the class is
-saved). The **👤 By Teacher** tab (`tab === "byTeacher"`, not a real section) replaces the grid with a
-teachers × days table — each cell lists that teacher's classes with time + room, amber ⚠ when one
-teacher has two classes in the same slot, click-to-edit. Its "Manage teachers" button opens
+saved). The **👤 By Teacher** tab (`tab === "byTeacher"`, not a real day) replaces the calendar with a
+teachers × days table — each cell lists that teacher's classes with time range + room, amber ⚠ when
+two of their classes overlap in time, click-to-edit. Its "Manage teachers" button opens
 `TeacherModal`: rename cascades to all classes (matched via `teacherKey`), removal sets classes to
 TBD, a "(Teacher TBD)" row in the view collects unassigned classes. When `tab === "byTeacher"` the
-class dialog's `defaultSection` falls back to `"morning"`.
+class dialog's `defaultDay` falls back to the first day.
 
 ### Conflicts: room (red, blocking) vs teacher (amber, soft)
 
 Room conflicts are hard errors, teacher overlaps are warnings — styled and worded distinctly so
 they can't be confused:
 
-- **Room conflict (red, `roomConflictStyle`)** — two classes in one cell. Prevented by disabled
-  room options in the modal dropdowns; if a selected room becomes taken (after changing the row's
-  day/slot), an inline red "Room conflict: Room X already has Y" error appears and save is blocked
-  with an alert. A class scheduled twice into the same day+slot is blocked the same way.
+- **Room conflict (red, `roomConflictStyle`)** — two classes overlapping in one room (member-room
+  collisions of combined rooms included). Prevented by disabled room options in the modal
+  dropdowns and rejected drops on the calendar; if a selected room becomes taken (after changing
+  a row's day/time), an inline red "Room conflict: Room X already has Y" error appears and save is
+  blocked with an alert. A class with two overlapping meetings of its own is blocked the same way.
+  Pre-existing overlaps (e.g. surfaced by migration) still render — side by side with red borders —
+  so they can be seen and fixed by dragging.
 - **Teacher overlap (amber, `teacherWarningStyle`)** — `teacherKey()` normalizes teacher names and
-  ignores blank / `TBD` / `N/A`; `teacherConflictsAt()` finds other placements with the same teacher
-  in the same `(section, slotIdx)`. Non-blocking: amber "⚠ Teacher overlap" notes under modal rows,
-  amber border + badge on grid cards, badge on sidebar cards, and a `window.confirm` summary on save.
+  ignores blank / `TBD` / `N/A`; `teacherBusy()` finds other placements with the same teacher
+  overlapping in time. Non-blocking: amber "⚠ Teacher overlap" notes under modal rows,
+  amber border + badge on calendar cards, badge on sidebar cards, and a `window.confirm` summary on save.
 - **Open-room hints** — while a modal schedule row has no room selected, a muted line lists which
-  rooms are still free in that slot ("Open rooms: 1, 3" / "No open rooms in this time slot").
+  rooms are still free at that time ("Open rooms: 1, 3" / "No open rooms at this time").
 
 ### Persistence (shared via Supabase)
 
@@ -248,6 +283,13 @@ app runs exactly as the old browser-only version.
   tabs), tie-broken by day then name.
 - 2026-06-11 — **collapsible library sidebar**: collapses to a slim rail (persisted preference);
   the rail still accepts drag-to-unschedule drops and shows the class count.
+- 2026-06-12 — **day calendar (v2 data model)**: merged the Morning/PM tabs into one continuous
+  per-day calendar (Mon–Sat, rooms × time axis); placements moved from `(section, slotIdx)` to
+  `(day, start, end)` minutes with free start times (15-min snap) and drag-to-resize; added
+  Saturday with per-day scheduling hours; one room list with combined rooms (`occupies`) that
+  block their members; idempotent `upgrade()` migration (morning → 5 weekday placements,
+  note-time overrides become real times); remote sync disabled on localhost. Swap-on-drop was
+  removed (drops on occupied space are rejected instead).
 
 ---
 

@@ -1,7 +1,69 @@
 import React, { useState, useCallback, useEffect, useRef } from "react";
 
-// ───────────────────────── Default data (from 2026 Summer Jericho schedule) ─────────────────────────
-// Morning uses combined room 2+3; afternoons use rooms 2 and 3 separately
+// ───────────────────────── Week / time constants ─────────────────────────
+const ALL_DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+const DAY_LABEL = {
+  mon: "Monday", tue: "Tuesday", wed: "Wednesday", thu: "Thursday",
+  fri: "Friday", sat: "Saturday", sun: "Sunday",
+};
+const DAY_SHORT = { mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu", fri: "Fri", sat: "Sat", sun: "Sun" };
+const WEEKDAYS = ["mon", "tue", "wed", "thu", "fri"];
+const dayIdx = (d) => ALL_DAYS.indexOf(d);
+
+const SNAP = 15;             // minutes — drag/resize granularity
+const PX_PER_MIN = 1.1;      // vertical scale of the day grid
+const DEFAULT_DURATION = 90; // minutes — for new classes / library drops
+
+// Times are minutes since midnight. Display follows the school's 12-hour style.
+const fmtTime = (min) => {
+  const h = Math.floor(min / 60), m = min % 60;
+  return `${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")}`;
+};
+const fmtAmPm = (min) => `${fmtTime(min)} ${min < 720 ? "AM" : "PM"}`;
+const fmtRange = (s, e) => `${fmtTime(s)}–${fmtTime(e)}`;
+const toInput = (min) => `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
+const fromInput = (v) => {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(v || "");
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+};
+
+// Parse "9:00–10:30", "12:30-2:00", "9 AM - 5 PM" → [startMin, endMin].
+// Bare hours follow the program's convention: 8–11 = AM, 12 = noon, 1–7 = PM.
+function parseTimeRange(label) {
+  const m = /^\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*[–—-]+\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*$/i.exec(label || "");
+  if (!m) return null;
+  const part = (h, mm, ap) => {
+    if (ap) return ((h % 12) + (ap.toLowerCase() === "pm" ? 12 : 0)) * 60 + mm;
+    if (h === 12) return 720 + mm;
+    if (h >= 1 && h <= 7) return (h + 12) * 60 + mm;
+    return h * 60 + mm;
+  };
+  const s = part(Number(m[1]), Number(m[2] || 0), m[3]);
+  const e = part(Number(m[4]), Number(m[5] || 0), m[6]);
+  return e > s ? [s, e] : null;
+}
+
+function cleanCap(value, fallback) {
+  const n = parseInt(value, 10);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+const teacherKey = (teacher) => {
+  const key = (teacher || "").trim().toLowerCase();
+  return key === "tbd" || key === "n/a" || key === "na" ? "" : key;
+};
+
+const ratioColor = (reg, cap) => {
+  if (!cap) return { bar: "#94a3b8", text: "#64748b", bg: "#f8fafc" };
+  const r = reg / cap;
+  if (r >= 1) return { bar: "#dc2626", text: "#b91c1c", bg: "#fef2f2" };
+  if (r >= 0.75) return { bar: "#d97706", text: "#b45309", bg: "#fffbeb" };
+  return { bar: "#0d7a72", text: "#0f766e", bg: "#f0fdfa" };
+};
+
+// ───────────────────────── Default data (2026 Summer Jericho, v1 format) ─────────────────────────
+// Kept in the legacy slot format and run through the migration chain, so the
+// migrations are exercised on every fresh install / Reset Data.
 const DEFAULT_ROOMS = {
   morning: ["1", "2+3", "4", "5", "6", "7", "8"],
   afternoon: ["1", "2", "3", "4", "5", "6", "7", "8"],
@@ -10,20 +72,6 @@ const DEFAULT_ROOM_CAPS = {
   morning: { "1": 12, "2+3": 25, "4": 12, "5": 12, "6": 12, "7": 12, "8": 12 },
   afternoon: { "1": 25, "2": 12, "3": 12, "4": 12, "5": 12, "6": 12, "7": 12, "8": 12 },
 };
-
-const SECTIONS = [
-  { id: "morning", label: "Morning (Daily)", short: "AM" },
-  { id: "mon", label: "Mon PM", short: "Mon" },
-  { id: "tue", label: "Tue PM", short: "Tue" },
-  { id: "wed", label: "Wed PM", short: "Wed" },
-  { id: "thu", label: "Thu PM", short: "Thu" },
-  { id: "fri", label: "Fri PM", short: "Fri" },
-];
-
-const sectionShort = (id) => SECTIONS.find((s) => s.id === id)?.short || id;
-const sectionIdx = (id) => SECTIONS.findIndex((s) => s.id === id);
-const roomGroup = (sectionId) => (sectionId === "morning" ? "morning" : "afternoon");
-
 const DEFAULT_SLOTS = {
   morning: ["9:00–10:30", "10:30–12:00"],
   mon: ["12:30–2:00", "2:00–3:30", "3:30–5:00"],
@@ -41,14 +89,14 @@ const mk = (section, slotIdx, room, name, teacher, reg, cap, note = "") => ({
 });
 
 const DEFAULT_CLASSES = [
-  // Morning 9:00–10:30
+  // Morning 9:00–10:30 (daily)
   mk("morning", 0, "2+3", "SAT", "Joshua", 22, 25),
   mk("morning", 0, "7", "ELA", "Linda", 8, 12),
   mk("morning", 0, "6", "Alg2", "James", 7, 12),
   mk("morning", 0, "4", "Geo", "Thomas", 5, 12),
   mk("morning", 0, "5", "5/6th Math", "Matthew M", 8, 12),
   mk("morning", 0, "1", "G7/8 ELA", "", 0, 12),
-  // Morning 10:30–12:00
+  // Morning 10:30–12:00 (daily)
   mk("morning", 1, "2+3", "SAT Math", "Herrick", 23, 25),
   mk("morning", 1, "7", "PSAT", "Joshua", 12, 12),
   mk("morning", 1, "6", "PSAT", "Daniel", 7, 12),
@@ -94,45 +142,66 @@ const DEFAULT_CLASSES = [
   mk("thu", 1, "5", "NYT", "Rebecca", 0, 12),
 ];
 
-// ───────────────────────── Data model ─────────────────────────
+// ───────────────────────── Data model (v2) ─────────────────────────
+// days:       which days the program runs — ordered subset of ALL_DAYS
+// hours:      { default: [startMin, endMin], <day>: [start, end] } scheduling window per day
+// rooms:      [{ id, cap, occupies?: ["2","3"] }] — one list for the whole week;
+//             a room with `occupies` is a combined space that blocks its member rooms
 // catalog:    one entry per class/cohort — { id, name, teacher, reg, note }
-// placements: where a class meets       — { id, classId, section, slotIdx, room }
-// roomCaps:   room capacity by group/name — { morning: { "2+3": 25 }, afternoon: { "1": 25 } }
-// A class placed in several slots/days shares one roster: reg/name edits apply everywhere.
+// placements: where a class meets — { id, classId, day, start, end, room }
+// A class placed several times shares one roster: reg/name edits apply everywhere.
 
-function defaultRoomCap(group, room) {
-  return DEFAULT_ROOM_CAPS[group]?.[room] ?? 12;
-}
+const DEFAULT_HOURS = { default: [540, 1020], sat: [540, 780] };
 
-function cleanCap(value, fallback) {
-  const n = parseInt(value, 10);
-  return Number.isFinite(n) && n >= 0 ? n : fallback;
-}
+function normalizeV2(raw) {
+  let rooms = (Array.isArray(raw.rooms) ? raw.rooms : [])
+    .map((r) => (typeof r === "string" ? { id: r, cap: 12 } : r))
+    .filter((r) => r && r.id != null && String(r.id).trim())
+    .map((r) => ({
+      id: String(r.id).trim(),
+      cap: cleanCap(r.cap, 12),
+      ...(Array.isArray(r.occupies) && r.occupies.length ? { occupies: r.occupies.map(String) } : {}),
+    }));
+  const seen = new Set();
+  rooms = rooms.filter((r) => (seen.has(r.id) ? false : (seen.add(r.id), true)));
+  if (rooms.length === 0) rooms = [{ id: "1", cap: 12 }];
+  const roomIds = new Set(rooms.map((r) => r.id));
+  rooms = rooms.map((r) => {
+    if (!r.occupies) return r;
+    const occ = [...new Set(r.occupies.filter((o) => o !== r.id && roomIds.has(o)))];
+    return occ.length ? { id: r.id, cap: r.cap, occupies: occ } : { id: r.id, cap: r.cap };
+  });
 
-function normalizeData(raw) {
-  const rooms = raw.rooms || JSON.parse(JSON.stringify(DEFAULT_ROOMS));
-  const slots = raw.slots || JSON.parse(JSON.stringify(DEFAULT_SLOTS));
-  const placements = raw.placements || [];
-  const rawByClass = new Map((raw.catalog || []).map((k) => [k.id, k]));
+  const wanted = (Array.isArray(raw.days) ? raw.days : []).filter((d) => ALL_DAYS.includes(d));
+  const days = wanted.length ? ALL_DAYS.filter((d) => wanted.includes(d)) : ["mon", "tue", "wed", "thu", "fri", "sat"];
+
+  const cleanWin = (w) =>
+    Array.isArray(w) && Number.isFinite(w[0]) && Number.isFinite(w[1]) && w[1] > w[0]
+      ? [Math.max(0, Math.round(w[0])), Math.min(1440, Math.round(w[1]))]
+      : null;
+  const hours = { default: cleanWin(raw.hours?.default) || DEFAULT_HOURS.default.slice() };
+  days.forEach((d) => {
+    const w = cleanWin(raw.hours?.[d]) || (raw.hours?.[d] == null && DEFAULT_HOURS[d] ? DEFAULT_HOURS[d].slice() : null);
+    if (w) hours[d] = w;
+  });
+
   const catalog = (raw.catalog || []).map(({ cap, ...k }) => ({
     ...k,
     reg: Math.max(0, parseInt(k.reg, 10) || 0),
     note: k.note || "",
   }));
-  const roomCaps = { morning: {}, afternoon: {} };
+  const classIds = new Set(catalog.map((k) => k.id));
 
-  ["morning", "afternoon"].forEach((group) => {
-    (rooms[group] || []).forEach((room) => {
-      const saved = raw.roomCaps?.[group]?.[room];
-      let fallback = defaultRoomCap(group, room);
-      placements.forEach((p) => {
-        if (roomGroup(p.section) !== group || p.room !== room) return;
-        const oldClassCap = rawByClass.get(p.classId)?.cap;
-        if (oldClassCap != null) fallback = Math.max(fallback, cleanCap(oldClassCap, fallback));
-      });
-      roomCaps[group][room] = cleanCap(saved, fallback);
-    });
-  });
+  const placements = (raw.placements || [])
+    .filter(
+      (p) =>
+        p && classIds.has(p.classId) && days.includes(p.day) && roomIds.has(p.room) &&
+        Number.isFinite(p.start) && Number.isFinite(p.end) && p.end > p.start
+    )
+    .map((p) => ({
+      id: p.id, classId: p.classId, day: p.day,
+      start: Math.round(p.start), end: Math.round(p.end), room: p.room,
+    }));
 
   // Teacher roster: stored list ∪ every teacher named on a class (dedup case-insensitively)
   const teacherMap = new Map();
@@ -142,29 +211,22 @@ function normalizeData(raw) {
   });
   const teachers = [...teacherMap.values()].sort((a, b) => a.localeCompare(b));
 
-  return {
-    rooms,
-    slots,
-    roomCaps,
-    catalog,
-    placements,
-    teachers,
-    nextId: raw.nextId || 1000,
-  };
+  return { version: 2, days, hours, rooms, catalog, placements, teachers, nextId: raw.nextId || 1000 };
 }
 
-// Convert the pre-library format ({ classes: [...] }) into catalog + placements.
-// Grid entries that are fully identical (name/teacher/reg/note) collapse into
-// one catalog entry with several placements — i.e. one class meeting on several days.
+// Convert the pre-library format ({ classes: [...] }) into v1 catalog + placements.
+// Grid entries that are fully identical (name/teacher/reg/note) collapse into one
+// catalog entry with several placements — one class meeting on several days.
 function migrateOld(old) {
+  const v1Group = (s) => (s === "morning" ? "morning" : "afternoon");
   const catalog = [];
   const placements = [];
   const roomCaps = { morning: {}, afternoon: {} };
   let n = 1;
   const byKey = new Map();
   (old.classes || []).forEach((c) => {
-    const group = roomGroup(c.section);
-    const cap = Math.max(0, parseInt(c.cap, 10) || defaultRoomCap(group, c.room));
+    const group = v1Group(c.section);
+    const cap = Math.max(0, parseInt(c.cap, 10) || DEFAULT_ROOM_CAPS[group]?.[c.room] || 12);
     roomCaps[group][c.room] = Math.max(roomCaps[group][c.room] || 0, cap);
     const key = [c.name, c.teacher || "", c.reg || 0, c.note || ""].join("¦");
     let entry = byKey.get(key);
@@ -175,24 +237,101 @@ function migrateOld(old) {
     }
     placements.push({ id: "p" + n++, classId: entry.id, section: c.section, slotIdx: c.slotIdx, room: c.room });
   });
-  return normalizeData({ rooms: old.rooms, slots: old.slots, roomCaps, catalog, placements, nextId: n });
+  return { rooms: old.rooms, slots: old.slots, roomCaps, catalog, placements, nextId: n };
+}
+
+// v1 (sections + slot indexes, AM/PM room groups) → v2 (days + minutes, one room list).
+// - "morning" placements expand to one placement per weekday (shared roster keeps them one class)
+// - slot labels parse into minutes; a class-level note that is a time range (the old
+//   "actual time" workaround, e.g. "2:30–4:00") overrides the slot and is cleared
+// - "2+3"-style rooms become combined rooms that occupy their member rooms
+function migrateV1toV2(v1) {
+  const aft = (v1.rooms?.afternoon || []).slice();
+  const mor = v1.rooms?.morning || [];
+  const names = aft.slice();
+  mor.forEach((n) => {
+    if (names.includes(n)) return;
+    const members = n.split("+").map((s) => s.trim()).filter((m) => names.includes(m));
+    if (members.length) names.splice(Math.max(...members.map((m) => names.indexOf(m))) + 1, 0, n);
+    else names.push(n);
+  });
+  const capOf = (n) =>
+    Math.max(cleanCap(v1.roomCaps?.morning?.[n], 0), cleanCap(v1.roomCaps?.afternoon?.[n], 0)) ||
+    Math.max(DEFAULT_ROOM_CAPS.morning[n] || 0, DEFAULT_ROOM_CAPS.afternoon[n] || 0) || 12;
+  const rooms = names.map((n) => {
+    const members = n.includes("+")
+      ? [...new Set(n.split("+").map((s) => s.trim()).filter((m) => m && m !== n && names.includes(m)))]
+      : [];
+    return members.length ? { id: n, cap: capOf(n), occupies: members } : { id: n, cap: capOf(n) };
+  });
+
+  const noteRange = new Map();
+  const catalog = (v1.catalog || []).map((k) => {
+    const r = parseTimeRange(k.note);
+    if (r) {
+      noteRange.set(k.id, r);
+      return { ...k, note: "" };
+    }
+    return { ...k };
+  });
+
+  let n = v1.nextId || 1000;
+  const placements = [];
+  (v1.placements || []).forEach((p) => {
+    const slotLabel = (v1.slots?.[p.section] || [])[p.slotIdx];
+    const range =
+      noteRange.get(p.classId) ||
+      parseTimeRange(slotLabel) ||
+      (p.section === "morning" ? [540, 630] : [750, 840]);
+    const onDays = p.section === "morning" ? WEEKDAYS : [p.section];
+    onDays.forEach((d) => {
+      placements.push({ id: "p" + n++, classId: p.classId, day: d, start: range[0], end: range[1], room: p.room });
+    });
+  });
+
+  return normalizeV2({
+    version: 2,
+    days: ["mon", "tue", "wed", "thu", "fri", "sat"],
+    hours: { default: DEFAULT_HOURS.default.slice(), sat: DEFAULT_HOURS.sat.slice() },
+    rooms, catalog, placements,
+    teachers: v1.teachers,
+    nextId: n,
+  });
+}
+
+// Accept any historical shape. Idempotent — safe to run on every load, including
+// shared-row polls (protects against an old client writing v1 data back).
+function upgrade(raw) {
+  if (!raw || typeof raw !== "object") return defaultData();
+  if (raw.version === 2 || Array.isArray(raw.rooms) || (raw.placements || []).some((p) => p && p.day != null)) {
+    return normalizeV2(raw);
+  }
+  if (raw.catalog && raw.placements) return migrateV1toV2(raw);
+  if (raw.classes) return migrateV1toV2(migrateOld(raw));
+  return defaultData();
 }
 
 const defaultData = () =>
-  migrateOld({
-    rooms: JSON.parse(JSON.stringify(DEFAULT_ROOMS)),
-    slots: JSON.parse(JSON.stringify(DEFAULT_SLOTS)),
-    classes: DEFAULT_CLASSES,
-  });
+  migrateV1toV2(
+    migrateOld({
+      rooms: JSON.parse(JSON.stringify(DEFAULT_ROOMS)),
+      slots: JSON.parse(JSON.stringify(DEFAULT_SLOTS)),
+      classes: DEFAULT_CLASSES,
+    })
+  );
 
 const STORAGE_KEY = "premier-classroom-schedule";
 
 // ───────────────────────── Shared storage (Supabase) ─────────────────────────
 // One shared schedule for everyone. The anon key is designed to be public; what
 // it can do is limited by the table's RLS policies. Empty key = browser-only mode.
+// Local dev (localhost) also runs browser-only so experiments never touch the
+// live shared schedule.
 const SUPABASE_URL = "https://zbvedbwbxdzcsnftvyph.supabase.co";
 const SUPABASE_KEY = "sb_publishable_cDEmeJDF7lwuafg8ZYKF4Q_Sl_fUSTE";
-const REMOTE_ENABLED = Boolean(SUPABASE_URL && SUPABASE_KEY);
+const IS_LOCAL_DEV =
+  typeof window !== "undefined" && /^(localhost|127\.|0\.0\.0\.0|\[::1\])/.test(window.location.hostname);
+const REMOTE_ENABLED = Boolean(SUPABASE_URL && SUPABASE_KEY) && !IS_LOCAL_DEV;
 const REMOTE_ROW_ID = 1;
 const REMOTE_POLL_MS = 30000;
 
@@ -237,11 +376,7 @@ async function remoteSave(data, opts = {}) {
 const loadData = () => {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed && parsed.catalog && parsed.placements) return normalizeData(parsed);
-      if (parsed && parsed.classes) return migrateOld(parsed); // pre-library data
-    }
+    if (raw) return upgrade(JSON.parse(raw));
   } catch (e) { /* fall through */ }
   return defaultData();
 };
@@ -259,20 +394,36 @@ const saveData = (data) => {
   }
 };
 
-// ───────────────────────── Helpers ─────────────────────────
-const ratioColor = (reg, cap) => {
-  if (!cap) return { bar: "#94a3b8", text: "#64748b", bg: "#f8fafc" };
-  const r = reg / cap;
-  if (r >= 1) return { bar: "#dc2626", text: "#b91c1c", bg: "#fef2f2" };
-  if (r >= 0.75) return { bar: "#d97706", text: "#b45309", bg: "#fffbeb" };
-  return { bar: "#0d7a72", text: "#0f766e", bg: "#f0fdfa" };
-};
+// ───────────────────────── Interval helpers ─────────────────────────
+const overlaps = (a, b) => a.day === b.day && a.start < b.end && b.start < a.end;
 
-const slotShort = (label) => ((label || "").split(/[–—-]/)[0].trim() || label || "");
-const teacherKey = (teacher) => {
-  const key = (teacher || "").trim().toLowerCase();
-  return key === "tbd" || key === "n/a" || key === "na" ? "" : key;
-};
+// Overlapping placements in one room share the column side by side (calendar-style lanes)
+function layoutLanes(list) {
+  const sorted = [...list].sort((a, b) => a.start - b.start || a.end - b.end);
+  const res = new Map();
+  let cluster = [];
+  let laneEnds = [];
+  let clusterEnd = 0;
+  const flush = () => {
+    cluster.forEach((it) => res.set(it.p.id, { lane: it.lane, lanes: laneEnds.length }));
+    cluster = [];
+    laneEnds = [];
+  };
+  sorted.forEach((p) => {
+    if (cluster.length && p.start >= clusterEnd) flush();
+    clusterEnd = cluster.length ? Math.max(clusterEnd, p.end) : p.end;
+    let lane = laneEnds.findIndex((e) => e <= p.start);
+    if (lane === -1) {
+      lane = laneEnds.length;
+      laneEnds.push(p.end);
+    } else {
+      laneEnds[lane] = p.end;
+    }
+    cluster.push({ p, lane });
+  });
+  flush();
+  return res;
+}
 
 // ───────────────────────── Main component ─────────────────────────
 export default function ClassroomScheduler() {
@@ -283,13 +434,18 @@ export default function ClassroomScheduler() {
     error: "",
     label: "Checking save...",
   });
-  const [tab, setTab] = useState("morning");
-  const [editing, setEditing] = useState(null); // {isNew, classId?, placementId?, slotIdx?, room?}
+  const [tab, setTab] = useState("mon");
+  const [editing, setEditing] = useState(null); // {isNew, classId?, placementId?, day?, start?, room?}
   const [roomMgrOpen, setRoomMgrOpen] = useState(false);
   const [teacherMgrOpen, setTeacherMgrOpen] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
-  const [drag, setDrag] = useState(null); // {type:'lib'|'pl', id}
-  const [dragOver, setDragOver] = useState(null); // "slotIdx|room" or "tray"
+  const [drag, setDrag] = useState(null); // {type:'lib'|'pl', id, dur, grabOffset}
+  const [dragOver, setDragOver] = useState(null); // "tray" | null
+  const [ghost, setGhost] = useState(null); // {room, start, dur, names: []}
+  const ghostRef = useRef(null);
+  const [resize, setResize] = useState(null); // {plId, end}
+  const [flash, setFlash] = useState(null);
+  const flashTimer = useRef(null);
   const [libOpen, setLibOpenState] = useState(() => {
     try { return window.localStorage.getItem("premier-ui-lib-open") !== "0"; } catch (e) { return true; }
   });
@@ -367,7 +523,7 @@ export default function ClassroomScheduler() {
         if (cancelled) return;
         if (row) {
           remoteRef.current.lastSyncedAt = row.updated_at;
-          setData(normalizeData(row.data));
+          setData(upgrade(row.data));
           setStatus(true, `Shared schedule loaded at ${timeLabel()}`);
         } else {
           // First run ever: publish this browser's copy as the shared schedule
@@ -386,7 +542,7 @@ export default function ClassroomScheduler() {
           const row = await remoteLoad();
           if (row && !remoteRef.current.pendingSave) {
             remoteRef.current.lastSyncedAt = row.updated_at;
-            setData(normalizeData(row.data));
+            setData(upgrade(row.data));
             setStatus(true, `Updated from another computer at ${timeLabel()}`);
           }
         }
@@ -424,60 +580,97 @@ export default function ClassroomScheduler() {
     flushRemoteSave(data);
   };
 
-  const { rooms, slots, roomCaps, catalog, placements, teachers } = data;
-  const curRooms = rooms[roomGroup(tab)] || [];
-  const curSlots = slots[tab] || [];
-  const roomCapacity = (section, room) => {
-    const group = roomGroup(section);
-    return roomCaps?.[group]?.[room] ?? defaultRoomCap(group, room);
+  const { days, hours, rooms, catalog, placements, teachers } = data;
+
+  // Make sure the active tab still exists (e.g. after remote data changes the day list)
+  useEffect(() => {
+    if (!days.includes(tab) && tab !== "byClass" && tab !== "byTeacher") setTab(days[0]);
+  }, [days, tab]);
+
+  // ── Room collision sets: a combined room ("2+3") collides with its members and vice versa ──
+  const memberSets = {};
+  rooms.forEach((r) => { memberSets[r.id] = new Set([r.id, ...(r.occupies || [])]); });
+  const roomsCollide = (a, b) => {
+    if (a === b) return true;
+    const A = memberSets[a], B = memberSets[b];
+    if (!A || !B) return false;
+    for (const x of A) if (B.has(x)) return true;
+    return false;
   };
+  const roomOf = (id) => rooms.find((r) => r.id === id);
+  const roomCap = (id) => roomOf(id)?.cap ?? 12;
 
   const classOfId = (id) => catalog.find((k) => k.id === id);
-  const placementAt = (slotIdx, room) =>
-    placements.find((p) => p.section === tab && p.slotIdx === slotIdx && p.room === room);
   const placementsOf = (classId) => placements.filter((p) => p.classId === classId);
-  const teacherConflictsAt = (section, slotIdx, teacher, opts = {}) => {
+
+  const roomConflictsFor = (cand, opts = {}) =>
+    placements.filter(
+      (p) =>
+        p.id !== opts.excludeId &&
+        (opts.excludeClassId == null || p.classId !== opts.excludeClassId) &&
+        overlaps(p, cand) &&
+        roomsCollide(p.room, cand.room)
+    );
+
+  const teacherBusy = (cand, teacher, opts = {}) => {
     const key = teacherKey(teacher);
     if (!key) return [];
     return placements
-      .filter((p) =>
-        p.section === section &&
-        p.slotIdx === slotIdx &&
-        p.id !== opts.excludePlacementId &&
-        p.classId !== opts.excludeClassId
-      )
+      .filter((p) => p.id !== opts.excludePlacementId && p.classId !== opts.excludeClassId && overlaps(p, cand))
       .map((p) => ({ placement: p, cls: classOfId(p.classId) }))
       .filter(({ cls }) => teacherKey(cls?.teacher) === key);
   };
   const teacherConflictsForPlacement = (pl) => {
     const cls = classOfId(pl.classId);
-    return teacherConflictsAt(pl.section, pl.slotIdx, cls?.teacher, { excludePlacementId: pl.id });
+    return teacherBusy(pl, cls?.teacher, { excludePlacementId: pl.id });
   };
   const teacherConflictLabels = (items) =>
-    [...new Set(items.map(({ placement, cls }) => `${cls?.name || "Class"} in Room ${placement.room}`))];
+    [...new Set(items.map(({ placement, cls }) =>
+      `${cls?.name || "Class"} (${DAY_SHORT[placement.day]} ${fmtRange(placement.start, placement.end)} · Rm ${placement.room})`
+    ))];
 
   const totalReg = catalog.reduce((s, k) => s + (k.reg || 0), 0);
-  const tabPls = placements.filter((p) => p.section === tab);
-  const tabReg = tabPls.reduce((s, p) => s + ((classOfId(p.classId) || {}).reg || 0), 0);
   const noTeacherCount = catalog.filter((k) => !teacherKey(k.teacher)).length;
+
+  // ── Day-grid geometry for the active tab ──
+  const isDayTab = days.includes(tab);
+  const winCfg = (isDayTab && hours[tab]) || hours.default;
+  const tabPls = isDayTab ? placements.filter((p) => p.day === tab) : [];
+  const tabReg = tabPls.reduce((s, p) => s + ((classOfId(p.classId) || {}).reg || 0), 0);
+  // The grid always shows the configured window, stretched to fit any placement outside it
+  const gridStart = Math.floor(Math.min(winCfg[0], ...tabPls.map((p) => p.start)) / 60) * 60;
+  const gridEnd = Math.ceil(Math.max(winCfg[1], ...tabPls.map((p) => p.end)) / 60) * 60;
+  const gridH = (gridEnd - gridStart) * PX_PER_MIN;
+  const hourMarks = [];
+  for (let t = gridStart; t <= gridEnd; t += 60) hourMarks.push(t);
+  const halfMarks = [];
+  for (let t = gridStart + 30; t < gridEnd; t += 60) halfMarks.push(t);
 
   // Chips like "Mon 2:00" for everywhere a class is scheduled
   const placementChips = (classId) =>
     placementsOf(classId)
       .slice()
-      .sort((a, b) => sectionIdx(a.section) - sectionIdx(b.section) || a.slotIdx - b.slotIdx)
-      .map((p) => ({
-        id: p.id,
-        label: `${sectionShort(p.section)} ${slotShort((slots[p.section] || [])[p.slotIdx])}`.trim(),
-      }));
+      .sort((a, b) => dayIdx(a.day) - dayIdx(b.day) || a.start - b.start)
+      .map((p) => ({ id: p.id, label: `${DAY_SHORT[p.day]} ${fmtTime(p.start)}` }));
+
+  const durationFor = (classId) => {
+    const ps = placementsOf(classId);
+    return ps.length ? ps[0].end - ps[0].start : DEFAULT_DURATION;
+  };
+
+  const flashMsg = (msg) => {
+    setFlash(msg);
+    clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setFlash(null), 4500);
+  };
 
   // ── Placement ops ──
-  const addPlacement = (classId, slotIdx, room) => {
-    if (!classOfId(classId) || placementAt(slotIdx, room)) return;
+  const addPlacementAt = (classId, cand) => {
+    if (!classOfId(classId)) return;
     const nid = data.nextId || 1000;
     persist({
       ...data,
-      placements: [...placements, { id: "p" + nid, classId, section: tab, slotIdx, room }],
+      placements: [...placements, { id: "p" + nid, classId, day: cand.day, start: cand.start, end: cand.end, room: cand.room }],
       nextId: nid + 1,
     });
   };
@@ -485,40 +678,70 @@ export default function ClassroomScheduler() {
   const removePlacement = (plId) =>
     persist({ ...data, placements: placements.filter((p) => p.id !== plId) });
 
-  // Drag & drop: move a placement; if target cell is occupied, swap the two
-  const movePlacement = (plId, toSlotIdx, toRoom) => {
+  const movePlacement = (plId, cand) => {
     const src = placements.find((p) => p.id === plId);
     if (!src) return;
-    if (src.section === tab && src.slotIdx === toSlotIdx && src.room === toRoom) return;
-    const target = placementAt(toSlotIdx, toRoom);
+    if (src.day === cand.day && src.start === cand.start && src.room === cand.room) return;
     persist({
       ...data,
-      placements: placements.map((p) => {
-        if (p.id === src.id) return { ...p, section: tab, slotIdx: toSlotIdx, room: toRoom };
-        if (target && p.id === target.id) return { ...p, section: src.section, slotIdx: src.slotIdx, room: src.room };
-        return p;
-      }),
+      placements: placements.map((p) =>
+        p.id === plId ? { ...p, day: cand.day, start: cand.start, end: cand.end, room: cand.room } : p
+      ),
     });
   };
 
-  // Cell drop targets: accept a grid card always (move/swap); accept a library card only when empty
-  const cellHandlers = (slotIdx, room, occupiedPl) => ({
+  // ── Drag & drop on the day grid ──
+  const snapStartFromEvent = (e, dur) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const yMin = gridStart + (e.clientY - rect.top) / PX_PER_MIN - (drag?.grabOffset || 0);
+    let start = Math.round(yMin / SNAP) * SNAP;
+    return Math.max(gridStart, Math.min(start, gridEnd - dur));
+  };
+
+  const colHandlers = (roomId) => ({
     onDragOver: (e) => {
       if (!drag) return;
-      if (drag.type === "lib" && occupiedPl) return; // browser shows no-drop cursor
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
-      setDragOver(slotIdx + "|" + room);
+      const start = snapStartFromEvent(e, drag.dur);
+      const key = roomId + ":" + start;
+      if (ghostRef.current === key) return;
+      ghostRef.current = key;
+      const cand = { day: tab, start, end: start + drag.dur, room: roomId };
+      const clashes = roomConflictsFor(cand, { excludeId: drag.type === "pl" ? drag.id : undefined });
+      setGhost({
+        room: roomId, start, dur: drag.dur,
+        names: [...new Set(clashes.map((c) => classOfId(c.classId)?.name || "another class"))],
+      });
+      setDragOver(null);
     },
-    onDragLeave: () => setDragOver((d) => (d === slotIdx + "|" + room ? null : d)),
     onDrop: (e) => {
       e.preventDefault();
       const raw = e.dataTransfer.getData("text/plain") || (drag ? drag.type + ":" + drag.id : "");
       const [type, id] = raw.split(":");
-      if (type === "lib" && !occupiedPl) addPlacement(id, slotIdx, room);
-      else if (type === "pl") movePlacement(id, slotIdx, room);
+      const dur = drag?.dur || DEFAULT_DURATION;
+      const start = snapStartFromEvent(e, dur);
+      const cand = { day: tab, start, end: start + dur, room: roomId };
+      const clashes = roomConflictsFor(cand, { excludeId: type === "pl" ? id : undefined });
+      if (clashes.length) {
+        const names = [...new Set(clashes.map((c) => classOfId(c.classId)?.name || "another class"))];
+        flashMsg(`Can't place it there — Room ${roomId} ${fmtRange(cand.start, cand.end)} overlaps ${names.join(", ")}.`);
+      } else if (type === "lib") {
+        addPlacementAt(id, cand);
+      } else if (type === "pl") {
+        movePlacement(id, cand);
+      }
       setDrag(null);
+      setGhost(null);
+      ghostRef.current = null;
       setDragOver(null);
+    },
+    onClick: (e) => {
+      if (e.target !== e.currentTarget || drag) return;
+      const rect = e.currentTarget.getBoundingClientRect();
+      let start = gridStart + Math.round((e.clientY - rect.top) / PX_PER_MIN / SNAP) * SNAP;
+      start = Math.max(gridStart, Math.min(start, gridEnd - SNAP));
+      setEditing({ isNew: true, day: tab, start, room: roomId });
     },
   });
 
@@ -529,6 +752,8 @@ export default function ClassroomScheduler() {
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
       setDragOver("tray");
+      setGhost(null);
+      ghostRef.current = null;
     },
     onDragLeave: () => setDragOver((d) => (d === "tray" ? null : d)),
     onDrop: (e) => {
@@ -537,8 +762,44 @@ export default function ClassroomScheduler() {
       const [type, id] = raw.split(":");
       if (type === "pl") removePlacement(id);
       setDrag(null);
+      setGhost(null);
+      ghostRef.current = null;
       setDragOver(null);
     },
+  };
+
+  // ── Resize a card by dragging its bottom edge ──
+  const startResize = (e, p) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startY = e.clientY;
+    const limit = Math.min(
+      gridEnd,
+      ...placements
+        .filter((o) => o.id !== p.id && o.day === p.day && o.start >= p.start && roomsCollide(o.room, p.room))
+        .map((o) => o.start)
+    );
+    let cur = p.end;
+    const move = (ev) => {
+      const dy = ev.clientY - startY;
+      let end = p.end + Math.round(dy / PX_PER_MIN / SNAP) * SNAP;
+      end = Math.max(p.start + SNAP, Math.min(end, limit));
+      if (end !== cur) {
+        cur = end;
+        setResize({ plId: p.id, end });
+      }
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      setResize(null);
+      if (cur !== p.end) {
+        persist({ ...data, placements: placements.map((x) => (x.id === p.id ? { ...x, end: cur } : x)) });
+      }
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    setResize({ plId: p.id, end: p.end });
   };
 
   // ── Signed-up count stepper (shared roster: updates every placement of the class) ──
@@ -561,7 +822,7 @@ export default function ClassroomScheduler() {
     const others = placements.filter((p) => p.classId !== classId);
     const mine = rows.map((r) => ({
       id: r.id || "p" + nid++,
-      classId, section: r.section, slotIdx: r.slotIdx, room: r.room,
+      classId, day: r.day, start: r.start, end: r.end, room: r.room,
     }));
     // A teacher picked via "Add new teacher…" joins the roster on save
     const tKey = teacherKey(form.teacher);
@@ -574,7 +835,7 @@ export default function ClassroomScheduler() {
 
   const deleteClass = (classId) => {
     const n = placementsOf(classId).length;
-    if (n > 1 && !window.confirm(`This class is scheduled in ${n} slots. Delete it everywhere?`)) return;
+    if (n > 1 && !window.confirm(`This class meets ${n} times. Delete it everywhere?`)) return;
     persist({
       ...data,
       catalog: catalog.filter((k) => k.id !== classId),
@@ -592,38 +853,44 @@ export default function ClassroomScheduler() {
     });
   };
 
-  // ── Room management (separate morning / afternoon groups) ──
-  const saveRooms = (groups) => {
+  // ── Room management (one list for the whole week; renames cascade, deletions unschedule) ──
+  const saveRooms = ({ list, renames }) => {
     let np = placements;
-    ["morning", "afternoon"].forEach((g) => {
-      const inGroup = (p) => roomGroup(p.section) === g;
-      Object.entries(groups[g].renames).forEach(([oldName, newName]) => {
-        np = np.map((p) => (inGroup(p) && p.room === oldName ? { ...p, room: newName } : p));
-      });
-      np = np.filter((p) => !inGroup(p) || groups[g].names.includes(p.room));
+    Object.entries(renames).forEach(([oldName, newName]) => {
+      np = np.map((p) => (p.room === oldName ? { ...p, room: newName } : p));
     });
-    persist({
-      ...data,
-      rooms: { morning: groups.morning.names, afternoon: groups.afternoon.names },
-      roomCaps: { morning: groups.morning.caps, afternoon: groups.afternoon.caps },
-      placements: np,
-    });
+    const ids = new Set(list.map((r) => r.id));
+    np = np.filter((p) => ids.has(p.room));
+    persist({ ...data, rooms: list, placements: np });
     setRoomMgrOpen(false);
   };
 
   // ── Quick capacity edit from a calendar room header ──
-  const editRoomCap = (room) => {
-    const group = roomGroup(tab);
-    const current = roomCapacity(tab, room);
-    const scope = group === "morning" ? "morning" : "all afternoon days";
-    const raw = prompt(`Capacity for Room ${room} (applies to ${scope}):`, current);
+  const editRoomCap = (roomId) => {
+    const raw = prompt(`Capacity for Room ${roomId} (applies all week):`, roomCap(roomId));
     if (raw == null) return;
     const n = parseInt(raw, 10);
     if (!Number.isFinite(n) || n < 0) {
       alert("Enter a number of 0 or more.");
       return;
     }
-    persist({ ...data, roomCaps: { ...roomCaps, [group]: { ...(roomCaps[group] || {}), [room]: n } } });
+    persist({ ...data, rooms: rooms.map((r) => (r.id === roomId ? { ...r, cap: n } : r)) });
+  };
+
+  // ── Per-day scheduling window ──
+  const editHours = () => {
+    const cur = hours[tab] || hours.default;
+    const raw = prompt(
+      `Scheduling hours for ${DAY_LABEL[tab]} (e.g. 9:00 AM - 5:00 PM):`,
+      `${fmtAmPm(cur[0])} - ${fmtAmPm(cur[1])}`
+    );
+    if (raw == null) return;
+    const r = parseTimeRange(raw);
+    if (!r) {
+      alert("Couldn't read that — use a format like 9:00 AM - 5:00 PM.");
+      return;
+    }
+    persist({ ...data, hours: { ...hours, [tab]: r } });
   };
 
   // ── Teacher roster management (rename cascades to classes; removal sets them to TBD) ──
@@ -637,31 +904,6 @@ export default function ClassroomScheduler() {
     });
     persist({ ...data, teachers: names, catalog: nc });
     setTeacherMgrOpen(false);
-  };
-
-  // ── Time slot management ──
-  const addSlot = () => {
-    const label = prompt("New time slot label (e.g. 3:30–5:00):");
-    if (!label) return;
-    persist({ ...data, slots: { ...slots, [tab]: [...curSlots, label] } });
-  };
-  const renameSlot = (idx) => {
-    const label = prompt("Edit time slot label:", curSlots[idx]);
-    if (!label) return;
-    const ns = [...curSlots];
-    ns[idx] = label;
-    persist({ ...data, slots: { ...slots, [tab]: ns } });
-  };
-  const removeSlot = (idx) => {
-    const has = placements.some((p) => p.section === tab && p.slotIdx === idx);
-    if (has && !window.confirm("This time slot has classes. They will be unscheduled (but stay in the Class Library). Continue?")) return;
-    const ns = curSlots.filter((_, i) => i !== idx);
-    const np = placements
-      .filter((p) => !(p.section === tab && p.slotIdx === idx))
-      .map((p) =>
-        p.section === tab && p.slotIdx > idx ? { ...p, slotIdx: p.slotIdx - 1 } : p
-      );
-    persist({ ...data, slots: { ...slots, [tab]: ns }, placements: np });
   };
 
   const resetAll = () => {
@@ -681,6 +923,111 @@ export default function ClassroomScheduler() {
     });
   const unscheduledCount = catalog.filter((k) => !placements.some((p) => p.classId === k.id)).length;
 
+  // ── One scheduled card on the day grid ──
+  const renderBlock = (p, laneInfo) => {
+    const cls = classOfId(p.classId);
+    if (!cls) return null;
+    const end = resize?.plId === p.id ? resize.end : p.end;
+    const top = (p.start - gridStart) * PX_PER_MIN;
+    const h = (end - p.start) * PX_PER_MIN;
+    const { lane, lanes } = laneInfo || { lane: 0, lanes: 1 };
+    const cap = roomCap(p.room);
+    const col = ratioColor(cls.reg, cap);
+    const pct = cap ? Math.min(100, Math.round((cls.reg / cap) * 100)) : 0;
+    const roomClashes = roomConflictsFor({ day: p.day, start: p.start, end, room: p.room }, { excludeId: p.id });
+    const teacherConflicts = teacherConflictLabels(teacherConflictsForPlacement(p));
+    const hasRoomClash = roomClashes.length > 0;
+    const hasTeacherConflict = teacherConflicts.length > 0;
+    const otherDays = [...new Set(placementsOf(cls.id).filter((x) => x.id !== p.id).map((x) => DAY_SHORT[x.day]))];
+    const isDragging = drag?.type === "pl" && drag.id === p.id;
+    return (
+      <div
+        key={p.id}
+        draggable={!resize}
+        onDragStart={(e) => {
+          e.dataTransfer.setData("text/plain", "pl:" + p.id);
+          e.dataTransfer.effectAllowed = "move";
+          const rect = e.currentTarget.getBoundingClientRect();
+          setDrag({ type: "pl", id: p.id, dur: p.end - p.start, grabOffset: (e.clientY - rect.top) / PX_PER_MIN });
+        }}
+        onDragEnd={() => { setDrag(null); setGhost(null); ghostRef.current = null; setDragOver(null); }}
+        onClick={(e) => { e.stopPropagation(); setEditing({ isNew: false, classId: cls.id, placementId: p.id }); }}
+        title={
+          `${cls.name} · ${fmtRange(p.start, end)}` +
+          (hasRoomClash ? ` · ROOM CONFLICT with ${[...new Set(roomClashes.map((c) => classOfId(c.classId)?.name))].join(", ")}` : "") +
+          (hasTeacherConflict ? ` · same teacher also has ${teacherConflicts.join(", ")}` : "") +
+          " — drag to move · drag the bottom edge to change length · click to edit"
+        }
+        style={{
+          position: "absolute",
+          top: top + 1,
+          height: Math.max(14, h - 2),
+          left: `calc(${(lane / lanes) * 100}% + 2px)`,
+          width: `calc(${100 / lanes}% - 5px)`,
+          boxSizing: "border-box",
+          zIndex: 1,
+          background: col.bg,
+          border: hasRoomClash ? "2px solid #dc2626" : hasTeacherConflict ? "2px solid #d97706" : "1px solid #d6dad4",
+          boxShadow: hasRoomClash
+            ? "0 0 0 3px rgba(220,38,38,.12)"
+            : hasTeacherConflict
+              ? "0 0 0 3px rgba(217,119,6,.12)"
+              : "none",
+          borderRadius: 8,
+          padding: "4px 7px",
+          overflow: "hidden",
+          cursor: "grab",
+          opacity: isDragging ? 0.35 : 1,
+          display: "flex",
+          flexDirection: "column",
+          gap: 2,
+          transition: "opacity .15s, box-shadow .15s",
+        }}
+      >
+        <div style={{ fontWeight: 700, fontSize: 12.5, lineHeight: 1.2, overflowWrap: "anywhere" }}>{cls.name}</div>
+        <div style={{ fontSize: 11, color: "#475569", lineHeight: 1.25 }}>
+          {fmtRange(p.start, end)}
+          {h >= 56 && <> · {cls.teacher || <i style={{ color: "#b45309" }}>TBD</i>}</>}
+        </div>
+        {h >= 78 && hasRoomClash && <div style={roomConflictStyle}>Room conflict</div>}
+        {h >= 78 && !hasRoomClash && hasTeacherConflict && <div style={teacherWarningStyle}>Teacher conflict</div>}
+        {h >= 100 && otherDays.length > 0 && (
+          <div style={{ fontSize: 11, color: "#0f766e" }} title="Same class (one roster) also meets on these days">
+            ⇄ also {otherDays.join(" · ")}
+          </div>
+        )}
+        {h >= 64 && (
+          <div style={{ marginTop: "auto", minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 3, minWidth: 0 }}>
+              {h >= 88 && (
+                <button onClick={(e) => { e.stopPropagation(); bump(cls.id, -1); }} style={stepBtn}>−</button>
+              )}
+              <span style={{ fontSize: 11, fontWeight: 700, color: col.text, minWidth: 0, flex: 1, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden" }}>
+                {cls.reg}/{cap}{cls.reg >= cap && cap > 0 ? " · FULL" : ""}
+              </span>
+              {h >= 88 && (
+                <button onClick={(e) => { e.stopPropagation(); bump(cls.id, +1); }} style={stepBtn}>＋</button>
+              )}
+            </div>
+            <div style={{ height: 4, background: "#e2e8f0", borderRadius: 2, marginTop: 3, overflow: "hidden" }}>
+              <div style={{ width: pct + "%", height: "100%", background: col.bar, borderRadius: 2, transition: "width .25s" }} />
+            </div>
+          </div>
+        )}
+        {h >= 30 && (
+          <div
+            onPointerDown={(e) => startResize(e, p)}
+            onClick={(e) => e.stopPropagation()}
+            title="Drag to change the end time"
+            style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 8, cursor: "ns-resize", display: "flex", alignItems: "flex-end", justifyContent: "center" }}
+          >
+            <div style={{ width: 22, height: 3, borderRadius: 2, background: "rgba(15,23,42,.18)", marginBottom: 2 }} />
+          </div>
+        )}
+      </div>
+    );
+  };
+
   // ───────────────────────── Render ─────────────────────────
   return (
     <div style={{ minHeight: "100vh", background: "#f4f5f3", fontFamily: "'Inter','Helvetica Neue',Arial,sans-serif", color: "#1e293b" }}>
@@ -691,7 +1038,7 @@ export default function ClassroomScheduler() {
             Premier Plus · Classroom Scheduler
           </h1>
           <span style={{ fontSize: 13, opacity: 0.75 }}>
-            2026 Summer · Jericho · {rooms.morning.length} rooms AM / {rooms.afternoon.length} rooms PM
+            2026 Summer · Jericho · {rooms.length} rooms · {DAY_SHORT[days[0]]}–{DAY_SHORT[days[days.length - 1]]}
           </span>
           <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center" }}>
             <span style={{ fontSize: 13, opacity: 0.85 }}>
@@ -816,11 +1163,11 @@ export default function ClassroomScheduler() {
                       onDragStart={(e) => {
                         e.dataTransfer.setData("text/plain", "lib:" + k.id);
                         e.dataTransfer.effectAllowed = "copyMove";
-                        setDrag({ type: "lib", id: k.id });
+                        setDrag({ type: "lib", id: k.id, dur: durationFor(k.id), grabOffset: 0 });
                       }}
-                      onDragEnd={() => { setDrag(null); setDragOver(null); }}
+                      onDragEnd={() => { setDrag(null); setGhost(null); ghostRef.current = null; setDragOver(null); }}
                       onClick={() => setEditing({ isNew: false, classId: k.id })}
-                      title="Drag onto the grid to schedule (the same class can be placed on several days) · click to edit details & meeting times"
+                      title="Drag onto the calendar to schedule (the same class can be placed on several days) · click to edit details & meeting times"
                       style={{
                         border: "1px solid #d6dad4", borderRadius: 8,
                         background: chips.length ? "#fff" : "#fffbeb",
@@ -876,10 +1223,12 @@ export default function ClassroomScheduler() {
         <div style={{ flex: 1, minWidth: 0 }}>
           {/* Tabs */}
           <nav style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {SECTIONS.map((s) => (
+            {days.map((d) => (
               <button
-                key={s.id}
-                onClick={() => setTab(s.id)}
+                key={d}
+                onClick={() => setTab(d)}
+                onDragEnter={(e) => { if (drag) { e.preventDefault(); setTab(d); } }}
+                title={drag ? `Drop onto ${DAY_LABEL[d]} — hover to switch day` : DAY_LABEL[d]}
                 style={{
                   padding: "8px 14px",
                   borderRadius: "10px 10px 0 0",
@@ -887,12 +1236,12 @@ export default function ClassroomScheduler() {
                   borderBottom: "none",
                   cursor: "pointer",
                   fontSize: 14,
-                  fontWeight: tab === s.id ? 700 : 400,
-                  background: tab === s.id ? "#fff" : "#e8eae6",
-                  color: tab === s.id ? "#123c3a" : "#64748b",
+                  fontWeight: tab === d ? 700 : 400,
+                  background: tab === d ? "#fff" : "#e8eae6",
+                  color: tab === d ? "#123c3a" : "#64748b",
                 }}
               >
-                {s.label}
+                {DAY_SHORT[d]}
               </button>
             ))}
             {[{ id: "byClass", label: "📋 By Class" }, { id: "byTeacher", label: "👤 By Teacher" }].map((v) => (
@@ -919,18 +1268,24 @@ export default function ClassroomScheduler() {
                 ? `${(teachers || []).length} teachers · ${noTeacherCount} classes need a teacher`
                 : tab === "byClass"
                   ? `${catalog.length} classes · ${unscheduledCount} unscheduled`
-                  : `${tabPls.length} classes · ${tabReg} students in this view`}
+                  : `${tabPls.length} classes · ${tabReg} students on ${DAY_LABEL[tab] || "this day"}`}
             </span>
           </nav>
 
-          {/* Schedule grid / teacher view */}
+          {flash && (
+            <div style={{ marginTop: 6, background: "#fef2f2", border: "1px solid #fecaca", color: "#b91c1c", borderRadius: 8, padding: "7px 12px", fontSize: 13, fontWeight: 600 }}>
+              {flash}
+            </div>
+          )}
+
+          {/* Day calendar / overview tables */}
           <main>
             {tab === "byTeacher" ? (
               <TeacherScheduleView
                 teachers={teachers || []}
                 catalog={catalog}
                 placements={placements}
-                slots={slots}
+                days={days}
                 onEditClass={(classId) => setEditing({ isNew: false, classId })}
                 onManageTeachers={() => setTeacherMgrOpen(true)}
               />
@@ -938,157 +1293,124 @@ export default function ClassroomScheduler() {
               <ClassScheduleView
                 catalog={catalog}
                 placements={placements}
-                slots={slots}
+                days={days}
                 onEditClass={(classId) => setEditing({ isNew: false, classId })}
               />
             ) : (
             <>
             <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 96 + curRooms.length * 112, tableLayout: "fixed" }}>
-            <thead>
-              <tr>
-                <th style={{ ...thStyle, width: 96, position: "sticky", left: 0, background: "#fafaf8", zIndex: 2 }}>Time</th>
-                {curRooms.map((r) => (
-                  <th key={r} style={thStyle}>
-                    <div
-                      onClick={() => editRoomCap(r)}
-                      title={`Click to change Room ${r}'s capacity`}
-                      style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", gap: 3, cursor: "pointer" }}
-                    >
-                      <span style={{ display: "inline-block", background: "#123c3a", color: "#fff", borderRadius: 6, padding: "2px 10px", fontSize: 13 }}>
-                        Room {r}
-                      </span>
-                      <span style={{ fontSize: 11, color: "#64748b", fontWeight: 700, borderBottom: "1px dashed #b9c0bb" }}>
-                        Cap {roomCapacity(tab, r)} ✎
-                      </span>
+              <div style={{ minWidth: 64 + rooms.length * 110, position: "relative" }}>
+                {/* Room header row */}
+                <div style={{ display: "flex", borderBottom: "2px solid #d6dad4", background: "#fafaf8" }}>
+                  <div style={{ flex: "0 0 64px", width: 64, position: "sticky", left: 0, zIndex: 4, background: "#fafaf8", boxSizing: "border-box", padding: "10px 6px", fontSize: 12, fontWeight: 600, color: "#475569", textAlign: "center" }}>
+                    Time
+                  </div>
+                  {rooms.map((r) => (
+                    <div key={r.id} style={{ flex: 1, minWidth: 110, boxSizing: "border-box", padding: "8px 4px 9px", textAlign: "center", borderLeft: "1px solid #eceeea" }}>
+                      <div
+                        onClick={() => editRoomCap(r.id)}
+                        title={`Click to change Room ${r.id}'s capacity`}
+                        style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", gap: 3, cursor: "pointer" }}
+                      >
+                        <span style={{ display: "inline-block", background: "#123c3a", color: "#fff", borderRadius: 6, padding: "2px 10px", fontSize: 13 }}>
+                          Room {r.id}
+                        </span>
+                        <span style={{ fontSize: 11, color: "#64748b", fontWeight: 700, borderBottom: "1px dashed #b9c0bb" }}>
+                          Cap {r.cap} ✎
+                        </span>
+                        {r.occupies && (
+                          <span style={{ fontSize: 10, color: "#7c3aed", fontWeight: 700 }} title={`Using Room ${r.id} blocks Rooms ${r.occupies.join(" & ")} (and vice versa)`}>
+                            = {r.occupies.join(" + ")} combined
+                          </span>
+                        )}
+                      </div>
                     </div>
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {curSlots.map((slot, si) => (
-                <tr key={si}>
-                  <td style={{ ...tdStyle, width: 96, position: "sticky", left: 0, background: "#fafaf8", zIndex: 1, verticalAlign: "top" }}>
-                    <div style={{ fontWeight: 700, fontSize: 14, color: "#123c3a" }}>{slot}</div>
-                    <div style={{ marginTop: 6, display: "flex", gap: 6 }}>
-                      <button onClick={() => renameSlot(si)} style={miniBtn} title="Rename time slot">✎</button>
-                      <button onClick={() => removeSlot(si)} style={{ ...miniBtn, color: "#b91c1c" }} title="Delete time slot">✕</button>
-                    </div>
-                  </td>
-                  {curRooms.map((room) => {
-                    const pl = placementAt(si, room);
-                    const cls = pl ? classOfId(pl.classId) : null;
-                    const cellKey = si + "|" + room;
-                    const isOver = dragOver === cellKey;
-                    if (!pl || !cls) {
-                      return (
-                        <td key={room} style={tdStyle} {...cellHandlers(si, room, null)}>
-                          <button
-                            onClick={() => setEditing({ isNew: true, slotIdx: si, room })}
-                            style={{
-                              width: "100%", minHeight: 118,
-                              border: isOver ? "2px solid #0d7a72" : "1.5px dashed #cbd5d1",
-                              borderRadius: 8,
-                              background: isOver ? "#f0fdfa" : "transparent",
-                              color: isOver ? "#0d7a72" : "#94a3b8",
-                              fontSize: 13, cursor: "pointer",
-                            }}
-                            title="Click to create a new class here, or drag one in from the Class Library"
-                          >
-                            {isOver ? "Drop here" : "＋ Add class"}
-                          </button>
-                        </td>
-                      );
-                    }
-                    const cap = roomCapacity(tab, room);
-                    const col = ratioColor(cls.reg, cap);
-                    const pct = cap ? Math.min(100, Math.round((cls.reg / cap) * 100)) : 0;
-                    const teacherConflicts = teacherConflictLabels(teacherConflictsForPlacement(pl));
-                    const hasTeacherConflict = teacherConflicts.length > 0;
-                    const otherDays = [...new Set(
-                      placementsOf(cls.id).filter((p) => p.id !== pl.id).map((p) => sectionShort(p.section))
-                    )];
+                  ))}
+                </div>
+                {/* Time grid */}
+                <div style={{ display: "flex", position: "relative" }}>
+                  <div style={{ flex: "0 0 64px", width: 64, position: "sticky", left: 0, zIndex: 3, background: "#fafaf8", height: gridH, boxSizing: "border-box", borderRight: "1px solid #eceeea" }}>
+                    {hourMarks.map((t) => (
+                      <div key={t} style={{ position: "absolute", top: (t - gridStart) * PX_PER_MIN, right: 6, transform: "translateY(-50%)", fontSize: 11, fontWeight: 700, color: "#94a3b8" }}>
+                        {fmtTime(t)}
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ position: "absolute", left: 64, right: 0, top: 0, height: gridH, pointerEvents: "none" }}>
+                    {hourMarks.map((t) => (
+                      <div key={t} style={{ position: "absolute", left: 0, right: 0, top: (t - gridStart) * PX_PER_MIN, borderTop: "1px solid #eceeea" }} />
+                    ))}
+                    {halfMarks.map((t) => (
+                      <div key={t} style={{ position: "absolute", left: 0, right: 0, top: (t - gridStart) * PX_PER_MIN, borderTop: "1px dashed #f0f2ee" }} />
+                    ))}
+                  </div>
+                  {rooms.map((room) => {
+                    const colPls = tabPls.filter((p) => p.room === room.id);
+                    const lanes = layoutLanes(colPls);
+                    const blockedBy = tabPls.filter((p) => p.room !== room.id && roomsCollide(p.room, room.id));
                     return (
-                      <td key={room} style={tdStyle} {...cellHandlers(si, room, pl)}>
-                        <div
-                          draggable
-                          onDragStart={(e) => {
-                            e.dataTransfer.setData("text/plain", "pl:" + pl.id);
-                            e.dataTransfer.effectAllowed = "move";
-                            setDrag({ type: "pl", id: pl.id });
-                          }}
-                          onDragEnd={() => { setDrag(null); setDragOver(null); }}
-                          style={{
-                            border: isOver && drag?.id !== pl.id ? "2px solid #0d7a72" : hasTeacherConflict ? "2px solid #d97706" : "1px solid #d6dad4",
-                            borderRadius: 8, background: col.bg,
-                            boxSizing: "border-box", width: "100%", maxWidth: "100%", overflow: "hidden",
-                            padding: "8px", minHeight: 118, display: "flex", flexDirection: "column", gap: 4,
-                            opacity: drag?.type === "pl" && drag.id === pl.id ? 0.35 : 1,
-                            cursor: "grab",
-                            boxShadow: isOver && drag?.id !== pl.id ? "0 0 0 3px rgba(13,122,114,.15)" : hasTeacherConflict ? "0 0 0 3px rgba(217,119,6,.15)" : "none",
-                            transition: "opacity .15s, box-shadow .15s",
-                          }}
-                        >
+                      <div
+                        key={room.id}
+                        {...colHandlers(room.id)}
+                        title="Click an empty time to add a class here — or drag a card from the Class Library"
+                        style={{ flex: 1, minWidth: 110, position: "relative", height: gridH, boxSizing: "border-box", borderLeft: "1px solid #eceeea" }}
+                      >
+                        {blockedBy.map((p) => (
                           <div
-                            onClick={() => setEditing({ isNew: false, classId: cls.id, placementId: pl.id, slotIdx: si, room })}
-                            style={{ cursor: "pointer" }}
-                            title="Click to edit"
+                            key={"x" + p.id}
+                            style={{
+                              position: "absolute", left: 1, right: 1,
+                              top: (p.start - gridStart) * PX_PER_MIN + 1,
+                              height: (p.end - p.start) * PX_PER_MIN - 2,
+                              background: "repeating-linear-gradient(135deg, #f1f3f0 0px, #f1f3f0 5px, #e7eae6 5px, #e7eae6 10px)",
+                              borderRadius: 6, pointerEvents: "none", zIndex: 0,
+                              display: "flex", alignItems: "center", justifyContent: "center",
+                            }}
                           >
-                            <div style={{ fontWeight: 700, fontSize: 13, lineHeight: 1.2, overflowWrap: "anywhere" }}>{cls.name}</div>
-                            <div style={{ fontSize: 12, color: "#475569", marginTop: 2, overflowWrap: "anywhere" }}>
-                              {cls.teacher || <i style={{ color: "#b45309" }}>Teacher TBD</i>}
-                              {cls.note && <span style={{ marginLeft: 6, color: "#7c3aed" }}>⏱ {cls.note}</span>}
-                            </div>
-                            {hasTeacherConflict && (
-                              <div
-                                style={teacherWarningStyle}
-                                title={"Same teacher also assigned to " + teacherConflicts.join(", ")}
-                              >
-                                Teacher conflict
-                              </div>
-                            )}
-                            {otherDays.length > 0 && (
-                              <div style={{ fontSize: 11, color: "#0f766e", marginTop: 2, overflowWrap: "anywhere" }} title="Same class (one roster) also meets on these days">
-                                ⇄ also {otherDays.join(" · ")}
-                              </div>
-                            )}
+                            <span style={{ fontSize: 10, color: "#94a3b8", fontWeight: 700 }}>Rm {p.room} in use</span>
                           </div>
-                          <div style={{ marginTop: "auto", minWidth: 0 }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 3, minWidth: 0 }}>
-                              <button onClick={() => bump(cls.id, -1)} style={stepBtn}>−</button>
-                              <span style={{ fontSize: 11, fontWeight: 700, color: col.text, minWidth: 0, flex: 1, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden" }}>
-                                {cls.reg}/{cap}
-                              </span>
-                              <button onClick={() => bump(cls.id, +1)} style={stepBtn}>＋</button>
-                            </div>
-                            <div style={{ height: 4, background: "#e2e8f0", borderRadius: 2, marginTop: 5, overflow: "hidden" }}>
-                              <div style={{ width: pct + "%", height: "100%", background: col.bar, borderRadius: 2, transition: "width .25s" }} />
-                            </div>
-                            {cls.reg >= cap && cap > 0 && (
-                              <div style={{ marginTop: 3, fontSize: 10, fontWeight: 800, color: "#b91c1c", textAlign: "center", letterSpacing: "0.08em" }}>
-                                FULL
-                              </div>
-                            )}
+                        ))}
+                        {colPls.map((p) => renderBlock(p, lanes.get(p.id)))}
+                        {ghost && ghost.room === room.id && (
+                          <div
+                            style={{
+                              position: "absolute",
+                              top: (ghost.start - gridStart) * PX_PER_MIN + 1,
+                              height: ghost.dur * PX_PER_MIN - 2,
+                              left: 2, right: 2, zIndex: 2, pointerEvents: "none", borderRadius: 8,
+                              border: ghost.names.length ? "2px solid #dc2626" : "2px dashed #0d7a72",
+                              background: ghost.names.length ? "rgba(220,38,38,.07)" : "rgba(13,122,114,.07)",
+                              display: "flex", alignItems: "flex-start", justifyContent: "center",
+                            }}
+                          >
+                            <span style={{ fontSize: 11, fontWeight: 700, color: ghost.names.length ? "#b91c1c" : "#0d7a72", marginTop: 3, background: "rgba(255,255,255,.85)", borderRadius: 4, padding: "1px 6px" }}>
+                              {fmtRange(ghost.start, ghost.start + ghost.dur)}{ghost.names.length ? " · taken" : ""}
+                            </span>
                           </div>
-                        </div>
-                      </td>
+                        )}
+                      </div>
                     );
                   })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <div style={{ padding: "10px 14px", borderTop: "1px solid #eceeea" }}>
-            <button onClick={addSlot} style={{ ...btnGhost, color: "#123c3a", borderColor: "#cbd5d1" }}>＋ Add time slot</button>
-          </div>
+                </div>
+              </div>
+              <div style={{ padding: "8px 14px", borderTop: "1px solid #eceeea", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 12, color: "#64748b" }}>
+                <span>
+                  {DAY_LABEL[tab]} hours: <b style={{ color: "#123c3a" }}>{fmtAmPm(winCfg[0])} – {fmtAmPm(winCfg[1])}</b>
+                </span>
+                <button onClick={editHours} style={{ ...miniBtn, width: "auto", padding: "0 9px" }} title="Change this day's scheduling window">
+                  ✎ Edit hours
+                </button>
+                <span style={{ marginLeft: "auto" }}>
+                  Click an empty time to add a class · drag a card's bottom edge to change its length · times snap to {SNAP} min
+                </span>
+              </div>
             </div>
             <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
-              🖱 Define classes in the <b>Class Library</b>, then drag them onto the grid — or click any card and set its
-              meeting times right in the dialog. Place the same class on several
-              days (e.g. Tue + Thu) — it stays one class with one shared enrollment, so edits update everywhere
-              (the Morning tab already means every day). Drag a scheduled card onto another to swap, or back into the
-              library to unschedule it. Click any card to edit, use ＋ − to adjust signed-up students.
+              🖱 Define classes in the <b>Class Library</b>, then drag them anywhere on the day — classes can start
+              at any time (no fixed slots). Place the same class on several days (drag it over a day tab to switch
+              while dragging) — it stays one class with one shared enrollment. Combined rooms (purple note) block
+              their member rooms automatically. Drag a card back into the library to unschedule it. Red border =
+              two classes overlap in one room; amber = the teacher is double-booked.
               Green = room has space, amber = nearly full, red = at or over room capacity.{" "}
               {REMOTE_ENABLED ? "Everyone sees this same shared schedule." : "Data is saved in this browser."}
             </p>
@@ -1107,28 +1429,29 @@ export default function ClassroomScheduler() {
             editing.classId
               ? placementsOf(editing.classId)
                   .slice()
-                  .sort((a, b) => sectionIdx(a.section) - sectionIdx(b.section) || a.slotIdx - b.slotIdx)
-                  .map((p) => ({ id: p.id, section: p.section, slotIdx: p.slotIdx, room: p.room }))
+                  .sort((a, b) => dayIdx(a.day) - dayIdx(b.day) || a.start - b.start)
+                  .map((p) => ({ id: p.id, day: p.day, start: p.start, end: p.end, room: p.room }))
               : editing.room != null
-                ? [{ id: null, section: tab, slotIdx: editing.slotIdx, room: editing.room }]
+                ? [{ id: null, day: editing.day, start: editing.start, end: editing.start + DEFAULT_DURATION, room: editing.room }]
                 : []
           }
-          slots={slots}
+          days={days}
           rooms={rooms}
           teachers={teachers || []}
-          defaultSection={tab === "byTeacher" || tab === "byClass" ? "morning" : tab}
-          occupiedBy={(section, slotIdx, room) => {
-            const p = placements.find(
-              (x) => x.section === section && x.slotIdx === slotIdx && x.room === room && x.classId !== editing.classId
+          defaultDay={days.includes(tab) ? tab : days[0]}
+          roomsCollide={roomsCollide}
+          occupiedBy={(cand) => {
+            const f = placements.find(
+              (x) => x.classId !== editing.classId && overlaps(x, cand) && roomsCollide(x.room, cand.room)
             );
-            return p ? (classOfId(p.classId)?.name || "another class") : null;
+            return f ? (classOfId(f.classId)?.name || "another class") : null;
           }}
-          teacherConflictsAt={(section, slotIdx, teacher) =>
-            teacherConflictLabels(teacherConflictsAt(section, slotIdx, teacher, { excludeClassId: editing.classId }))
+          teacherConflictsAt={(cand, teacher) =>
+            teacherConflictLabels(teacherBusy(cand, teacher, { excludeClassId: editing.classId }))
           }
           contextLabel={
             editing.room != null
-              ? `${SECTIONS.find((s) => s.id === tab)?.label} · ${curSlots[editing.slotIdx]} · Room ${editing.room}`
+              ? `${DAY_LABEL[editing.day]} · ${fmtAmPm(editing.start)} · Room ${editing.room}`
               : "Class Library"
           }
           onSave={saveClass}
@@ -1139,7 +1462,7 @@ export default function ClassroomScheduler() {
 
       {/* Room manager modal */}
       {roomMgrOpen && (
-        <RoomModal rooms={rooms} roomCaps={roomCaps} placements={placements} onSave={saveRooms} onClose={() => setRoomMgrOpen(false)} />
+        <RoomModal rooms={rooms} placements={placements} onSave={saveRooms} onClose={() => setRoomMgrOpen(false)} />
       )}
 
       {/* Teacher manager modal */}
@@ -1166,50 +1489,71 @@ export default function ClassroomScheduler() {
 }
 
 // ───────────────────────── Class edit modal ─────────────────────────
-function ClassModal({ editing, cls, initialRows, slots, rooms, teachers, defaultSection, occupiedBy, teacherConflictsAt, contextLabel, onSave, onDelete, onClose }) {
+function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultDay, roomsCollide, occupiedBy, teacherConflictsAt, contextLabel, onSave, onDelete, onClose }) {
   const c = cls || {};
   const [name, setName] = useState(c.name || "");
   const [teacher, setTeacher] = useState(c.teacher || "");
   const [reg, setReg] = useState(c.reg ?? 0);
   const [note, setNote] = useState(c.note || "");
-  const [rows, setRows] = useState(initialRows); // meeting times: {id?, section, slotIdx, room}
+  const [rows, setRows] = useState(initialRows); // meeting times: {id?, day, start, end, room}
 
   // Taken = occupied by another class on the board, or by another row in this dialog
-  const takenBy = (row, room, rowIdx) => {
-    const other = occupiedBy(row.section, row.slotIdx, room);
+  const takenBy = (row, roomId, rowIdx) => {
+    if (!roomId) return null;
+    const other = occupiedBy({ day: row.day, start: row.start, end: row.end, room: roomId });
     if (other) return other;
-    const dup = rows.some((o, j) => j !== rowIdx && o.section === row.section && o.slotIdx === row.slotIdx && o.room === room);
+    const dup = rows.some(
+      (o, j) => j !== rowIdx && o.room && o.day === row.day && o.start < row.end && row.start < o.end && roomsCollide(o.room, roomId)
+    );
     return dup ? "this class" : null;
   };
+  const timeDup = (row, rowIdx) =>
+    rows.some((o, j) => j !== rowIdx && o.day === row.day && o.start < row.end && row.start < o.end);
+
   const setRow = (i, patch) => setRows(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
-  const addRow = () => setRows([...rows, { id: null, section: defaultSection, slotIdx: 0, room: "" }]);
+  const addRow = () => {
+    const last = rows[rows.length - 1];
+    setRows([...rows, { id: null, day: defaultDay, start: last ? last.start : 540, end: last ? last.end : 540 + DEFAULT_DURATION, room: "" }]);
+  };
   const delRow = (i) => setRows(rows.filter((_, j) => j !== i));
+  // Copy a meeting to every weekday — the old "Morning (Daily)" pattern in one click
+  const repeatRow = (i) => {
+    const r = rows[i];
+    const adds = WEEKDAYS.filter(
+      (d) => days.includes(d) && !rows.some((o) => o.day === d && o.start === r.start && o.end === r.end)
+    ).map((d) => ({ id: null, day: d, start: r.start, end: r.end, room: r.room }));
+    if (adds.length) setRows([...rows, ...adds]);
+  };
 
   const submit = () => {
     if (!name.trim()) return;
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
-      const label = `${SECTIONS.find((s) => s.id === r.section)?.label} ${(slots[r.section] || [])[r.slotIdx]}`;
+      const label = `${DAY_LABEL[r.day]} ${fmtRange(r.start, r.end)}`;
       if (!r.room) {
         alert("Pick a room for every meeting time (or remove the row).");
         return;
       }
-      if (rows.some((o, j) => j !== i && o.section === r.section && o.slotIdx === r.slotIdx)) {
-        alert(`This class has two meetings at the same time (${label}). Remove one of them.`);
+      if (!(r.end > r.start)) {
+        alert(`The end time must be after the start time (${label}).`);
+        return;
+      }
+      if (timeDup(r, i)) {
+        alert(`This class has two overlapping meetings (${label}). Adjust one of them.`);
         return;
       }
       const taken = takenBy(r, r.room, i);
       if (taken) {
-        alert(`Room conflict: ${label} Room ${r.room} already has ${taken}. Pick a different room.`);
+        alert(`Room conflict: ${label} Room ${r.room} already has ${taken}. Pick a different room or time.`);
         return;
       }
     }
     // Teacher overlaps are allowed, but confirm so they never slip through unnoticed
-    const overlaps = teacherKey(teacher)
-      ? [...new Set(rows.flatMap((r) => teacherConflictsAt(r.section, r.slotIdx, teacher)))]
+    const teacherOverlaps = teacherKey(teacher)
+      ? [...new Set(rows.flatMap((r) => teacherConflictsAt({ day: r.day, start: r.start, end: r.end }, teacher)))]
       : [];
-    if (overlaps.length > 0 && !window.confirm(
-      `${teacher.trim()} is also teaching at the same time: ${overlaps.join(", ")}.\n\nSave anyway?`
+    if (teacherOverlaps.length > 0 && !window.confirm(
+      `${teacher.trim()} is also teaching at the same time: ${teacherOverlaps.join(", ")}.\n\nSave anyway?`
     )) return;
     onSave(
       {
@@ -1255,8 +1599,8 @@ function ClassModal({ editing, cls, initialRows, slots, rooms, teachers, default
           <input style={inputStyle} type="number" min="0" value={reg} onChange={(e) => setReg(e.target.value)} />
         </Field>
       </div>
-      <Field label="Note / actual time (optional)">
-        <input style={inputStyle} value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. 2:30–4:00" />
+      <Field label="Note (optional)">
+        <input style={inputStyle} value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. bring laptops" />
       </Field>
 
       <div style={{ margin: "6px 0 8px", fontSize: 13, color: "#475569", fontWeight: 600 }}>
@@ -1270,55 +1614,80 @@ function ClassModal({ editing, cls, initialRows, slots, rooms, teachers, default
       {rows.map((r, i) => {
         const roomTaken = r.room ? takenBy(r, r.room, i) : null;
         const roomConflict = roomTaken && roomTaken !== "this class" ? roomTaken : null;
-        const slotDup = rows.some((o, j) => j !== i && o.section === r.section && o.slotIdx === r.slotIdx);
-        const teacherOverlaps = teacherKey(teacher) ? teacherConflictsAt(r.section, r.slotIdx, teacher) : [];
-        const openRooms = (rooms[roomGroup(r.section)] || []).filter((rm) => !takenBy(r, rm, i));
+        const dupHere = timeDup(r, i);
+        const teacherOverlaps = teacherKey(teacher)
+          ? teacherConflictsAt({ day: r.day, start: r.start, end: r.end }, teacher)
+          : [];
+        const openRooms = rooms.filter((rm) => !takenBy(r, rm.id, i)).map((rm) => rm.id);
         return (
           <div key={i} style={{ marginBottom: 8 }}>
-            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
               <select
-                style={{ ...selStyle, flex: 1.2 }}
-                value={r.section}
-                onChange={(e) => setRow(i, { section: e.target.value, slotIdx: 0, room: "" })}
+                style={{ ...selStyle, flex: "1 1 90px" }}
+                value={r.day}
+                onChange={(e) => setRow(i, { day: e.target.value })}
               >
-                {SECTIONS.map((s) => (
-                  <option key={s.id} value={s.id}>{s.label}</option>
+                {days.map((d) => (
+                  <option key={d} value={d}>{DAY_LABEL[d]}</option>
                 ))}
               </select>
+              <input
+                type="time"
+                step={SNAP * 60}
+                style={{ ...selStyle, flex: "0 0 92px" }}
+                value={toInput(r.start)}
+                onChange={(e) => {
+                  const v = fromInput(e.target.value);
+                  if (v == null) return;
+                  setRow(i, { start: v, end: v + (r.end - r.start) });
+                }}
+                title="Start time"
+              />
+              <span style={{ color: "#94a3b8", fontSize: 12 }}>–</span>
+              <input
+                type="time"
+                step={SNAP * 60}
+                style={{ ...selStyle, flex: "0 0 92px" }}
+                value={toInput(r.end)}
+                onChange={(e) => {
+                  const v = fromInput(e.target.value);
+                  if (v == null) return;
+                  setRow(i, { end: v > r.start ? v : r.start + SNAP });
+                }}
+                title="End time"
+              />
               <select
-                style={{ ...selStyle, flex: 1.2 }}
-                value={r.slotIdx}
-                onChange={(e) => setRow(i, { slotIdx: Number(e.target.value) })}
-              >
-                {(slots[r.section] || []).map((sl, idx) => (
-                  <option key={idx} value={idx}>{sl}</option>
-                ))}
-              </select>
-              <select
-                style={{ ...selStyle, flex: 1.1 }}
+                style={{ ...selStyle, flex: "1 1 110px" }}
                 value={r.room}
                 onChange={(e) => setRow(i, { room: e.target.value })}
               >
                 <option value="">Room…</option>
-                {(rooms[roomGroup(r.section)] || []).map((rm) => {
-                  const taken = takenBy(r, rm, i);
+                {rooms.map((rm) => {
+                  const taken = takenBy(r, rm.id, i);
                   return (
-                    <option key={rm} value={rm} disabled={!!taken}>
-                      {"Room " + rm + (taken ? " — " + taken : "")}
+                    <option key={rm.id} value={rm.id} disabled={!!taken}>
+                      {"Room " + rm.id + (rm.occupies ? ` (= ${rm.occupies.join("+")})` : "") + (taken ? " — " + taken : "")}
                     </option>
                   );
                 })}
               </select>
+              <button
+                style={{ ...miniBtn, width: "auto", padding: "0 8px", flexShrink: 0 }}
+                onClick={() => repeatRow(i)}
+                title="Copy this meeting time to every weekday (Mon–Fri) — the old daily-morning pattern"
+              >
+                ⇄ Mon–Fri
+              </button>
               <button style={{ ...miniBtn, color: "#b91c1c", flexShrink: 0 }} onClick={() => delRow(i)} title="Remove this meeting time">✕</button>
             </div>
             {roomConflict && (
               <div style={{ ...roomConflictStyle, marginTop: 5 }}>
-                Room conflict: Room {r.room} already has {roomConflict} — pick a different room.
+                Room conflict: Room {r.room} already has {roomConflict} then — pick a different room or time.
               </div>
             )}
-            {slotDup && (
+            {dupHere && (
               <div style={{ ...roomConflictStyle, marginTop: 5 }}>
-                This class already has another meeting at this day & time.
+                This class already has another meeting overlapping this time.
               </div>
             )}
             {teacherOverlaps.length > 0 && (
@@ -1326,14 +1695,14 @@ function ClassModal({ editing, cls, initialRows, slots, rooms, teachers, default
                 style={{ ...teacherWarningStyle, marginTop: 5 }}
                 title="Same teacher in two rooms at once — allowed, but double-check before saving"
               >
-                ⚠ Teacher overlap: {teacher.trim()} also has {teacherOverlaps.join(", ")} at this time
+                ⚠ Teacher overlap: {teacher.trim()} also has {teacherOverlaps.join(", ")}
               </div>
             )}
-            {!r.room && !slotDup && (
+            {!r.room && !dupHere && (
               <div style={{ fontSize: 11, color: "#64748b", marginTop: 5 }}>
                 {openRooms.length > 0
                   ? "Open rooms: " + openRooms.join(", ")
-                  : "No open rooms in this time slot — try another slot."}
+                  : "No open rooms at this time — try another time."}
               </div>
             )}
           </div>
@@ -1341,7 +1710,7 @@ function ClassModal({ editing, cls, initialRows, slots, rooms, teachers, default
       })}
       {rows.length === 0 && (
         <div style={{ fontSize: 12, color: "#b45309", marginBottom: 6 }}>
-          Not scheduled — the class stays in the library sidebar (you can also drag it onto the grid later).
+          Not scheduled — the class stays in the library sidebar (you can also drag it onto the calendar later).
         </div>
       )}
       <button style={{ ...btnSecondary, fontSize: 13, padding: "6px 12px" }} onClick={addRow}>＋ Add meeting time</button>
@@ -1360,29 +1729,19 @@ function ClassModal({ editing, cls, initialRows, slots, rooms, teachers, default
 }
 
 // ───────────────────────── By-class schedule view ─────────────────────────
-function ClassScheduleView({ catalog, placements, slots, onEditClass }) {
-  const meetingsFor = (classId, sectionId) =>
+function ClassScheduleView({ catalog, placements, days, onEditClass }) {
+  const meetingsFor = (classId, day) =>
     placements
-      .filter((p) => p.classId === classId && p.section === sectionId)
-      .sort((a, b) => a.slotIdx - b.slotIdx);
+      .filter((p) => p.classId === classId && p.day === day)
+      .sort((a, b) => a.start - b.start);
 
-  // Start time in minutes since midnight; slot labels carry no AM/PM, so the
-  // section decides (morning = AM, day tabs = PM). Unparseable labels sort last.
-  const startMinutes = (sectionId, slotIdx) => {
-    const m = /^(\d{1,2})(?::(\d{2}))?/.exec(slotShort((slots[sectionId] || [])[slotIdx]) || "");
-    if (!m) return 24 * 60;
-    let h = parseInt(m[1], 10);
-    if (roomGroup(sectionId) === "afternoon" && h < 12) h += 12;
-    return h * 60 + parseInt(m[2] || "0", 10);
-  };
-
-  // A class's earliest meeting: [time of day, day, slot] — null when unscheduled
+  // A class's earliest meeting: [time of day, day index] — null when unscheduled
   const earliestKey = (classId) => {
     let best = null;
     placements.forEach((p) => {
       if (p.classId !== classId) return;
-      const key = [startMinutes(p.section, p.slotIdx), sectionIdx(p.section), p.slotIdx];
-      if (!best || key[0] < best[0] || (key[0] === best[0] && (key[1] < best[1] || (key[1] === best[1] && key[2] < best[2])))) best = key;
+      const key = [p.start, dayIdx(p.day)];
+      if (!best || key[0] < best[0] || (key[0] === best[0] && key[1] < best[1])) best = key;
     });
     return best;
   };
@@ -1394,18 +1753,18 @@ function ClassScheduleView({ catalog, placements, slots, onEditClass }) {
       const kb = earliestKey(b.id);
       if (!ka !== !kb) return ka ? 1 : -1; // unscheduled first, same as the library
       if (!ka && !kb) return a.name.localeCompare(b.name);
-      return ka[0] - kb[0] || ka[1] - kb[1] || ka[2] - kb[2] || a.name.localeCompare(b.name);
+      return ka[0] - kb[0] || ka[1] - kb[1] || a.name.localeCompare(b.name);
     });
 
   return (
     <>
       <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto" }}>
-        <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 180 + SECTIONS.length * 118, tableLayout: "fixed" }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 180 + days.length * 118, tableLayout: "fixed" }}>
           <thead>
             <tr>
               <th style={{ ...thStyle, width: 180, position: "sticky", left: 0, background: "#fafaf8", zIndex: 2 }}>Class</th>
-              {SECTIONS.map((s) => (
-                <th key={s.id} style={thStyle}>{s.label}</th>
+              {days.map((d) => (
+                <th key={d} style={thStyle}>{DAY_LABEL[d]}</th>
               ))}
             </tr>
           </thead>
@@ -1427,7 +1786,7 @@ function ClassScheduleView({ catalog, placements, slots, onEditClass }) {
                       <b style={{ marginLeft: 6, color: "#123c3a" }}>{k.reg} signed up</b>
                     </div>
                     {k.note && (
-                      <div style={{ fontSize: 11, color: "#7c3aed", marginTop: 2 }}>⏱ {k.note}</div>
+                      <div style={{ fontSize: 11, color: "#7c3aed", marginTop: 2 }}>✎ {k.note}</div>
                     )}
                     <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>
                       {scheduled
@@ -1435,16 +1794,16 @@ function ClassScheduleView({ catalog, placements, slots, onEditClass }) {
                         : <span style={{ ...chipStyle, background: "#fef3c7", color: "#b45309" }}>unscheduled</span>}
                     </div>
                   </td>
-                  {SECTIONS.map((s) => {
-                    const list = meetingsFor(k.id, s.id);
+                  {days.map((d) => {
+                    const list = meetingsFor(k.id, d);
                     return (
-                      <td key={s.id} style={{ ...tdStyle, verticalAlign: "top" }}>
+                      <td key={d} style={{ ...tdStyle, verticalAlign: "top" }}>
                         {list.length === 0 ? (
                           <span style={{ color: "#cbd5d1", fontSize: 12 }}>—</span>
                         ) : (
                           list.map((p) => (
                             <div key={p.id} style={{ fontSize: 12, lineHeight: 1.3, padding: "2px 0", color: "#334155" }}>
-                              {slotShort((slots[p.section] || [])[p.slotIdx])} · Rm {p.room}
+                              {fmtRange(p.start, p.end)} · Rm {p.room}
                             </div>
                           ))
                         )}
@@ -1456,7 +1815,7 @@ function ClassScheduleView({ catalog, placements, slots, onEditClass }) {
             })}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={SECTIONS.length + 1} style={{ ...tdStyle, color: "#94a3b8", fontSize: 13 }}>
+                <td colSpan={days.length + 1} style={{ ...tdStyle, color: "#94a3b8", fontSize: 13 }}>
                   No classes yet — add one in the Class Library.
                 </td>
               </tr>
@@ -1465,7 +1824,7 @@ function ClassScheduleView({ catalog, placements, slots, onEditClass }) {
         </table>
       </div>
       <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
-        📋 One row per class — every meeting time and room across the week (Morning = every day).
+        📋 One row per class — every meeting time and room across the week.
         Amber rows are not scheduled yet. Click a row to edit the class.
       </p>
     </>
@@ -1473,42 +1832,41 @@ function ClassScheduleView({ catalog, placements, slots, onEditClass }) {
 }
 
 // ───────────────────────── By-teacher schedule view ─────────────────────────
-function TeacherScheduleView({ teachers, catalog, placements, slots, onEditClass, onManageTeachers }) {
+function TeacherScheduleView({ teachers, catalog, placements, days, onEditClass, onManageTeachers }) {
   const classOfId = (id) => catalog.find((k) => k.id === id);
 
-  const entriesFor = (key, sectionId) =>
+  const entriesFor = (key, day) =>
     placements
-      .filter((p) => p.section === sectionId)
+      .filter((p) => p.day === day)
       .map((p) => ({ p, cls: classOfId(p.classId) }))
       .filter(({ cls }) => cls && teacherKey(cls.teacher) === key)
-      .sort((a, b) => a.p.slotIdx - b.p.slotIdx);
+      .sort((a, b) => a.p.start - b.p.start);
 
   const classCount = (key) => catalog.filter((k) => teacherKey(k.teacher) === key).length;
   const tbdHasAny = catalog.some((k) => !teacherKey(k.teacher));
 
-  const renderCell = (list, sectionId) => {
-    const bySlot = {};
-    list.forEach(({ p }) => { bySlot[p.slotIdx] = (bySlot[p.slotIdx] || 0) + 1; });
+  const renderCell = (list, day) => {
+    const clash = (p) => list.some(({ p: o }) => o.id !== p.id && o.start < p.end && p.start < o.end);
     return (
-      <td key={sectionId} style={{ ...tdStyle, verticalAlign: "top" }}>
+      <td key={day} style={{ ...tdStyle, verticalAlign: "top" }}>
         {list.length === 0 ? (
           <span style={{ color: "#cbd5d1", fontSize: 12 }}>—</span>
         ) : (
           list.map(({ p, cls }) => {
-            const clash = bySlot[p.slotIdx] > 1;
+            const isClash = clash(p);
             return (
               <div
                 key={p.id}
                 onClick={() => onEditClass(cls.id)}
-                title={clash ? "Two classes at the same time — click to edit" : "Click to edit this class"}
+                title={isClash ? "Two classes at the same time — click to edit" : "Click to edit this class"}
                 style={{
                   fontSize: 12, lineHeight: 1.3, cursor: "pointer", padding: "2px 4px", borderRadius: 4,
-                  background: clash ? "#fffbeb" : "transparent",
-                  color: clash ? "#b45309" : "#334155",
-                  fontWeight: clash ? 700 : 400,
+                  background: isClash ? "#fffbeb" : "transparent",
+                  color: isClash ? "#b45309" : "#334155",
+                  fontWeight: isClash ? 700 : 400,
                 }}
               >
-                {slotShort((slots[p.section] || [])[p.slotIdx])} {cls.name} · Rm {p.room}{clash ? " ⚠" : ""}
+                {fmtRange(p.start, p.end)} {cls.name} · Rm {p.room}{isClash ? " ⚠" : ""}
               </div>
             );
           })
@@ -1523,19 +1881,19 @@ function TeacherScheduleView({ teachers, catalog, placements, slots, onEditClass
         <div style={{ fontWeight: 700, fontSize: 13, color: highlight ? "#b45309" : "#123c3a" }}>{label}</div>
         <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>{count} class{count === 1 ? "" : "es"}</div>
       </td>
-      {SECTIONS.map((s) => renderCell(entriesFor(key, s.id), s.id))}
+      {days.map((d) => renderCell(entriesFor(key, d), d))}
     </tr>
   );
 
   return (
     <>
       <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto" }}>
-        <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 130 + SECTIONS.length * 130, tableLayout: "fixed" }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 130 + days.length * 130, tableLayout: "fixed" }}>
           <thead>
             <tr>
               <th style={{ ...thStyle, width: 130, position: "sticky", left: 0, background: "#fafaf8", zIndex: 2 }}>Teacher</th>
-              {SECTIONS.map((s) => (
-                <th key={s.id} style={thStyle}>{s.label}</th>
+              {days.map((d) => (
+                <th key={d} style={thStyle}>{DAY_LABEL[d]}</th>
               ))}
             </tr>
           </thead>
@@ -1544,7 +1902,7 @@ function TeacherScheduleView({ teachers, catalog, placements, slots, onEditClass
             {tbdHasAny && renderRow("(Teacher TBD)", "", catalog.filter((k) => !teacherKey(k.teacher)).length, true)}
             {teachers.length === 0 && !tbdHasAny && (
               <tr>
-                <td colSpan={SECTIONS.length + 1} style={{ ...tdStyle, color: "#94a3b8", fontSize: 13 }}>
+                <td colSpan={days.length + 1} style={{ ...tdStyle, color: "#94a3b8", fontSize: 13 }}>
                   No teachers yet — assign teachers to classes, or add them here.
                 </td>
               </tr>
@@ -1558,9 +1916,9 @@ function TeacherScheduleView({ teachers, catalog, placements, slots, onEditClass
         </div>
       </div>
       <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
-        👤 Each row is one teacher's week (Morning = every day). Click any class to edit it.
+        👤 Each row is one teacher's week. Click any class to edit it.
         <span style={{ color: "#b45309", fontWeight: 700 }}> Amber ⚠ </span>
-        marks two classes at the same time. <b>Manage teachers</b> renames or removes teachers —
+        marks two classes overlapping in time. <b>Manage teachers</b> renames or removes teachers —
         renames apply to all their classes; removing a teacher sets their classes to TBD.
       </p>
     </>
@@ -1638,126 +1996,122 @@ function TeacherModal({ teachers, catalog, onSave, onClose }) {
   );
 }
 
-// ───────────────────────── Room manager (AM / PM groups) ─────────────────────────
-function RoomModal({ rooms, roomCaps, placements, onSave, onClose }) {
-  const [morning, setMorning] = useState(rooms.morning.map((r) => ({ orig: r, name: r, cap: roomCaps?.morning?.[r] ?? defaultRoomCap("morning", r) })));
-  const [afternoon, setAfternoon] = useState(rooms.afternoon.map((r) => ({ orig: r, name: r, cap: roomCaps?.afternoon?.[r] ?? defaultRoomCap("afternoon", r) })));
+// ───────────────────────── Room manager (one list, with combined rooms) ─────────────────────────
+function RoomModal({ rooms, placements, onSave, onClose }) {
+  const [list, setList] = useState(
+    rooms.map((r) => ({ orig: r.id, name: r.id, cap: r.cap, occ: (r.occupies || []).join(", ") }))
+  );
 
-  const countFor = (group, origName) =>
-    placements.filter((p) => roomGroup(p.section) === group && p.room === origName).length;
+  const countFor = (origName) => placements.filter((p) => p.room === origName).length;
 
-  const makeOps = (list, setList, group) => ({
-    move: (i, dir) => {
-      const j = i + dir;
-      if (j < 0 || j >= list.length) return;
-      const nl = [...list];
-      [nl[i], nl[j]] = [nl[j], nl[i]];
-      setList(nl);
-    },
-    remove: (i) => {
-      const n = list[i].orig ? countFor(group, list[i].orig) : 0;
-      if (n > 0 && !window.confirm(`Room "${list[i].name}" has ${n} class(es). Deleting it will unschedule them. Continue?`)) return;
-      setList(list.filter((_, idx) => idx !== i));
-    },
-    add: () => setList([...list, { orig: null, name: "", cap: 12 }]),
-    edit: (i, v) => {
-      const nl = [...list];
-      nl[i] = { ...nl[i], name: v };
-      setList(nl);
-    },
-    editCap: (i, v) => {
-      const nl = [...list];
-      nl[i] = { ...nl[i], cap: v };
-      setList(nl);
-    },
-  });
-
-  const submit = () => {
-    const build = (list) => {
-      const names = list.map((r) => r.name.trim()).filter(Boolean);
-      const renames = {};
-      const caps = {};
-      list.forEach((r) => {
-        const name = r.name.trim();
-        if (!name) return;
-        if (r.orig && r.orig !== name) renames[r.orig] = name;
-        caps[name] = cleanCap(r.cap, 12);
-      });
-      return { names, renames, caps };
-    };
-    const m = build(morning);
-    const a = build(afternoon);
-    if (m.names.length === 0 || a.names.length === 0) {
-      alert("Keep at least one room in each period.");
-      return;
-    }
-    if (new Set(m.names).size !== m.names.length || new Set(a.names).size !== a.names.length) {
-      alert("Room names must be unique within a period.");
-      return;
-    }
-    onSave({ morning: m, afternoon: a });
+  const move = (i, dir) => {
+    const j = i + dir;
+    if (j < 0 || j >= list.length) return;
+    const nl = [...list];
+    [nl[i], nl[j]] = [nl[j], nl[i]];
+    setList(nl);
+  };
+  const remove = (i) => {
+    const n = list[i].orig ? countFor(list[i].orig) : 0;
+    if (n > 0 && !window.confirm(`Room "${list[i].name}" has ${n} class(es). Deleting it will unschedule them. Continue?`)) return;
+    setList(list.filter((_, idx) => idx !== i));
+  };
+  const add = () => setList([...list, { orig: null, name: "", cap: 12, occ: "" }]);
+  const patch = (i, p) => {
+    const nl = [...list];
+    nl[i] = { ...nl[i], ...p };
+    setList(nl);
   };
 
-  const renderGroup = (title, list, setList, group) => {
-    const ops = makeOps(list, setList, group);
-    return (
-      <div style={{ flex: 1, minWidth: 200 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: "#123c3a", marginBottom: 8 }}>
-          {title} ({list.length})
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 76px 44px 26px 26px 26px", gap: 5, alignItems: "center", marginBottom: 5, fontSize: 11, color: "#64748b", fontWeight: 700 }}>
-          <span>Room</span>
-          <span>Capacity</span>
-          <span>Used</span>
-          <span />
-          <span />
-          <span />
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 280, overflowY: "auto" }}>
-          {list.map((r, i) => (
-            <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 76px 44px 26px 26px 26px", gap: 5, alignItems: "center" }}>
-              <input
-                style={{ ...inputStyle, padding: "6px 8px" }}
-                value={r.name}
-                placeholder="Room name"
-                onChange={(e) => ops.edit(i, e.target.value)}
-              />
-              <input
-                style={{ ...inputStyle, padding: "6px 8px" }}
-                type="number"
-                min="0"
-                value={r.cap}
-                onChange={(e) => ops.editCap(i, e.target.value)}
-              />
-              {r.orig && (
-                <span style={{ fontSize: 11, color: "#94a3b8", whiteSpace: "nowrap" }}>
-                  {countFor(group, r.orig)} cls
-                </span>
-              )}
-              {!r.orig && <span />}
-              <button style={miniBtn} onClick={() => ops.move(i, -1)} title="Move up">↑</button>
-              <button style={miniBtn} onClick={() => ops.move(i, 1)} title="Move down">↓</button>
-              <button style={{ ...miniBtn, color: "#b91c1c" }} onClick={() => ops.remove(i)} title="Delete">✕</button>
-            </div>
-          ))}
-        </div>
-        <button style={{ ...btnSecondary, marginTop: 10, fontSize: 13, padding: "6px 12px" }} onClick={ops.add}>
-          ＋ Add room
-        </button>
-      </div>
-    );
+  const submit = () => {
+    const names = list.map((r) => r.name.trim()).filter(Boolean);
+    if (names.length === 0) {
+      alert("Keep at least one room.");
+      return;
+    }
+    if (new Set(names).size !== names.length) {
+      alert("Room names must be unique.");
+      return;
+    }
+    const nameSet = new Set(names);
+    const renames = {};
+    list.forEach((r) => {
+      if (r.orig && r.name.trim() && r.orig !== r.name.trim()) renames[r.orig] = r.name.trim();
+    });
+    const out = [];
+    for (const r of list) {
+      const id = r.name.trim();
+      if (!id) continue;
+      const occ = [...new Set(
+        (r.occ || "")
+          .split(/[,，+]/)
+          .map((s) => s.trim())
+          .filter((s) => s && s !== id)
+      )];
+      const bad = occ.filter((o) => !nameSet.has(o));
+      if (bad.length) {
+        alert(`Room ${id}: "${bad.join(", ")}" in its combined-rooms list ${bad.length === 1 ? "is" : "are"} not a room name above.`);
+        return;
+      }
+      out.push(occ.length ? { id, cap: cleanCap(r.cap, 12), occupies: occ } : { id, cap: cleanCap(r.cap, 12) });
+    }
+    onSave({ list: out, renames });
   };
 
   return (
     <Overlay onClose={onClose} wide>
       <h3 style={{ marginTop: 0 }}>Manage rooms</h3>
       <p style={{ fontSize: 13, color: "#64748b", margin: "0 0 14px" }}>
-        Morning and afternoon rooms are managed separately. Capacity is room capacity; class records only track signed-up students.
+        One room list for the whole week. A <b>combined room</b> (e.g. "2+3" with combines <i>2, 3</i>) is a
+        room whose use blocks its member rooms at the same time — and vice versa. Capacity is room capacity;
+        class records only track signed-up students.
       </p>
-      <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
-        {renderGroup("Morning rooms", morning, setMorning, "morning")}
-        {renderGroup("Afternoon rooms", afternoon, setAfternoon, "afternoon")}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 76px 110px 44px 26px 26px 26px", gap: 5, alignItems: "center", marginBottom: 5, fontSize: 11, color: "#64748b", fontWeight: 700 }}>
+        <span>Room</span>
+        <span>Capacity</span>
+        <span>Combines</span>
+        <span>Used</span>
+        <span />
+        <span />
+        <span />
       </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 320, overflowY: "auto" }}>
+        {list.map((r, i) => (
+          <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 76px 110px 44px 26px 26px 26px", gap: 5, alignItems: "center" }}>
+            <input
+              style={{ ...inputStyle, padding: "6px 8px" }}
+              value={r.name}
+              placeholder="Room name"
+              onChange={(e) => patch(i, { name: e.target.value })}
+            />
+            <input
+              style={{ ...inputStyle, padding: "6px 8px" }}
+              type="number"
+              min="0"
+              value={r.cap}
+              onChange={(e) => patch(i, { cap: e.target.value })}
+            />
+            <input
+              style={{ ...inputStyle, padding: "6px 8px" }}
+              value={r.occ}
+              placeholder="e.g. 2, 3"
+              title="Member rooms this combined room takes over (leave empty for a normal room)"
+              onChange={(e) => patch(i, { occ: e.target.value })}
+            />
+            {r.orig ? (
+              <span style={{ fontSize: 11, color: "#94a3b8", whiteSpace: "nowrap" }}>
+                {countFor(r.orig)} cls
+              </span>
+            ) : <span />}
+            <button style={miniBtn} onClick={() => move(i, -1)} title="Move up">↑</button>
+            <button style={miniBtn} onClick={() => move(i, 1)} title="Move down">↓</button>
+            <button style={{ ...miniBtn, color: "#b91c1c" }} onClick={() => remove(i)} title="Delete">✕</button>
+          </div>
+        ))}
+      </div>
+      <button style={{ ...btnSecondary, marginTop: 10, fontSize: 13, padding: "6px 12px" }} onClick={add}>
+        ＋ Add room
+      </button>
       <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20 }}>
         <button style={btnSecondary} onClick={onClose}>Cancel</button>
         <button style={btnPrimary} onClick={submit}>Save</button>
@@ -1780,7 +2134,8 @@ function Overlay({ children, onClose, wide }) {
         onClick={(e) => e.stopPropagation()}
         style={{
           background: "#fff", borderRadius: 12, padding: "22px 24px",
-          width: "100%", maxWidth: wide ? 760 : 460, boxShadow: "0 20px 50px rgba(0,0,0,.25)",
+          width: "100%", maxWidth: wide ? 820 : 460, boxShadow: "0 20px 50px rgba(0,0,0,.25)",
+          maxHeight: "calc(100vh - 48px)", overflowY: "auto", boxSizing: "border-box",
         }}
       >
         {children}

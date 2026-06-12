@@ -7,23 +7,35 @@ An interactive classroom scheduling board for the 2026 Summer program (Jericho).
 
 ## Features
 
-- Schedule grid: time slots × rooms, with separate tabs for Morning (daily) and Mon–Fri afternoons
-- Morning uses combined Room 2+3; afternoons use Rooms 2 and 3 separately
+- **Day calendar**: one tab per day (Mon–Sat), rooms as columns, a continuous time axis —
+  morning and afternoon live on the same canvas and classes can start at any time
+  (no fixed slots; drags snap to 15 minutes)
+- Each day has its own scheduling window (e.g. Saturday runs 9:00 AM–1:00 PM) — edit it
+  with **✎ Edit hours** under the grid; the grid stretches automatically if a class is
+  placed outside the window
+- **Combined rooms**: Room 2+3 is a real room that automatically blocks Rooms 2 and 3 while
+  in use (and vice versa) — blocked time shows as gray stripes; define combined rooms in
+  **Manage Rooms** via the "Combines" column
 - **Class Library**: define every class once (name / teacher / signed-up students); unscheduled classes wait in
-  the library sidebar. Drag a card onto the grid to schedule it — place the same class on several days
-  and it stays one record with one shared enrollment (edits sync everywhere). Drag a scheduled card
-  back into the library to unschedule it without deleting it.
+  the library sidebar. Drag a card onto the calendar to schedule it — place the same class on several days
+  (hover a day tab while dragging to switch days) and it stays one record with one shared enrollment.
+  Drag a scheduled card back into the library to unschedule it without deleting it.
+- Click any empty time on the calendar to create a class right there; the class dialog's
+  meeting-time rows (day · start–end · room) include a **⇄ Mon–Fri** button that repeats a
+  meeting on every weekday — the old "Morning (Daily)" pattern in one click
+- **Drag & drop** a card to move it; drag a card's bottom edge to change its length
+- Conflict handling: overlapping classes in one room are a hard conflict (red border, drops are
+  blocked and overlaps render side by side); a double-booked teacher is an amber warning
 - **Teacher roster**: pick teachers from a dropdown when editing a class (or add new ones inline);
   the **👤 By Teacher** tab shows each teacher's weekly schedule with amber ⚠ warnings when someone
   is double-booked, and renaming a teacher in **Manage teachers** updates every class they teach
-- Room capacities are managed in **Manage Rooms** and shown under each room header on the calendar
-- Scheduled class cards compare signed-up students against the assigned room capacity with a color-coded progress bar
+- **📋 By Class** tab: one row per class with every meeting across the week
+- Room capacities are managed in **Manage Rooms** and shown under each room header on the calendar;
+  scheduled cards compare signed-up students against the room capacity with a color-coded progress bar
   (green = room has space, amber = nearly full, red = at or over room capacity)
-- **Drag & drop** a class card to move it to another time slot or room; drop onto another class to swap
-- Click any card to edit name / teacher / signed-up students / notes; ＋ − steppers for quick enrollment changes
-- Add, rename, reorder, set capacity for, or delete rooms and time slots
 - All changes save automatically to the shared schedule (everyone sees the same data); the header
-  shows live save status, failed saves retry on their own, and a red banner offers **Retry now**
+  shows live save status and failed saves retry on their own
+- Older saved schedules (the slot-based format) migrate automatically on first load
 - Reset Data restores the original schedule
 
 ## Project structure
@@ -44,6 +56,9 @@ npx esbuild src/main.jsx --bundle --minify --outfile=app.js --define:process.env
 
 Then open `index.html` in a browser (or serve with `npx serve .`).
 
+**Note:** on `localhost` the app runs in browser-only mode (no shared-schedule sync), so local
+experiments never touch the live shared data.
+
 ## Deploy to GitHub Pages
 
 1. Push this repository to GitHub (see below)
@@ -52,7 +67,8 @@ Then open `index.html` in a browser (or serve with `npx serve .`).
 
 ## Note on data
 
-Schedule data lives in each visitor's own browser (localStorage). Two people opening the site see
-their own independent copies — there is no shared backend. If you need multi-user shared editing,
-the next step would be adding a small backend (e.g. Supabase / Firebase) — the data layer is isolated
-in `loadData` / `saveData` in `src/App.jsx`, so it's a contained change.
+The shared schedule lives in Supabase (one row, last write wins); `localStorage` is the offline
+fallback/cache. The first time the new version loads it upgrades the stored schedule from the old
+slot-based format to the day-calendar format (morning classes expand to Mon–Fri placements; note-based
+"actual times" like `2:30–4:00` become the real placement times). The upgrade is idempotent — but after
+deploying, ask everyone to refresh any open tabs so an old client doesn't write the old format back.
