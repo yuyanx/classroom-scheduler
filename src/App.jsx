@@ -982,43 +982,57 @@ export default function ClassroomScheduler() {
               ? "0 0 0 3px rgba(217,119,6,.12)"
               : "none",
           borderRadius: 8,
-          padding: "4px 7px",
+          padding: "4px 7px 9px",
           overflow: "hidden",
           cursor: "grab",
           opacity: isDragging ? 0.35 : 1,
           display: "flex",
           flexDirection: "column",
-          gap: 2,
           transition: "opacity .15s, box-shadow .15s",
         }}
       >
-        <div style={{ fontWeight: 700, fontSize: 12.5, lineHeight: 1.2, overflowWrap: "anywhere" }}>{cls.name}</div>
-        <div style={{ fontSize: 11, color: "#475569", lineHeight: 1.25 }}>
-          {fmtRange(p.start, end)}
-          {h >= 56 && <> · {cls.teacher || <i style={{ color: "#b45309" }}>TBD</i>}</>}
+        {/* Text area clips when space runs out; the counter section below never gets pushed out */}
+        <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column", gap: 2 }}>
+          <div style={{ fontWeight: 700, fontSize: 12.5, lineHeight: 1.2, overflowWrap: "anywhere", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+            {cls.name}
+          </div>
+          <div style={{ fontSize: 11, color: "#475569", lineHeight: 1.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {fmtRange(p.start, end)}
+            {h >= 56 && <> · {cls.teacher || <i style={{ color: "#b45309" }}>TBD</i>}</>}
+          </div>
+          {combined && h >= 44 && (
+            <div
+              style={{ fontSize: 10.5, color: "#7c3aed", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+              title={`This class uses Rooms ${roomsLabel(p.rooms)} at the same time`}
+            >
+              ⇆ Rm {roomsLabel(p.rooms)} combined
+            </div>
+          )}
+          {h >= 78 && hasRoomClash && (
+            <div style={{ ...roomConflictStyle, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Room conflict</div>
+          )}
+          {h >= 78 && !hasRoomClash && hasTeacherConflict && (
+            <div style={{ ...teacherWarningStyle, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Teacher conflict</div>
+          )}
+          {h >= 100 && otherDays.length > 0 && (
+            <div
+              style={{ fontSize: 11, color: "#0f766e", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+              title="Same class (one roster) also meets on these days"
+            >
+              ⇄ also {otherDays.join(" · ")}
+            </div>
+          )}
         </div>
-        {combined && h >= 44 && (
-          <div style={{ fontSize: 10.5, color: "#7c3aed", fontWeight: 700 }} title={`This class uses Rooms ${roomsLabel(p.rooms)} at the same time`}>
-            ⇆ Rooms {roomsLabel(p.rooms)} combined
-          </div>
-        )}
-        {h >= 78 && hasRoomClash && <div style={roomConflictStyle}>Room conflict</div>}
-        {h >= 78 && !hasRoomClash && hasTeacherConflict && <div style={teacherWarningStyle}>Teacher conflict</div>}
-        {h >= 100 && otherDays.length > 0 && (
-          <div style={{ fontSize: 11, color: "#0f766e" }} title="Same class (one roster) also meets on these days">
-            ⇄ also {otherDays.join(" · ")}
-          </div>
-        )}
         {h >= 64 && (
-          <div style={{ marginTop: "auto", minWidth: 0 }}>
+          <div style={{ flexShrink: 0, marginTop: 2, minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 3, minWidth: 0 }}>
-              {h >= 88 && (
+              {h >= 88 && lanes === 1 && (
                 <button onClick={(e) => { e.stopPropagation(); bump(cls.id, -1); }} style={stepBtn}>−</button>
               )}
               <span style={{ fontSize: 11, fontWeight: 700, color: col.text, minWidth: 0, flex: 1, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden" }}>
                 {cls.reg}/{cap}{cls.reg >= cap && cap > 0 ? " · FULL" : ""}
               </span>
-              {h >= 88 && (
+              {h >= 88 && lanes === 1 && (
                 <button onClick={(e) => { e.stopPropagation(); bump(cls.id, +1); }} style={stepBtn}>＋</button>
               )}
             </div>
@@ -1339,7 +1353,16 @@ export default function ClassroomScheduler() {
                 <div style={{ display: "flex", position: "relative" }}>
                   <div style={{ flex: "0 0 64px", width: 64, position: "sticky", left: 0, zIndex: 3, background: "#fafaf8", height: gridH, boxSizing: "border-box", borderRight: "1px solid #eceeea" }}>
                     {hourMarks.map((t) => (
-                      <div key={t} style={{ position: "absolute", top: (t - gridStart) * PX_PER_MIN, right: 6, transform: "translateY(-50%)", fontSize: 11, fontWeight: 700, color: "#94a3b8" }}>
+                      <div
+                        key={t}
+                        style={{
+                          position: "absolute",
+                          top: (t - gridStart) * PX_PER_MIN,
+                          right: 6,
+                          transform: t === gridStart ? "translateY(2px)" : t === gridEnd ? "translateY(calc(-100% - 2px))" : "translateY(-50%)",
+                          fontSize: 11, fontWeight: 700, color: "#94a3b8",
+                        }}
+                      >
                         {fmtTime(t)}
                       </div>
                     ))}
