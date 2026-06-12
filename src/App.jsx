@@ -269,6 +269,30 @@ const ratioColor = (reg, cap) => {
 };
 
 const slotShort = (label) => ((label || "").split(/[–—-]/)[0].trim() || label || "");
+const parseSlotRange = (sectionId, label) => {
+  const m = /^\s*(\d{1,2})(?::(\d{2}))?\s*[–—-]\s*(\d{1,2})(?::(\d{2}))?/.exec(label || "");
+  if (!m) return null;
+  const group = roomGroup(sectionId);
+  const toMinutes = (hour, minute) => {
+    let h = parseInt(hour, 10);
+    if (group === "afternoon" && h < 12) h += 12;
+    return h * 60 + parseInt(minute || "0", 10);
+  };
+  return { start: toMinutes(m[1], m[2]), end: toMinutes(m[3], m[4]) };
+};
+const formatClock = (minutes, suffix = true) => {
+  const h24 = Math.floor(minutes / 60);
+  const min = minutes % 60;
+  const h = h24 % 12 || 12;
+  return `${h}${min ? ":" + String(min).padStart(2, "0") : ""}${suffix ? (h24 < 12 ? "am" : "pm") : ""}`;
+};
+const slotPeriod = (sectionId, label) => {
+  const range = parseSlotRange(sectionId, label);
+  if (!range) return label || "";
+  const sameSuffix = (range.start < 12 * 60) === (range.end < 12 * 60);
+  return `${formatClock(range.start, !sameSuffix)}-${formatClock(range.end)}`;
+};
+const weeklyMeetingCount = (items) => items.reduce((sum, item) => sum + (item.section === "morning" ? 5 : 1), 0);
 const teacherKey = (teacher) => {
   const key = (teacher || "").trim().toLowerCase();
   return key === "tbd" || key === "n/a" || key === "na" ? "" : key;
@@ -1282,7 +1306,7 @@ function ClassModal({ editing, cls, initialRows, slots, rooms, teachers, default
         Schedule
         {rows.length > 0 && (
           <span style={{ fontWeight: 400, color: "#64748b" }}>
-            {" "}— meets {rows.length}×/week{rows.length > 1 ? " (one shared roster)" : ""}
+            {" "}— meets {weeklyMeetingCount(rows)}x/week{rows.length > 1 ? " (one shared roster)" : ""}
           </span>
         )}
       </div>
@@ -1388,11 +1412,7 @@ function ClassScheduleView({ catalog, placements, slots, onEditClass }) {
   // Start time in minutes since midnight; slot labels carry no AM/PM, so the
   // section decides (morning = AM, day tabs = PM). Unparseable labels sort last.
   const startMinutes = (sectionId, slotIdx) => {
-    const m = /^(\d{1,2})(?::(\d{2}))?/.exec(slotShort((slots[sectionId] || [])[slotIdx]) || "");
-    if (!m) return 24 * 60;
-    let h = parseInt(m[1], 10);
-    if (roomGroup(sectionId) === "afternoon" && h < 12) h += 12;
-    return h * 60 + parseInt(m[2] || "0", 10);
+    return parseSlotRange(sectionId, (slots[sectionId] || [])[slotIdx])?.start ?? 24 * 60;
   };
 
   // A class's earliest meeting: [time of day, day, slot] — null when unscheduled
@@ -1419,10 +1439,10 @@ function ClassScheduleView({ catalog, placements, slots, onEditClass }) {
   return (
     <>
       <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto" }}>
-        <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 180 + SECTIONS.length * 118, tableLayout: "fixed" }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 210 + SECTIONS.length * 130, tableLayout: "fixed" }}>
           <thead>
             <tr>
-              <th style={{ ...thStyle, width: 180, position: "sticky", left: 0, background: "#fafaf8", zIndex: 2 }}>Class</th>
+              <th style={{ ...thStyle, width: 210, position: "sticky", left: 0, background: "#fafaf8", zIndex: 2 }}>Class</th>
               {SECTIONS.map((s) => (
                 <th key={s.id} style={thStyle}>{s.label}</th>
               ))}
@@ -1430,8 +1450,9 @@ function ClassScheduleView({ catalog, placements, slots, onEditClass }) {
           </thead>
           <tbody>
             {rows.map((k) => {
-              const meetCount = placements.filter((p) => p.classId === k.id).length;
-              const scheduled = meetCount > 0;
+              const classPlacements = placements.filter((p) => p.classId === k.id);
+              const meetCount = weeklyMeetingCount(classPlacements);
+              const scheduled = classPlacements.length > 0;
               return (
                 <tr
                   key={k.id}
@@ -1450,7 +1471,7 @@ function ClassScheduleView({ catalog, placements, slots, onEditClass }) {
                     )}
                     <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>
                       {scheduled
-                        ? `meets ${meetCount}×/week`
+                        ? `meets ${meetCount}x/week`
                         : <span style={{ ...chipStyle, background: "#fef3c7", color: "#b45309" }}>unscheduled</span>}
                     </div>
                   </td>
@@ -1462,8 +1483,21 @@ function ClassScheduleView({ catalog, placements, slots, onEditClass }) {
                           <span style={{ color: "#cbd5d1", fontSize: 12 }}>—</span>
                         ) : (
                           list.map((p) => (
-                            <div key={p.id} style={{ fontSize: 12, lineHeight: 1.3, padding: "2px 0", color: "#334155" }}>
-                              {slotShort((slots[p.section] || [])[p.slotIdx])} · Rm {p.room}
+                            <div
+                              key={p.id}
+                              style={{
+                                display: "inline-flex", flexDirection: "column", gap: 2, maxWidth: "100%",
+                                padding: "4px 7px", borderRadius: 6, border: "1px solid #d6dad4",
+                                background: p.section === "morning" ? "#f0fdfa" : "#f8fafc",
+                                color: "#334155", lineHeight: 1.25,
+                              }}
+                            >
+                              <span style={{ fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
+                                {slotPeriod(p.section, (slots[p.section] || [])[p.slotIdx])}
+                              </span>
+                              <span style={{ fontSize: 11, color: "#64748b", whiteSpace: "nowrap" }}>
+                                {p.section === "morning" ? "Mon-Fri · " : ""}Rm {p.room}
+                              </span>
                             </div>
                           ))
                         )}

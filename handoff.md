@@ -159,6 +159,14 @@ class capacity; it only manages how many students are signed up for that class.
    the Class Library and changing its schedule rows uses this same path, so the calendar grid updates
    immediately after save.
 
+### By Class view
+
+The **📋 By Class** tab (`tab === "byClass"`, not a real section) is a class × section overview.
+Weekly meeting counts use placement weights: each `morning` placement counts as 5x/week because
+Morning Daily runs Monday-Friday; each PM placement counts as 1x/week. Cells show full slot periods
+via `slotPeriod(sectionId, label)` (`9-10:30am`, `2-3:30pm`) plus room, and morning cells add a
+`Mon-Fri` hint. The same weighted count appears in `ClassModal` so the editor and overview agree.
+
 ### Teacher roster & By Teacher view
 
 `teachers` is a sorted list of names; class `teacher` fields remain plain strings (no teacher ids).
@@ -246,6 +254,9 @@ app runs exactly as the old browser-only version.
   note) and day columns showing each meeting's time + room; unscheduled classes sort first in amber,
   then rows order by earliest start time of day (slot labels parsed as AM for morning / PM for day
   tabs), tie-broken by day then name.
+- 2026-06-12 — **By Class readability**: weighted Morning Daily as 5x/week, switched overview cells
+  to full period labels (`9-10:30am`, `2-3:30pm`), and added compact room/time pills with Mon-Fri
+  hints for morning placements.
 - 2026-06-11 — **collapsible library sidebar**: collapses to a slim rail (persisted preference);
   the rail still accepts drag-to-unschedule drops and shows the class count.
 
