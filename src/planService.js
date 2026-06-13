@@ -1,4 +1,5 @@
-// v3 — multiple schedule plans (live / draft / archive) per Supabase row or local store.
+// v3 — multiple shared schedule plans per Supabase row or local store.
+// Editable plans (live / plan / legacy draft) + read-only archives.
 
 export const PLAN_VERSION = 3;
 export const ACTIVE_PLAN_KEY = "premier-active-plan-id";
@@ -6,23 +7,30 @@ export const LOCAL_PLANS_KEY = "premier-plans-v3";
 
 export const PLAN_KIND = {
   LIVE: "live",
-  DRAFT: "draft",
+  PLAN: "plan",
+  DRAFT: "draft", // legacy — treated same as plan
   ARCHIVE: "archive",
 };
 
 const KIND_LABEL = {
-  live: "In use",
-  draft: "Planning",
+  live: "Default",
+  plan: "Plan",
+  draft: "Plan",
   archive: "Archive",
 };
 
-export const kindLabel = (kind) => KIND_LABEL[kind] || kind;
+export const kindLabel = (kind) => KIND_LABEL[kind] || "Plan";
 
 export function defaultPlanName(kind, date = new Date()) {
   const stamp = date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
   if (kind === PLAN_KIND.ARCHIVE) return `Archive · ${stamp}`;
-  if (kind === PLAN_KIND.DRAFT) return `New plan · ${stamp}`;
-  return "Main schedule";
+  if (kind === PLAN_KIND.LIVE) return "Main schedule";
+  return `New plan · ${stamp}`;
+}
+
+export function defaultRestoredPlanName(sourceName) {
+  const base = String(sourceName || "").trim() || "Archive";
+  return `Restored · ${base}`;
 }
 
 /** Unwrap Supabase `data` jsonb — legacy v2 flat schedule or v3 envelope. */
@@ -31,7 +39,7 @@ export function unpackRowData(data) {
     return {
       planVersion: PLAN_VERSION,
       name: String(data.plan?.name || "").trim() || "Untitled plan",
-      kind: data.plan?.kind || PLAN_KIND.DRAFT,
+      kind: data.plan?.kind || PLAN_KIND.PLAN,
       createdAt: data.plan?.createdAt || null,
       schedule: data.schedule,
     };
@@ -50,7 +58,7 @@ export function packRowData(schedule, { name, kind, createdAt }) {
     planVersion: PLAN_VERSION,
     plan: {
       name: String(name || "").trim() || defaultPlanName(kind),
-      kind: kind || PLAN_KIND.DRAFT,
+      kind: kind || PLAN_KIND.PLAN,
       createdAt: createdAt || new Date().toISOString(),
     },
     schedule,
@@ -107,6 +115,15 @@ export function writeScheduleCache(planId, schedule) {
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e?.message || "Cache write failed" };
+  }
+}
+
+export function clearScheduleCache(planId) {
+  try {
+    window.localStorage.removeItem(scheduleCacheKey(planId));
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e?.message || "Cache clear failed" };
   }
 }
 
@@ -223,6 +240,17 @@ export function renameInLocalStore(store, planId, name) {
   return next;
 }
 
+export function deleteFromLocalStore(store, planId) {
+  const plans = (store?.plans || []).filter((p) => p.id !== planId);
+  if (!plans.length) throw new Error("Cannot delete the last plan");
+  return { ...store, plans };
+}
+
+export function pickFallbackPlanId(plans, deletedId) {
+  const remain = (plans || []).filter((p) => p.id !== deletedId).sort((a, b) => a.id - b.id);
+  return remain[0]?.id ?? null;
+}
+
 export function createRemotePlanApi(config) {
   const { url, key, sbHeaders } = config;
 
@@ -272,11 +300,20 @@ export function createRemotePlanApi(config) {
     return newId;
   }
 
+  async function remoteDeletePlan(planId) {
+    const res = await fetch(`${url}/rest/v1/schedule?id=eq.${planId}`, {
+      method: "DELETE",
+      headers: sbHeaders(),
+    });
+    if (!res.ok) throw new Error(`Could not delete plan ${planId} (HTTP ${res.status})`);
+  }
+
   return {
     remoteListPlans,
     remoteLoadPlan,
     remoteUpdatedAtPlan,
     remoteSavePlan,
     remoteCreatePlan,
+    remoteDeletePlan,
   };
 }

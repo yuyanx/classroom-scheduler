@@ -4,7 +4,7 @@
 
 **Premier Plus · Classroom Scheduler** — an interactive scheduling board for the 2026 Summer program at Jericho. Staff define classes in a **Class Library**, then schedule them onto a per-day calendar (rooms as columns × a continuous time axis, Mon–Sat) by drag-and-drop, by clicking an empty time, or by editing meeting times in the class dialog. Classes can start at any time (15-minute snap, no fixed slots). Class signed-up counts, rooms, room capacities, and per-day hours are all editable in place.
 
-State syncs through Supabase (project `zbvedbwbxdzcsnftvyph`, table `public.schedule`, **one row per plan** — `id` is the plan id, `data` jsonb). **v3** stores each row as `{ planVersion: 3, plan: { name, kind, createdAt }, schedule: <v2> }` where `kind` is `live`, `draft`, or `archive`. Legacy production row `id=1` may still be a flat v2 schedule until the next save; the app treats that as the live “Main schedule”. Only the **active plan** (per browser, `premier-active-plan-id` in `localStorage`) loads, saves, and polls. Archive plans are read-only. `localStorage` keys: `premier-classroom-schedule` (legacy cache for the active copy), `premier-schedule-plan-{id}` (per-plan cache), `premier-plans-v3` (localhost multi-plan store). With `SUPABASE_KEY` empty the app degrades to browser-only copies. **On `localhost` the remote sync is disabled by design** (`IS_LOCAL_DEV` in `App.jsx`), so local development uses the local plan store and never touches the live shared schedule.
+State syncs through Supabase (project `zbvedbwbxdzcsnftvyph`, table `public.schedule`, **one row per plan** — `id` is the plan id, `data` jsonb). **v3** stores each row as `{ planVersion: 3, plan: { name, kind, createdAt }, schedule: <v2> }`. Editable plans use `kind: live` (default / id=1) or `plan`; read-only snapshots use `archive`. Legacy row `id=1` may still be flat v2 until the next save. Everyone sees the same plan list; the **active plan** (per browser, `premier-active-plan-id`) controls which row loads, saves, and polls. Archives can be **restored** as a new editable plan; plans can be **deleted** (at least one must remain). `localStorage`: `premier-classroom-schedule`, `premier-schedule-plan-{id}`, `premier-plans-v3` (localhost). **On `localhost` remote sync is off** (`IS_LOCAL_DEV`).
 
 ---
 
@@ -414,10 +414,9 @@ app runs exactly as the old browser-only version.
   each schedule row; `roomConflictsIndexed` guards missing `rooms` (crashed when teacher was set).
 - 2026-06-13 — **Week Overview time axis**: wider sticky column (64px), higher z-index, hour
   labels aligned to grid lines (no overlap from Monday blocks).
-- 2026-06-13 — **v3 multi-plan** (`v3-plans` branch): header plan switcher (live / draft /
-  archive), editable plan names, create draft from current schedule, save archive copy
-  (read-only), per-plan Supabase rows via `src/planService.js`; localhost uses
-  `premier-plans-v3` local store.
+- 2026-06-13 — **v3 multi-plan** (`v3-plans` branch): shared plans (default + named plans +
+  read-only archives), header switcher, new plan, delete plan, restore archive as editable
+  copy, per-plan Supabase rows via `src/planService.js`; localhost uses `premier-plans-v3`.
 
 ---
 

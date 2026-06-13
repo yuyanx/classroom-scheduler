@@ -12,6 +12,7 @@ import {
   PLAN_VERSION,
   kindLabel,
   defaultPlanName,
+  defaultRestoredPlanName,
   unpackRowData,
   packRowData,
   planRowToMeta,
@@ -20,6 +21,7 @@ import {
   setActivePlanId as storeActivePlanId,
   readScheduleCache,
   writeScheduleCache,
+  clearScheduleCache,
   ensureLocalPlanStore,
   loadLocalPlanStore,
   saveLocalPlanStore,
@@ -28,6 +30,8 @@ import {
   upsertLocalPlan,
   createLocalPlanEntry,
   renameInLocalStore,
+  deleteFromLocalStore,
+  pickFallbackPlanId,
   createRemotePlanApi,
 } from "./planService.js";
 import {
@@ -1318,7 +1322,7 @@ export default function ClassroomScheduler() {
     await flushRemoteSave(payload);
   }, [flushRemoteSave, writeActivePlanCache]);
 
-  const switchPlan = useCallback(async (planId) => {
+  const switchPlan = useCallback(async (planId, { skipSave = false } = {}) => {
     if (planId === activePlanIdRef.current) {
       setPlanMenuOpen(false);
       return;
@@ -1326,7 +1330,7 @@ export default function ClassroomScheduler() {
     setPlanMenuOpen(false);
     setSaveStatus((s) => ({ ...s, label: "Switching plan…" }));
     try {
-      await saveCurrentPlanSnapshot();
+      if (!skipSave) await saveCurrentPlanSnapshot();
       let next;
       let meta;
       let updatedAt = null;
@@ -1359,13 +1363,15 @@ export default function ClassroomScheduler() {
     }
   }, [loadPlanIntoState, saveCurrentPlanSnapshot]);
 
-  const createDraftPlan = useCallback(async ({ name, copyFromCurrent }) => {
-    const schedule = copyFromCurrent
-      ? JSON.parse(JSON.stringify(dataRef.current))
-      : defaultData();
+  const createNewPlan = useCallback(async ({ name, copyFromCurrent, schedule: scheduleIn }) => {
+    const schedule = scheduleIn
+      ? JSON.parse(JSON.stringify(scheduleIn))
+      : copyFromCurrent
+        ? JSON.parse(JSON.stringify(dataRef.current))
+        : defaultData();
     const meta = {
-      name: String(name || "").trim() || defaultPlanName(PLAN_KIND.DRAFT),
-      kind: PLAN_KIND.DRAFT,
+      name: String(name || "").trim() || defaultPlanName(PLAN_KIND.PLAN),
+      kind: PLAN_KIND.PLAN,
       createdAt: new Date().toISOString(),
     };
     const packed = packRowData(schedule, meta);
@@ -1376,7 +1382,7 @@ export default function ClassroomScheduler() {
         setPlans(list);
         setPlanDialog(null);
         await switchPlan(id);
-        return;
+        return id;
       }
       let store = loadLocalPlanStore() || ensureLocalPlanStore(dataRef.current, planMetaRef.current.name);
       const created = createLocalPlanEntry(store, {
@@ -1389,8 +1395,53 @@ export default function ClassroomScheduler() {
       setPlans(listPlansFromLocalStore(created.store));
       setPlanDialog(null);
       await switchPlan(created.id);
+      return created.id;
     } catch (e) {
       setStatus(false, "Could not create plan", e?.message || "");
+      return null;
+    }
+  }, [switchPlan]);
+
+  const restoreFromArchive = useCallback(async (name) => {
+    const sourceName = planMetaRef.current.name;
+    const restoredName = String(name || "").trim() || defaultRestoredPlanName(sourceName);
+    await createNewPlan({
+      name: restoredName,
+      copyFromCurrent: false,
+      schedule: dataRef.current,
+    });
+  }, [createNewPlan]);
+
+  const deletePlanById = useCallback(async (planId) => {
+    const list = plansRef.current;
+    if (list.length <= 1) {
+      setStatus(false, "Cannot delete", "At least one plan must remain.");
+      return;
+    }
+    const target = list.find((p) => p.id === planId);
+    if (!target) return;
+    const fallbackId = pickFallbackPlanId(list, planId);
+    if (!fallbackId) return;
+    setPlanMenuOpen(false);
+    try {
+      const deletingActive = activePlanIdRef.current === planId;
+      if (deletingActive) await switchPlan(fallbackId, { skipSave: true });
+      if (REMOTE_ENABLED) {
+        await planApi.remoteDeletePlan(planId);
+        const nextList = await planApi.remoteListPlans();
+        setPlans(nextList);
+      } else {
+        let store = loadLocalPlanStore();
+        if (!store) throw new Error("No local plan store");
+        store = deleteFromLocalStore(store, planId);
+        saveLocalPlanStore(store);
+        setPlans(listPlansFromLocalStore(store));
+      }
+      clearScheduleCache(planId);
+      setPlanDialog(null);
+      setStatus(true, `Deleted “${target.name}”`);
+    } catch (e) {
+      setStatus(false, "Could not delete plan", e?.message || "");
     }
   }, [switchPlan]);
 
@@ -1459,7 +1510,7 @@ export default function ClassroomScheduler() {
   const submitPlanDialog = () => {
     if (!planDialog) return;
     if (planDialog.mode === "new") {
-      createDraftPlan({ name: planDialog.name, copyFromCurrent: planDialog.copyFromCurrent !== false });
+      createNewPlan({ name: planDialog.name, copyFromCurrent: planDialog.copyFromCurrent !== false });
       return;
     }
     if (planDialog.mode === "archive") {
@@ -1468,8 +1519,18 @@ export default function ClassroomScheduler() {
     }
     if (planDialog.mode === "rename") {
       renameActivePlan(planDialog.name);
+      return;
+    }
+    if (planDialog.mode === "restore") {
+      restoreFromArchive(planDialog.name);
+      return;
+    }
+    if (planDialog.mode === "delete") {
+      deletePlanById(planDialog.planId);
     }
   };
+
+  const canDeletePlans = plans.length > 1;
 
   useEffect(() => {
     let cancelled = false;
@@ -2203,7 +2264,7 @@ export default function ClassroomScheduler() {
               <button
                 type="button"
                 onClick={() => setPlanMenuOpen((o) => !o)}
-                title="Switch between live, draft, and archive schedules"
+                title="Switch shared schedule plans"
                 style={{ ...btnGhost, display: "flex", alignItems: "center", gap: 6, maxWidth: 280 }}
               >
                 <span style={{ fontWeight: 700 }}>📁 {planMeta.name}</span>
@@ -2221,31 +2282,56 @@ export default function ClassroomScheduler() {
                   }}
                 >
                   {(plans.length ? plans : [{ id: activePlanId, name: planMeta.name, kind: planMeta.kind }]).map((p) => (
-                    <button
+                    <div
                       key={p.id}
-                      type="button"
-                      onClick={() => switchPlan(p.id)}
                       style={{
-                        display: "flex", width: "100%", alignItems: "center", gap: 8, textAlign: "left",
-                        border: "none", background: p.id === activePlanId ? "#f0fdfa" : "transparent",
-                        borderRadius: 8, padding: "8px 10px", cursor: "pointer", fontSize: 13, color: "#1e293b",
+                        display: "flex", alignItems: "center", gap: 4,
+                        background: p.id === activePlanId ? "#f0fdfa" : "transparent",
+                        borderRadius: 8, padding: "2px 2px 2px 0",
                       }}
                     >
-                      <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: p.id === activePlanId ? 700 : 500 }}>
-                        {p.name}
-                      </span>
-                      <span style={{ fontSize: 11, color: "#64748b" }}>{kindLabel(p.kind)}</span>
-                      {p.id === activePlanId && <span style={{ color: "#0f766e", fontWeight: 700 }}>✓</span>}
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() => switchPlan(p.id)}
+                        style={{
+                          display: "flex", flex: 1, minWidth: 0, alignItems: "center", gap: 8, textAlign: "left",
+                          border: "none", background: "transparent",
+                          borderRadius: 8, padding: "8px 10px", cursor: "pointer", fontSize: 13, color: "#1e293b",
+                        }}
+                      >
+                        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: p.id === activePlanId ? 700 : 500 }}>
+                          {p.name}
+                        </span>
+                        <span style={{ fontSize: 11, color: "#64748b" }}>{kindLabel(p.kind)}</span>
+                        {p.id === activePlanId && <span style={{ color: "#0f766e", fontWeight: 700 }}>✓</span>}
+                      </button>
+                      {canDeletePlans && (
+                        <button
+                          type="button"
+                          title={`Delete “${p.name}”`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPlanMenuOpen(false);
+                            setPlanDialog({ mode: "delete", planId: p.id, name: p.name });
+                          }}
+                          style={{
+                            border: "none", background: "transparent", color: "#94a3b8", cursor: "pointer",
+                            fontSize: 15, lineHeight: 1, padding: "4px 8px", borderRadius: 6,
+                          }}
+                        >
+                          ×
+                        </button>
+                      )}
+                    </div>
                   ))}
                   <div style={{ borderTop: "1px solid #eceeea", margin: "6px 0" }} />
                   {!planReadOnly && (
                     <button
                       type="button"
-                      onClick={() => setPlanDialog({ mode: "new", name: defaultPlanName(PLAN_KIND.DRAFT), copyFromCurrent: true })}
+                      onClick={() => setPlanDialog({ mode: "new", name: defaultPlanName(PLAN_KIND.PLAN), copyFromCurrent: true })}
                       style={{ display: "block", width: "100%", textAlign: "left", border: "none", background: "transparent", borderRadius: 8, padding: "8px 10px", cursor: "pointer", fontSize: 13, color: "#123c3a", fontWeight: 600 }}
                     >
-                      + New draft plan
+                      + New plan
                     </button>
                   )}
                   {!planReadOnly && (
@@ -2255,6 +2341,15 @@ export default function ClassroomScheduler() {
                       style={{ display: "block", width: "100%", textAlign: "left", border: "none", background: "transparent", borderRadius: 8, padding: "8px 10px", cursor: "pointer", fontSize: 13, color: "#475569" }}
                     >
                       Save archive copy
+                    </button>
+                  )}
+                  {planReadOnly && (
+                    <button
+                      type="button"
+                      onClick={() => setPlanDialog({ mode: "restore", name: defaultRestoredPlanName(planMeta.name) })}
+                      style={{ display: "block", width: "100%", textAlign: "left", border: "none", background: "transparent", borderRadius: 8, padding: "8px 10px", cursor: "pointer", fontSize: 13, color: "#123c3a", fontWeight: 600 }}
+                    >
+                      Restore as new plan
                     </button>
                   )}
                   {!planReadOnly && (
@@ -2291,7 +2386,7 @@ export default function ClassroomScheduler() {
             <span
               title={saveStatus.ok
                 ? (REMOTE_ENABLED
-                  ? `Shared plan “${planMeta.name}” (${kindLabel(planMeta.kind)}). Only this active plan syncs.`
+                  ? `Shared plan “${planMeta.name}”. Edits sync for everyone viewing this plan.`
                   : IS_PREVIEW_DEPLOY
                     ? "Preview deploy — changes stay in this browser only."
                     : "Changes are stored in this browser.")
@@ -2310,15 +2405,15 @@ export default function ClassroomScheduler() {
         </div>
       </header>
 
-      {planMeta.kind === PLAN_KIND.DRAFT && (
-        <div style={{ background: "#eff6ff", borderBottom: "1px solid #bfdbfe", padding: "8px 24px", fontSize: 13, color: "#1d4ed8" }}>
-          <b>Planning mode</b> — this draft does not replace the live schedule. Colleagues see updates only while this draft is the active plan.
-        </div>
-      )}
-
       {planReadOnly && (
-        <div style={{ background: "#f8fafc", borderBottom: "1px solid #e2e8f0", padding: "8px 24px", fontSize: 13, color: "#475569" }}>
-          <b>Archive (read-only)</b> — switch to the live or a draft plan to make changes.
+        <div style={{ background: "#f8fafc", borderBottom: "1px solid #e2e8f0", padding: "8px 24px", fontSize: 13, color: "#475569", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <span><b>Archive (read-only)</b> — use <b>Restore as new plan</b> from the 📁 menu to edit a copy.</span>
+          <button
+            onClick={() => setPlanDialog({ mode: "restore", name: defaultRestoredPlanName(planMeta.name) })}
+            style={{ ...btnSecondary, padding: "4px 10px", fontSize: 12 }}
+          >
+            Restore as new plan
+          </button>
         </div>
       )}
 
@@ -2818,23 +2913,33 @@ export default function ClassroomScheduler() {
       {planDialog && (
         <Overlay onClose={() => setPlanDialog(null)}>
           <h2 style={{ margin: "0 0 12px", fontSize: 18 }}>
-            {planDialog.mode === "new" ? "New draft plan" : planDialog.mode === "archive" ? "Save archive copy" : "Rename plan"}
+            {planDialog.mode === "new" ? "New plan"
+              : planDialog.mode === "archive" ? "Save archive copy"
+                : planDialog.mode === "restore" ? "Restore as new plan"
+                  : planDialog.mode === "delete" ? "Delete plan"
+                    : "Rename plan"}
           </h2>
           <p style={{ margin: "0 0 14px", fontSize: 13, color: "#64748b", lineHeight: 1.45 }}>
             {planDialog.mode === "new"
-              ? "Creates a separate draft from the current schedule. The live schedule stays unchanged."
+              ? "Creates another shared plan. Everyone can switch to it from the plan menu."
               : planDialog.mode === "archive"
-                ? "Saves a read-only snapshot colleagues can open later. You stay on the current plan."
-                : "This name is visible to everyone with access to the shared plans."}
+                ? "Saves a read-only snapshot. You stay on the current plan."
+                : planDialog.mode === "restore"
+                  ? "Copies this archive into a new editable plan."
+                  : planDialog.mode === "delete"
+                    ? `Delete “${planDialog.name}”? This cannot be undone.${REMOTE_ENABLED ? " Removed for everyone." : ""}`
+                    : "Visible to everyone with access to the shared plans."}
           </p>
-          <Field label="Plan name">
-            <input
-              style={inputStyle}
-              value={planDialog.name}
-              onChange={(e) => setPlanDialog((d) => ({ ...d, name: e.target.value }))}
-              autoFocus
-            />
-          </Field>
+          {planDialog.mode !== "delete" && (
+            <Field label="Plan name">
+              <input
+                style={inputStyle}
+                value={planDialog.name}
+                onChange={(e) => setPlanDialog((d) => ({ ...d, name: e.target.value }))}
+                autoFocus
+              />
+            </Field>
+          )}
           {planDialog.mode === "new" && (
             <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, fontSize: 13, color: "#475569" }}>
               <input
@@ -2842,13 +2947,21 @@ export default function ClassroomScheduler() {
                 checked={planDialog.copyFromCurrent !== false}
                 onChange={(e) => setPlanDialog((d) => ({ ...d, copyFromCurrent: e.target.checked }))}
               />
-              Copy current schedule into the draft
+              Copy current schedule into the new plan
             </label>
           )}
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
             <button style={btnSecondary} onClick={() => setPlanDialog(null)}>Cancel</button>
-            <button style={btnPrimary} onClick={submitPlanDialog} disabled={!String(planDialog.name || "").trim()}>
-              {planDialog.mode === "rename" ? "Save name" : planDialog.mode === "archive" ? "Save archive" : "Create draft"}
+            <button
+              style={planDialog.mode === "delete" ? { ...btnPrimary, background: "#dc2626" } : btnPrimary}
+              onClick={submitPlanDialog}
+              disabled={planDialog.mode !== "delete" && !String(planDialog.name || "").trim()}
+            >
+              {planDialog.mode === "rename" ? "Save name"
+                : planDialog.mode === "archive" ? "Save archive"
+                  : planDialog.mode === "restore" ? "Restore"
+                    : planDialog.mode === "delete" ? "Delete"
+                      : "Create plan"}
             </button>
           </div>
         </Overlay>
