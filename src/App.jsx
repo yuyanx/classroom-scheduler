@@ -2761,9 +2761,9 @@ function WeekOverviewView({ days, hours, rooms, idx, onEditClass }) {
           );
         })}
       </div>
-      <div style={{ minWidth: 56 + days.length * 132, position: "relative" }}>
+      <div style={{ minWidth: 64 + days.length * 132, position: "relative" }}>
         <div style={{ display: "flex", borderBottom: "2px solid #d6dad4", background: "#fafaf8" }}>
-          <div style={{ flex: "0 0 56px", width: 56, position: "sticky", left: 0, zIndex: 4, background: "#fafaf8", boxSizing: "border-box", padding: "10px 4px", fontSize: 11, fontWeight: 600, color: "#475569", textAlign: "center" }}>
+          <div style={{ flex: "0 0 64px", width: 64, position: "sticky", left: 0, zIndex: 6, background: "#fafaf8", boxSizing: "border-box", padding: "10px 4px", fontSize: 11, fontWeight: 600, color: "#475569", textAlign: "center", boxShadow: "2px 0 4px rgba(15,23,42,.06)" }}>
             Time
           </div>
           {days.map((d) => (
@@ -2772,19 +2772,21 @@ function WeekOverviewView({ days, hours, rooms, idx, onEditClass }) {
             </div>
           ))}
         </div>
-        <div style={{ display: "flex", position: "relative" }}>
-          <div style={{ flex: "0 0 56px", width: 56, position: "sticky", left: 0, zIndex: 3, background: "#fafaf8", height: gridH, boxSizing: "border-box", borderRight: "1px solid #eceeea" }}>
+        <div style={{ display: "flex", position: "relative", isolation: "isolate" }}>
+          <div style={{ flex: "0 0 64px", width: 64, position: "sticky", left: 0, zIndex: 5, background: "#fafaf8", height: gridH, boxSizing: "border-box", borderRight: "1px solid #eceeea", boxShadow: "2px 0 4px rgba(15,23,42,.06)" }}>
             {hourMarks.map((t) => (
               <div
                 key={t}
                 style={{
                   position: "absolute",
-                  top: (t - gridStart) * pxPerMin - 7,
-                  right: 4,
+                  top: (t - gridStart) * pxPerMin,
+                  right: 6,
+                  transform: t === gridStart ? "translateY(2px)" : t === gridEnd ? "translateY(calc(-100% - 2px))" : "translateY(-50%)",
                   fontSize: 10,
                   color: "#64748b",
-                  fontWeight: 600,
+                  fontWeight: 700,
                   whiteSpace: "nowrap",
+                  zIndex: 2,
                 }}
               >
                 {fmtAmPm(t)}
@@ -2796,7 +2798,7 @@ function WeekOverviewView({ days, hours, rooms, idx, onEditClass }) {
             return (
               <div
                 key={d}
-                style={{ flex: 1, minWidth: 132, position: "relative", height: gridH, borderLeft: "1px solid #eceeea", background: "#fcfcfb" }}
+                style={{ flex: 1, minWidth: 132, position: "relative", height: gridH, borderLeft: "1px solid #eceeea", background: "#fcfcfb", overflow: "hidden", zIndex: 0 }}
               >
                 {halfMarks.map((t) => (
                   <div key={`h-${t}`} style={{ position: "absolute", top: (t - gridStart) * pxPerMin, left: 0, right: 0, borderTop: "1px dashed #eef0ed", pointerEvents: "none" }} />
@@ -2828,6 +2830,7 @@ function WeekOverviewView({ days, hours, rooms, idx, onEditClass }) {
                         width: `calc(${100 / lanes}% - 4px)`,
                         boxSizing: "border-box",
                         zIndex: 1,
+                        maxWidth: "100%",
                         background: roomClash ? "#fee2e2" : teacherClash ? "#fffbeb" : rc.bg,
                         border: roomClash ? "2px solid #dc2626" : teacherClash ? "2px solid #d97706" : `1px solid ${rc.border}`,
                         borderRadius: 6,

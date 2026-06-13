@@ -409,6 +409,8 @@ app runs exactly as the old browser-only version.
   overlapping meetings use `layoutLanes`; click block to edit class.
 - 2026-06-13 — **Fix class modal blank crash**: `teacherConflictsAt` now passes `rooms` on
   each schedule row; `roomConflictsIndexed` guards missing `rooms` (crashed when teacher was set).
+- 2026-06-13 — **Week Overview time axis**: wider sticky column (64px), higher z-index, hour
+  labels aligned to grid lines (no overlap from Monday blocks).
 
 ---
 
