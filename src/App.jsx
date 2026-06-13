@@ -3838,7 +3838,26 @@ function TeacherScheduleView({ teachers, catalog, placements, days, rooms, idx, 
         <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 180 + days.length * 155, tableLayout: "fixed" }}>
           <thead>
             <tr>
-              <th style={{ ...thStyle, width: 180, position: "sticky", left: 0, background: "#fafaf8", zIndex: 2 }}>Teacher</th>
+              <th style={{ ...thStyle, width: 180, position: "sticky", left: 0, background: "#fafaf8", zIndex: 2, verticalAlign: "top" }}>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
+                  <span>Teacher</span>
+                  <button
+                    type="button"
+                    onClick={onManageTeachers}
+                    style={{
+                      ...btnGhost,
+                      color: "#123c3a",
+                      borderColor: "#cbd5d1",
+                      background: "#fff",
+                      fontSize: 11,
+                      padding: "4px 10px",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    Manage teachers
+                  </button>
+                </div>
+              </th>
               {days.map((d) => (
                 <th key={d} style={thStyle}>{DAY_LABEL[d]}</th>
               ))}
@@ -3856,11 +3875,6 @@ function TeacherScheduleView({ teachers, catalog, placements, days, rooms, idx, 
             )}
           </tbody>
         </table>
-        <div style={{ padding: "10px 14px", borderTop: "1px solid #eceeea" }}>
-          <button onClick={onManageTeachers} style={{ ...btnGhost, color: "#123c3a", borderColor: "#cbd5d1" }}>
-            Manage teachers
-          </button>
-        </div>
       </div>
       <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
         👤 One row per teacher — classes they teach across the week. Click any class card to edit.
