@@ -1017,17 +1017,29 @@ function clearScheduleAndCounts(data) {
 // live shared schedule.
 const SUPABASE_URL = "https://zbvedbwbxdzcsnftvyph.supabase.co";
 const SUPABASE_KEY = "sb_publishable_cDEmeJDF7lwuafg8ZYKF4Q_Sl_fUSTE";
+// Legacy alias; Vercel production hostname can change — prefer VERCEL_ENV at build time.
 const PRODUCTION_HOST = "classroom-scheduler-ruddy.vercel.app";
+const VERCEL_ENV =
+  typeof process !== "undefined" && process.env && process.env.VERCEL_ENV
+    ? String(process.env.VERCEL_ENV)
+    : "";
 
 const isLocalDevHost = (hostname) => /^(localhost|127\.|0\.0\.0\.0|\[::1\])/.test(hostname || "");
-// Vercel preview URLs share the production Supabase row unless gated off here.
-const isPreviewHost = (hostname) =>
-  /\.vercel\.app$/i.test(hostname || "") &&
-  hostname !== PRODUCTION_HOST &&
-  !String(hostname || "").endsWith(`.${PRODUCTION_HOST}`);
+// Vercel preview deploys must not write to the shared Supabase row.
+const isPreviewHost = (hostname, vercelEnv = VERCEL_ENV) => {
+  if (vercelEnv === "production") return false;
+  if (vercelEnv === "preview") return true;
+  const h = hostname || "";
+  return /\.vercel\.app$/i.test(h) && h !== PRODUCTION_HOST && !h.endsWith(`.${PRODUCTION_HOST}`);
+};
 
-const isRemoteSyncEnabled = (hostname) =>
-  Boolean(SUPABASE_URL && SUPABASE_KEY) && !isLocalDevHost(hostname) && !isPreviewHost(hostname);
+const isRemoteSyncEnabled = (hostname, vercelEnv = VERCEL_ENV) => {
+  if (!SUPABASE_URL || !SUPABASE_KEY) return false;
+  if (isLocalDevHost(hostname)) return false;
+  if (vercelEnv === "production") return true;
+  if (vercelEnv === "preview") return false;
+  return !isPreviewHost(hostname, vercelEnv);
+};
 
 const IS_LOCAL_DEV = typeof window !== "undefined" && isLocalDevHost(window.location.hostname);
 const IS_PREVIEW_DEPLOY = typeof window !== "undefined" && isPreviewHost(window.location.hostname);

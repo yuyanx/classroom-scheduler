@@ -19,6 +19,17 @@ test("isPreviewHost gates Vercel preview but not production", () => {
   assert.equal(isPreviewHost("localhost"), false);
 });
 
+test("VERCEL_ENV=production enables sync on any Vercel hostname", () => {
+  const prodUrl = "classroom-scheduler-7bbylnh0d-yuyanxs-projects.vercel.app";
+  assert.equal(isPreviewHost(prodUrl, "production"), false);
+  assert.equal(isRemoteSyncEnabled(prodUrl, "production"), true);
+});
+
+test("VERCEL_ENV=preview blocks sync even on production-looking host", () => {
+  assert.equal(isPreviewHost(PRODUCTION_HOST, "preview"), true);
+  assert.equal(isRemoteSyncEnabled(PRODUCTION_HOST, "preview"), false);
+});
+
 test("isRemoteSyncEnabled false for localhost and preview", () => {
   assert.equal(isRemoteSyncEnabled("localhost"), false);
   assert.equal(isRemoteSyncEnabled("branch-preview.vercel.app"), false);
