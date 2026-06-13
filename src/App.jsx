@@ -3453,13 +3453,16 @@ function WeekOverviewView({ days, hours, rooms, idx, onEditClass }) {
 }
 
 // ───────────────────────── By-class schedule view (time axis × rooms) ─────────────────────────
+const BY_CLASS_PX_PER_MIN = 1.25;
+const BY_CLASS_ROOM_MIN_W = 148;
+
 function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planReadOnly, onBumpReg, onEditClass }) {
   const roomOrder = rooms.map((r) => r.id);
   const roomCap = (id) => idx?.roomCapById?.get(id) ?? 12;
   const capOfRooms = (list) => (list || []).reduce((s, id) => s + roomCap(id), 0);
 
   const layout = useMemo(
-    () => computeWeekOverviewLayout(days, hours, idx.placementsByDay, PX_PER_MIN),
+    () => computeWeekOverviewLayout(days, hours, idx.placementsByDay, BY_CLASS_PX_PER_MIN),
     [days, hours, idx.placementsByDay]
   );
   const { gridStart, gridEnd, gridH, hourMarks, halfMarks } = layout;
@@ -3472,9 +3475,9 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
         if (!groups.length) return null;
         const start = Math.min(...groups.map((g) => g.start));
         const end = Math.max(...groups.map((g) => g.end));
-        const primary = groups[0];
-        const roomId = primaryRoomForPlacement(primary.rooms, roomOrder);
-        return { classId: cls.id, cls, start, end, roomId, rooms: primary.rooms, groups };
+        const allRooms = [...new Set(groups.flatMap((g) => g.rooms))];
+        const roomId = primaryRoomForPlacement(allRooms, roomOrder);
+        return { classId: cls.id, cls, start, end, roomId, rooms: allRooms, groups };
       })
       .filter(Boolean);
   }, [catalog, placements, idx.scheduledClassIds, roomOrder]);
@@ -3516,17 +3519,17 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
   const renderBlock = (block, roomId, laneInfo) => {
     const { cls, classId, start, end, rooms: blockRooms, groups } = block;
     const { lane, lanes: laneCount } = laneInfo || { lane: 0, lanes: 1 };
-    const top = (start - gridStart) * PX_PER_MIN;
-    const slotH = (end - start) * PX_PER_MIN;
-    const contentMinH = 52 + groups.length * 28 + 36;
-    const h = Math.max(56, slotH - 2, contentMinH);
+    const top = (start - gridStart) * BY_CLASS_PX_PER_MIN;
+    const h = Math.max(14, (end - start) * BY_CLASS_PX_PER_MIN - 6);
     const cap = capOfRooms(blockRooms);
     const col = ratioColor(cls.reg, cap);
     const pct = cap ? Math.min(100, Math.round((cls.reg / cap) * 100)) : 0;
     const rc = roomOverviewColor(roomId, roomOrder);
     const { roomClash, teacherClash } = classClash(cls);
     const combined = blockRooms.length > 1;
+    const singleGroup = groups.length === 1;
     const summary = groups.map((g) => `${g.dayLabel} ${g.timeLabel}`).join(" · ");
+    const teacherLabel = cls.teacher || <i style={{ color: "#b45309" }}>TBD</i>;
     return (
       <div
         key={classId}
@@ -3534,16 +3537,21 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
         title={`${cls.name} · ${summary} · ${cls.teacher || "TBD"} · ${overviewRoomLabel(blockRooms)} — click to edit`}
         style={{
           position: "absolute",
-          top: top + 1,
+          top: top + 3,
           height: h,
-          left: `calc(${(lane / laneCount) * 100}% + 2px)`,
-          width: `calc(${100 / laneCount}% - 4px)`,
+          left: `calc(${(lane / laneCount) * 100}% + 4px)`,
+          width: `calc(${100 / laneCount}% - 8px)`,
           boxSizing: "border-box",
           zIndex: 1,
           background: roomClash ? "#fee2e2" : teacherClash ? "#fffbeb" : rc.bg,
           border: roomClash ? "2px solid #dc2626" : teacherClash ? "2px solid #d97706" : `1px solid ${rc.border}`,
+          boxShadow: roomClash
+            ? "0 0 0 3px rgba(220,38,38,.12)"
+            : teacherClash
+              ? "0 0 0 3px rgba(217,119,6,.12)"
+              : "none",
           borderRadius: 8,
-          padding: "4px 6px 6px",
+          padding: "4px 7px 9px",
           overflow: "hidden",
           cursor: "pointer",
           color: rc.text,
@@ -3551,45 +3559,65 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
           flexDirection: "column",
         }}
       >
-        <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column", gap: 1 }}>
-          <div style={{ fontWeight: 700, fontSize: 12, lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column", gap: 2 }}>
+          <div style={{ fontWeight: 700, fontSize: 12.5, lineHeight: 1.2, overflowWrap: "anywhere", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
             {cls.name}{(roomClash || teacherClash) ? " ⚠" : ""}
           </div>
-          {groups.map((g, i) => (
-            <React.Fragment key={i}>
-              <div style={{ fontSize: 10.5, opacity: 0.95, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                {g.timeLabel}
-              </div>
-              <div style={{ fontSize: 10.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                {g.dayLabel}
-              </div>
-            </React.Fragment>
-          ))}
-          <div style={{ fontSize: 10.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            {cls.teacher || <i style={{ color: "#b45309" }}>TBD</i>}
-          </div>
-          {combined && (
-            <div style={{ fontSize: 10, color: "#7c3aed", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-              ⇆ Rm {[...blockRooms].sort((a, b) => (roomOrder.indexOf(a) ?? 99) - (roomOrder.indexOf(b) ?? 99)).join("+")}
+          {singleGroup ? (
+            <>
+              {h >= 44 && (
+                <div style={{ fontSize: 11, color: "#475569", lineHeight: 1.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {groups[0].timeLabel}
+                  {h >= 52 && <> · {teacherLabel}</>}
+                </div>
+              )}
+              {h >= 56 && (
+                <div style={{ fontSize: 11, color: "#0f766e", lineHeight: 1.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {groups[0].dayLabel}
+                </div>
+              )}
+            </>
+          ) : (
+            groups.map((g, i) => (
+              h >= 40 + i * 22 && (
+                <div key={i} style={{ fontSize: 10.5, color: "#475569", lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {g.timeLabel} · {g.dayLabel}
+                </div>
+              )
+            ))
+          )}
+          {!singleGroup && h >= 56 && (
+            <div style={{ fontSize: 11, color: "#475569", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              {teacherLabel}
+            </div>
+          )}
+          {combined && h >= 44 && (
+            <div
+              style={{ fontSize: 10.5, color: "#7c3aed", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+              title={`Uses Rooms ${overviewRoomLabel(blockRooms)}`}
+            >
+              ⇆ Rm {overviewRoomLabel(blockRooms)} combined
             </div>
           )}
         </div>
-        <div style={{ flexShrink: 0, marginTop: 2 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 2, minWidth: 0 }}>
-            {!planReadOnly && h >= 68 && (
-              <button type="button" onClick={(e) => { e.stopPropagation(); onBumpReg(cls.id, -1); }} style={stepBtn}>−</button>
-            )}
-            <span style={{ fontSize: 10.5, fontWeight: 700, color: col.text, flex: 1, textAlign: "center", whiteSpace: "nowrap" }}>
-              {cls.reg}/{cap}
-            </span>
-            {!planReadOnly && h >= 68 && (
-              <button type="button" onClick={(e) => { e.stopPropagation(); onBumpReg(cls.id, +1); }} style={stepBtn}>＋</button>
-            )}
+        {h >= 64 && (
+          <div style={{ flexShrink: 0, marginTop: 2, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 3, minWidth: 0 }}>
+              {!planReadOnly && h >= 88 && laneCount === 1 && (
+                <button type="button" onClick={(e) => { e.stopPropagation(); onBumpReg(cls.id, -1); }} style={stepBtn}>−</button>
+              )}
+              <span style={{ fontSize: 11, fontWeight: 700, color: col.text, minWidth: 0, flex: 1, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden" }}>
+                {cls.reg}/{cap}{cls.reg >= cap && cap > 0 ? " · FULL" : ""}
+              </span>
+              {!planReadOnly && h >= 88 && laneCount === 1 && (
+                <button type="button" onClick={(e) => { e.stopPropagation(); onBumpReg(cls.id, +1); }} style={stepBtn}>＋</button>
+              )}
+            </div>
+            <div style={{ height: 4, background: "#e2e8f0", borderRadius: 2, marginTop: 3, overflow: "hidden" }}>
+              <div style={{ width: `${pct}%`, height: "100%", background: col.bar, borderRadius: 2, transition: "width .25s" }} />
+            </div>
           </div>
-          <div style={{ height: 4, background: "#e2e8f0", borderRadius: 2, marginTop: 2, overflow: "hidden" }}>
-            <div style={{ width: `${pct}%`, height: "100%", background: col.bar, borderRadius: 2 }} />
-          </div>
-        </div>
+        )}
       </div>
     );
   };
@@ -3598,22 +3626,21 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
     <>
       <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto", width: "100%" }}>
         <OverviewRoomLegendBar rooms={rooms} />
-        <div style={{ minWidth: 64 + rooms.length * 110, position: "relative" }}>
+        <div style={{ minWidth: 64 + rooms.length * BY_CLASS_ROOM_MIN_W, position: "relative" }}>
           <div style={{ display: "flex", borderBottom: "2px solid #d6dad4", background: "#fafaf8" }}>
             <div style={{ flex: "0 0 64px", width: 64, position: "sticky", left: 0, zIndex: 4, background: "#fafaf8", boxSizing: "border-box", padding: "10px 6px", fontSize: 12, fontWeight: 600, color: "#475569", textAlign: "center" }}>
               Time
             </div>
-            {rooms.map((r) => {
-              const rc = roomOverviewColor(r.id, roomOrder);
-              return (
-                <div key={r.id} style={{ flex: 1, minWidth: 110, boxSizing: "border-box", padding: "8px 4px 9px", textAlign: "center", borderLeft: "1px solid #eceeea" }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6, justifyContent: "center" }}>
-                    <span style={{ width: 10, height: 10, borderRadius: 3, background: rc.bg, border: `1px solid ${rc.border}`, flexShrink: 0 }} />
-                    <span style={{ fontSize: 13, fontWeight: 700, color: "#123c3a" }}>Room {r.id}</span>
+            {rooms.map((r) => (
+              <div key={r.id} style={{ flex: 1, minWidth: BY_CLASS_ROOM_MIN_W, boxSizing: "border-box", padding: "8px 4px 9px", textAlign: "center", borderLeft: "1px solid #eceeea" }}>
+                <div style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+                  <span style={{ display: "inline-block", background: "#123c3a", color: "#fff", borderRadius: 6, padding: "2px 10px", fontSize: 13 }}>
+                    Room {r.id}
                   </span>
+                  <span style={{ fontSize: 11, color: "#64748b", fontWeight: 700 }}>Cap {r.cap}</span>
                 </div>
-              );
-            })}
+              </div>
+            ))}
           </div>
           <div style={{ display: "flex", position: "relative" }}>
             <div style={{ flex: "0 0 64px", width: 64, position: "sticky", left: 0, zIndex: 3, background: "#fafaf8", height: gridH, boxSizing: "border-box", borderRight: "1px solid #eceeea" }}>
@@ -3622,7 +3649,7 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
                   key={t}
                   style={{
                     position: "absolute",
-                    top: (t - gridStart) * PX_PER_MIN,
+                    top: (t - gridStart) * BY_CLASS_PX_PER_MIN,
                     right: 6,
                     transform: t === gridStart ? "translateY(2px)" : t === gridEnd ? "translateY(calc(-100% - 2px))" : "translateY(-50%)",
                     fontSize: 11,
@@ -3636,10 +3663,10 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
             </div>
             <div style={{ position: "absolute", left: 64, right: 0, top: 0, height: gridH, pointerEvents: "none" }}>
               {hourMarks.map((t) => (
-                <div key={t} style={{ position: "absolute", left: 0, right: 0, top: (t - gridStart) * PX_PER_MIN, borderTop: "1px solid #eceeea" }} />
+                <div key={t} style={{ position: "absolute", left: 0, right: 0, top: (t - gridStart) * BY_CLASS_PX_PER_MIN, borderTop: "1px solid #eceeea" }} />
               ))}
               {halfMarks.map((t) => (
-                <div key={t} style={{ position: "absolute", left: 0, right: 0, top: (t - gridStart) * PX_PER_MIN, borderTop: "1px dashed #f0f2ee" }} />
+                <div key={t} style={{ position: "absolute", left: 0, right: 0, top: (t - gridStart) * BY_CLASS_PX_PER_MIN, borderTop: "1px dashed #f0f2ee" }} />
               ))}
             </div>
             {rooms.map((room) => {
@@ -3648,7 +3675,7 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
               return (
                 <div
                   key={room.id}
-                  style={{ flex: 1, minWidth: 110, position: "relative", height: gridH, boxSizing: "border-box", borderLeft: "1px solid #eceeea", background: "#fcfcfb" }}
+                  style={{ flex: 1, minWidth: BY_CLASS_ROOM_MIN_W, position: "relative", height: gridH, boxSizing: "border-box", borderLeft: "1px solid #eceeea", background: "#fcfcfb" }}
                 >
                   {colBlocks.map((b) => renderBlock(b, room.id, lanes.get(b.classId)))}
                 </div>
