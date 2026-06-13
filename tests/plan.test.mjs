@@ -7,6 +7,7 @@ import {
   packRowData,
   planRowToMeta,
   isPlanReadOnly,
+  isProtectedPlan,
   defaultPlanName,
   defaultRestoredPlanName,
   kindLabel,
@@ -61,6 +62,13 @@ test("isPlanReadOnly only for archive", () => {
   assert.equal(isPlanReadOnly(PLAN_KIND.LIVE), false);
   assert.equal(isPlanReadOnly(PLAN_KIND.PLAN), false);
   assert.equal(isPlanReadOnly(PLAN_KIND.DRAFT), false);
+});
+
+test("isProtectedPlan guards default schedule", () => {
+  assert.equal(isProtectedPlan({ id: 1, kind: PLAN_KIND.LIVE }), true);
+  assert.equal(isProtectedPlan({ id: 1, kind: PLAN_KIND.PLAN }), true);
+  assert.equal(isProtectedPlan({ id: 2, kind: PLAN_KIND.PLAN }), false);
+  assert.equal(isProtectedPlan({ id: 2, kind: PLAN_KIND.ARCHIVE }), false);
 });
 
 test("local plan store create, list, rename, delete", () => {

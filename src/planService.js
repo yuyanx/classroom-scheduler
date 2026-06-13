@@ -80,6 +80,12 @@ export function isPlanReadOnly(kind) {
   return kind === PLAN_KIND.ARCHIVE;
 }
 
+/** Default / main schedule — must not be deleted. */
+export function isProtectedPlan(plan) {
+  if (!plan) return false;
+  return plan.kind === PLAN_KIND.LIVE || plan.id === 1;
+}
+
 export function getActivePlanId() {
   try {
     const raw = window.localStorage.getItem(ACTIVE_PLAN_KEY);

@@ -17,6 +17,7 @@ import {
   packRowData,
   planRowToMeta,
   isPlanReadOnly,
+  isProtectedPlan,
   getActivePlanId,
   setActivePlanId as storeActivePlanId,
   readScheduleCache,
@@ -1431,6 +1432,11 @@ export default function ClassroomScheduler() {
     }
     const target = list.find((p) => p.id === planId);
     if (!target) return;
+    if (isProtectedPlan(target)) {
+      setStatus(false, "Cannot delete", "The default schedule cannot be deleted.");
+      setPlanDialog(null);
+      return;
+    }
     const fallbackId = pickFallbackPlanId(list, planId);
     if (!fallbackId) return;
     setPlanMenuOpen(false);
@@ -2322,7 +2328,7 @@ export default function ClassroomScheduler() {
                         <span style={{ fontSize: 11, color: "#64748b" }}>{kindLabel(p.kind)}</span>
                         {p.id === activePlanId && <span style={{ color: "#0f766e", fontWeight: 700 }}>✓</span>}
                       </button>
-                      {canDeletePlans && (
+                      {canDeletePlans && !isProtectedPlan(p) && (
                         <button
                           type="button"
                           title={`Delete “${p.name}”`}
