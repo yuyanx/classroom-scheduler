@@ -2157,10 +2157,8 @@ export default function ClassroomScheduler() {
     [catalog, idx.scheduledClassIds]
   );
 
-  const roomOrder = useMemo(() => rooms.map((r) => r.id), [rooms]);
-
-  // ── One scheduled card on the day grid (layout matches By Class tab) ──
-  const renderBlock = (p, laneInfo, colorRoomId) => {
+  // ── One scheduled card on the day grid (layout matches By Class tab; enrollment colors) ──
+  const renderBlock = (p, laneInfo) => {
     const cls = classOfId(p.classId);
     if (!cls) return null;
     const end = resize?.plId === p.id ? resize.end : p.end;
@@ -2171,7 +2169,6 @@ export default function ClassroomScheduler() {
     const cap = capOfRooms(p.rooms);
     const col = ratioColor(cls.reg, cap);
     const pct = cap ? Math.min(100, Math.round((cls.reg / cap) * 100)) : 0;
-    const rc = roomOverviewColor(colorRoomId, roomOrder);
     const cached = resize?.plId === p.id ? null : tabBlockMeta.get(p.id);
     const roomClashes = cached
       ? cached.roomClashes
@@ -2230,8 +2227,8 @@ export default function ClassroomScheduler() {
           width: `calc(${100 / lanes}% - 8px)`,
           boxSizing: "border-box",
           zIndex: 1,
-          background: hasRoomClash ? "#fee2e2" : hasTeacherConflict ? "#fffbeb" : rc.bg,
-          border: hasRoomClash ? "2px solid #dc2626" : hasTeacherConflict ? "2px solid #d97706" : `1px solid ${rc.border}`,
+          background: col.bg,
+          border: hasRoomClash ? "2px solid #dc2626" : hasTeacherConflict ? "2px solid #d97706" : "1px solid #d6dad4",
           boxShadow: hasRoomClash
             ? "0 0 0 3px rgba(220,38,38,.12)"
             : hasTeacherConflict
@@ -2242,7 +2239,6 @@ export default function ClassroomScheduler() {
           overflow: "hidden",
           cursor: "grab",
           opacity: isDragging ? 0.35 : 1,
-          color: rc.text,
           display: "flex",
           flexDirection: "column",
           transition: "opacity .15s, box-shadow .15s",
@@ -2802,7 +2798,9 @@ export default function ClassroomScheduler() {
                         title={`Click to change Room ${r.id}'s capacity`}
                         style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", gap: 3, cursor: "pointer" }}
                       >
-                        <RoomHeaderBadge roomId={r.id} roomOrder={roomOrder} />
+                        <span style={{ display: "inline-block", background: "#123c3a", color: "#fff", borderRadius: 6, padding: "2px 10px", fontSize: 13 }}>
+                          Room {r.id}
+                        </span>
                         <span style={{ fontSize: 11, color: "#64748b", fontWeight: 700, borderBottom: "1px dashed #b9c0bb" }}>
                           Cap {r.cap} ✎
                         </span>
@@ -2849,7 +2847,7 @@ export default function ClassroomScheduler() {
                         title="Click an empty time to add a class here — or drag a card from the Class Library"
                         style={{ flex: 1, minWidth: DAY_ROOM_MIN_W, position: "relative", height: gridH, boxSizing: "border-box", borderLeft: "1px solid #eceeea", background: "#fcfcfb" }}
                       >
-                        {colPls.map((p) => renderBlock(p, lanes.get(p.id), room.id))}
+                        {colPls.map((p) => renderBlock(p, lanes.get(p.id)))}
                         {ghost && ghost.rooms.includes(room.id) && (() => {
                           const lane = ghost.laneInfo?.[room.id] || { lane: 0, lanes: 1 };
                           const roomClash = ghost.roomConflict;
@@ -2906,7 +2904,7 @@ export default function ClassroomScheduler() {
               and click several room chips — the class then appears in every combined room's column (purple ⇆ note)
               and its capacity is the rooms' total. Drag a card back into the library to unschedule it. Red border =
               two classes overlap in one room; amber = the teacher is double-booked.
-              Card colors match room column headers; the enrollment bar shows capacity fill.{" "}
+              Green = room has space, amber = nearly full, red = at or over room capacity.{" "}
               {REMOTE_ENABLED ? "Everyone sees this same shared schedule." : "Data is saved in this browser."}
             </p>
             </>
