@@ -71,7 +71,7 @@ const WEEKDAYS = ["mon", "tue", "wed", "thu", "fri"];
 const dayIdx = (d) => ALL_DAYS.indexOf(d);
 
 const SNAP = 15;             // minutes — drag/resize granularity
-const PX_PER_MIN = 1.1;      // vertical scale of the day grid
+const PX_PER_MIN = 1.25;     // vertical scale of the day grid (matches By Class card height)
 const DEFAULT_DURATION = 90; // minutes — for new classes / library drops
 
 // Times are minutes since midnight. Display follows the school's 12-hour style.
@@ -2163,7 +2163,7 @@ export default function ClassroomScheduler() {
     if (!cls) return null;
     const end = resize?.plId === p.id ? resize.end : p.end;
     const top = (p.start - gridStart) * PX_PER_MIN;
-    const h = Math.max(14, (end - p.start) * PX_PER_MIN - 2);
+    const h = Math.max(14, (end - p.start) * PX_PER_MIN - 6);
     const { lane, lanes } = laneInfo || { lane: 0, lanes: 1 };
     const combined = p.rooms.length > 1;
     const cap = capOfRooms(p.rooms);
@@ -2245,27 +2245,25 @@ export default function ClassroomScheduler() {
         }}
       >
         <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column", gap: compact ? 1 : 2 }}>
-          <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column", gap: compact ? 1 : 2 }}>
-            <div style={{ fontWeight: 700, fontSize: compact ? 11 : 12.5, lineHeight: 1.2, overflowWrap: "anywhere", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: compact ? 1 : 2, WebkitBoxOrient: "vertical" }}>
-              {cls.name}{(hasRoomClash || hasTeacherConflict) ? " ⚠" : ""}
-            </div>
-            {h >= 32 && (
-              <div style={{ ...metaLine, color: "#475569" }}>
-                {fmtRangeAmPm(p.start, end)}
-              </div>
-            )}
-            {h >= 44 && dayLabel && (
-              <div style={{ ...metaLine, color: "#0f766e" }} title="Same class (one roster) also meets on these days">
-                also {dayLabel}
-              </div>
-            )}
+          <div style={{ fontWeight: 700, fontSize: compact ? 11 : 12.5, lineHeight: 1.2, overflowWrap: "anywhere", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: compact ? 1 : 2, WebkitBoxOrient: "vertical" }}>
+            {cls.name}{(hasRoomClash || hasTeacherConflict) ? " ⚠" : ""}
           </div>
-          {h >= 40 && (
-            <div style={{ ...metaLine, flexShrink: 0, color: "#334155", fontWeight: 600 }}>
-              {teacherLabel}
+          {h >= 32 && (
+            <div style={{ ...metaLine, color: "#475569" }}>
+              {fmtRangeAmPm(p.start, end)}
+            </div>
+          )}
+          {h >= 44 && dayLabel && (
+            <div style={{ ...metaLine, color: "#0f766e" }} title="Same class (one roster) also meets on these days">
+              also {dayLabel}
             </div>
           )}
         </div>
+        {h >= 40 && (
+          <div style={{ ...metaLine, flexShrink: 0, color: "#334155", fontWeight: 600 }}>
+            {teacherLabel}
+          </div>
+        )}
         {h >= regThreshold && (
           <div style={{ flexShrink: 0, marginTop: 2, minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: compact ? 1 : 3, minWidth: 0 }}>
@@ -2289,9 +2287,9 @@ export default function ClassroomScheduler() {
             onPointerDown={(e) => startResize(e, p)}
             onClick={(e) => e.stopPropagation()}
             title="Drag to change the end time"
-            style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 12, cursor: "ns-resize", display: "flex", alignItems: "flex-end", justifyContent: "center" }}
+            style={{ flexShrink: 0, height: 10, marginTop: 1, cursor: "ns-resize", display: "flex", alignItems: "flex-end", justifyContent: "center" }}
           >
-            <div style={{ width: 22, height: 3, borderRadius: 2, background: "rgba(15,23,42,.18)", marginBottom: 2 }} />
+            <div style={{ width: 22, height: 3, borderRadius: 2, background: "rgba(15,23,42,.18)", marginBottom: 1 }} />
           </div>
         )}
       </div>
@@ -2858,7 +2856,7 @@ export default function ClassroomScheduler() {
                               style={{
                                 position: "absolute",
                                 top: (ghost.start - gridStart) * PX_PER_MIN + 1,
-                                height: ghost.dur * PX_PER_MIN - 2,
+                                height: ghost.dur * PX_PER_MIN - 6,
                                 left: `calc(${(lane.lane / lane.lanes) * 100}% + 2px)`,
                                 width: `calc(${100 / lane.lanes}% - 5px)`,
                                 zIndex: 2, pointerEvents: "none", borderRadius: 8, boxSizing: "border-box",
