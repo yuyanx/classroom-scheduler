@@ -1869,13 +1869,12 @@ function ClassScheduleView({ catalog, placements, days, onEditClass }) {
       .filter((p) => p.classId === classId && p.day === day)
       .sort((a, b) => a.start - b.start);
 
-  // A class's earliest meeting: [time of day, day index] — null when unscheduled
-  const earliestKey = (classId) => {
+  // Earliest start time that day (minutes since midnight) — null when unscheduled
+  const earliestStart = (classId) => {
     let best = null;
     placements.forEach((p) => {
       if (p.classId !== classId) return;
-      const key = [p.start, dayIdx(p.day)];
-      if (!best || key[0] < best[0] || (key[0] === best[0] && key[1] < best[1])) best = key;
+      if (best == null || p.start < best) best = p.start;
     });
     return best;
   };
@@ -1883,11 +1882,11 @@ function ClassScheduleView({ catalog, placements, days, onEditClass }) {
   const rows = catalog
     .slice()
     .sort((a, b) => {
-      const ka = earliestKey(a.id);
-      const kb = earliestKey(b.id);
-      if (!ka !== !kb) return ka ? 1 : -1; // unscheduled first, same as the library
-      if (!ka && !kb) return a.name.localeCompare(b.name);
-      return ka[0] - kb[0] || ka[1] - kb[1] || a.name.localeCompare(b.name);
+      const sa = earliestStart(a.id);
+      const sb = earliestStart(b.id);
+      if (sa == null !== sb == null) return sa == null ? -1 : 1; // unscheduled first
+      if (sa == null) return a.name.localeCompare(b.name);
+      return sa - sb || a.name.localeCompare(b.name);
     });
 
   return (

@@ -231,8 +231,10 @@ shows class name, teacher, signed-up count, note, and **schedule summary lines**
 `Mon to Fri 9:00–10:30 AM`) derived from placements via `classScheduleLines()` — not a
 "meets N×/week" count. Day columns use the same pill style as main: time on line 1, room on line 2;
 morning placements (`start < 720`) use teal `#f0fdfa`, afternoon use gray `#f8fafc`. Unscheduled
-classes sort first (amber row). Overview tables use `width: 100%`, large `minWidth`, and horizontal
-scroll inside the white container; stacked pills use `flex flex-col gap: 4`.
+classes sort first (amber row). Rows order by each class's **earliest start time** across the week
+(morning before afternoon), then **class name** A–Z when times tie. Overview tables use `width: 100%`,
+large `minWidth`, and horizontal scroll inside the white container; stacked pills use
+`flex flex-col gap: 4`.
 
 ### Conflicts: room (red, blocking) vs teacher (amber, soft)
 
@@ -327,6 +329,8 @@ app runs exactly as the old browser-only version.
   fixed counter footer so signed-up counts and capacity bars never overflow the card at narrow
   widths; secondary lines ellipsis; combined-room label shortened to "Rm 2+3"; hide +/- steppers in
   side-by-side conflict lanes; first/last hour labels no longer clip at the grid edge.
+- 2026-06-12 — **By Class row sort**: classes order by earliest meeting time (AM before PM), then
+  name A–Z when start times match (day-of-week no longer breaks ties).
 - 2026-06-12 — **By Teacher sidebar class list**: sticky Teacher column lists each teacher's class
   names under their name instead of an "N classes" count.
 - 2026-06-12 — **overview UI polish + modals** (`ebe7c38`): By Class / By Teacher overview tabs
