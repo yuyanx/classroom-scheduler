@@ -2795,9 +2795,7 @@ export default function ClassroomScheduler() {
                         title={`Click to change Room ${r.id}'s capacity`}
                         style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", gap: 3, cursor: "pointer" }}
                       >
-                        <span style={{ display: "inline-block", background: "#123c3a", color: "#fff", borderRadius: 6, padding: "2px 10px", fontSize: 13 }}>
-                          Room {r.id}
-                        </span>
+                        <RoomHeaderBadge roomId={r.id} roomOrder={roomOrder} />
                         <span style={{ fontSize: 11, color: "#64748b", fontWeight: 700, borderBottom: "1px dashed #b9c0bb" }}>
                           Cap {r.cap} ✎
                         </span>
@@ -3332,6 +3330,28 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
   );
 }
 
+// ───────────────────────── Room header badge (palette bg + paired dark text) ─────────────────────────
+function RoomHeaderBadge({ roomId, roomOrder }) {
+  const c = roomOverviewColor(roomId, roomOrder);
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        background: c.bg,
+        color: c.text,
+        border: `1px solid ${c.border}`,
+        borderRadius: 6,
+        padding: "2px 10px",
+        fontSize: 13,
+        fontWeight: 700,
+        lineHeight: 1.25,
+      }}
+    >
+      Room {roomId}
+    </span>
+  );
+}
+
 // ───────────────────────── Room color legend (shared by overview tabs) ─────────────────────────
 function OverviewRoomLegendBar({ rooms }) {
   const roomIds = rooms.map((r) => r.id);
@@ -3707,9 +3727,7 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
             {rooms.map((r) => (
               <div key={r.id} style={{ flex: 1, minWidth: BY_CLASS_ROOM_MIN_W, boxSizing: "border-box", padding: "8px 4px 9px", textAlign: "center", borderLeft: "1px solid #eceeea" }}>
                 <div style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
-                  <span style={{ display: "inline-block", background: "#123c3a", color: "#fff", borderRadius: 6, padding: "2px 10px", fontSize: 13 }}>
-                    Room {r.id}
-                  </span>
+                  <RoomHeaderBadge roomId={r.id} roomOrder={roomOrder} />
                   <span style={{ fontSize: 11, color: "#64748b", fontWeight: 700 }}>Cap {r.cap}</span>
                 </div>
               </div>
