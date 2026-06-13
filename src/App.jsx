@@ -843,6 +843,12 @@ const LIVE_SEED_TAG = "prod-2026-06-12T21:23";
 // A class placed several times shares one roster: reg/name edits apply everywhere.
 
 const DEFAULT_HOURS = { default: [540, 1020], sat: [540, 780] };
+const DEFAULT_PROGRAM_LABEL = "2026 Summer · Jericho";
+
+const cleanProgramLabel = (s) => {
+  const t = String(s ?? "").trim();
+  return t || DEFAULT_PROGRAM_LABEL;
+};
 
 function normalizeV2(raw) {
   // Earlier v2 builds modeled combined rooms as standalone entries ({ occupies: [...] });
@@ -906,7 +912,17 @@ function normalizeV2(raw) {
   });
   const teachers = [...teacherMap.values()].sort((a, b) => a.localeCompare(b));
 
-  return { version: 2, days, hours, rooms, catalog, placements, teachers, nextId: raw.nextId || 1000 };
+  return {
+    version: 2,
+    days,
+    hours,
+    rooms,
+    catalog,
+    placements,
+    teachers,
+    programLabel: cleanProgramLabel(raw.programLabel),
+    nextId: raw.nextId || 1000,
+  };
 }
 
 // Convert the pre-library format ({ classes: [...] }) into v1 catalog + placements.
@@ -1146,6 +1162,7 @@ export default function ClassroomScheduler() {
   const [roomCapEditing, setRoomCapEditing] = useState(null); // { roomId, value, error }
   const [hoursEditing, setHoursEditing] = useState(null); // { day, start, end, error }
   const [teacherMgrOpen, setTeacherMgrOpen] = useState(false);
+  const [programLabelOpen, setProgramLabelOpen] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [drag, setDrag] = useState(null); // {type:'lib'|'pl', id, dur, grabOffset}
   const [dragOver, setDragOver] = useState(null); // "tray" | null
@@ -1746,7 +1763,8 @@ export default function ClassroomScheduler() {
     flushRemoteSave(data);
   };
 
-  const { days, hours, rooms, catalog, placements, teachers } = data;
+  const { days, hours, rooms, catalog, placements, teachers, programLabel } = data;
+  const headerProgramLine = `${programLabel || DEFAULT_PROGRAM_LABEL} · ${rooms.length} rooms · ${DAY_SHORT[days[0]]}–${DAY_SHORT[days[days.length - 1]]}`;
   const idx = useMemo(() => buildScheduleIndexes(data), [data]);
 
   // Make sure the active tab still exists (e.g. after remote data changes the day list)
@@ -2165,6 +2183,11 @@ export default function ClassroomScheduler() {
     setTeacherMgrOpen(false);
   };
 
+  const saveProgramLabel = (label) => {
+    persist((d) => ({ ...d, programLabel: cleanProgramLabel(label) }));
+    setProgramLabelOpen(false);
+  };
+
   const resettingDefaultPlan = activePlanId === 1;
 
   const resetAll = () => {
@@ -2348,9 +2371,30 @@ export default function ClassroomScheduler() {
               <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, letterSpacing: "0.02em", lineHeight: 1.2 }}>
                 Premier Plus · Classroom Scheduler
               </h1>
-              <span style={{ fontSize: 13, opacity: 0.75 }}>
-                2026 Summer · Jericho · {rooms.length} rooms · {DAY_SHORT[days[0]]}–{DAY_SHORT[days[days.length - 1]]}
-              </span>
+              {planReadOnly ? (
+                <span style={{ fontSize: 13, opacity: 0.75 }}>{headerProgramLine}</span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setProgramLabelOpen(true)}
+                  title="Edit program label (year, term, site)"
+                  style={{
+                    fontSize: 13,
+                    opacity: 0.75,
+                    color: "inherit",
+                    background: "transparent",
+                    border: "none",
+                    padding: 0,
+                    margin: 0,
+                    cursor: "pointer",
+                    textAlign: "left",
+                    fontFamily: "inherit",
+                    lineHeight: 1.35,
+                  }}
+                >
+                  {headerProgramLine}
+                </button>
+              )}
             </div>
           </div>
           <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
@@ -3024,6 +3068,15 @@ export default function ClassroomScheduler() {
       {/* Teacher manager modal */}
       {teacherMgrOpen && (
         <TeacherModal teachers={teachers || []} catalog={catalog} onSave={saveTeachers} onClose={() => setTeacherMgrOpen(false)} />
+      )}
+
+      {/* Program label (header subtitle) */}
+      {programLabelOpen && (
+        <ProgramLabelModal
+          value={programLabel || DEFAULT_PROGRAM_LABEL}
+          onSave={saveProgramLabel}
+          onClose={() => setProgramLabelOpen(false)}
+        />
       )}
 
       {/* Reset confirmation */}
@@ -4080,6 +4133,52 @@ function TeacherScheduleView({ teachers, catalog, placements, rooms, idx, onEdit
   );
 }
 
+// ───────────────────────── Header program label editor ─────────────────────────
+function ProgramLabelModal({ value, onSave, onClose }) {
+  const [label, setLabel] = useState(value);
+  const [error, setError] = useState("");
+
+  const submit = () => {
+    const trimmed = label.trim();
+    if (!trimmed) {
+      setError("Enter a label (e.g. 2026 Fall · Jericho).");
+      return;
+    }
+    onSave(trimmed);
+  };
+
+  return (
+    <Overlay onClose={onClose}>
+      <h3 style={{ marginTop: 0, color: "#123c3a" }}>Program label</h3>
+      <p style={{ fontSize: 13, color: "#64748b", margin: "0 0 14px", lineHeight: 1.45 }}>
+        Shown in the header under the title. Update each term (Summer, Fall, Spring) without changing code.
+        Room count and class days stay automatic.
+      </p>
+      <Field label="Label">
+        <input
+          style={inputStyle}
+          value={label}
+          onChange={(e) => { setLabel(e.target.value); setError(""); }}
+          placeholder="2026 Summer · Jericho"
+          onKeyDown={(e) => {
+            if (e.key === "Enter") submit();
+            if (e.key === "Escape") onClose();
+          }}
+          autoFocus
+        />
+      </Field>
+      {error && <div style={{ ...roomConflictStyle, marginTop: 8 }}>{error}</div>}
+      <p style={{ fontSize: 11, color: "#94a3b8", margin: "10px 0 0" }}>
+        Examples: 2026 Fall · Jericho · 2027 Spring · Jericho
+      </p>
+      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 18 }}>
+        <button style={btnSecondary} onClick={onClose}>Cancel</button>
+        <button style={btnPrimary} onClick={submit}>Save label</button>
+      </div>
+    </Overlay>
+  );
+}
+
 // ───────────────────────── Per-day scheduling hours editor ─────────────────────────
 function HoursModal({ day, start, end, error, onChange, onSave, onClose }) {
   const timeInputStyle = { ...inputStyle, fontSize: 18, fontWeight: 700, color: "#123c3a" };
@@ -4493,4 +4592,6 @@ export {
   LIVE_V1_SEED,
   LIVE_SEED_TAG,
   defaultData,
+  DEFAULT_PROGRAM_LABEL,
+  cleanProgramLabel,
 };

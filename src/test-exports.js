@@ -35,4 +35,6 @@ export {
   PRODUCTION_HOST,
   LIVE_V1_SEED,
   LIVE_SEED_TAG,
+  DEFAULT_PROGRAM_LABEL,
+  cleanProgramLabel,
 } from "./App.jsx";

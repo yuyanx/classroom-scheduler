@@ -7,6 +7,8 @@ import {
   normalizeV2,
   parseTimeRange,
   LIVE_V1_SEED,
+  DEFAULT_PROGRAM_LABEL,
+  cleanProgramLabel,
 } from "../dist/test-logic.mjs";
 
 const tinyV1 = {
@@ -113,4 +115,34 @@ test("parseTimeRange returns null when end <= start", () => {
 test("LIVE_V1_SEED upgraded has more placements than catalog", () => {
   const v2 = upgrade(JSON.parse(JSON.stringify(LIVE_V1_SEED)));
   assert.ok(v2.placements.length > v2.catalog.length);
+});
+
+test("normalizeV2 defaults programLabel", () => {
+  const v2 = normalizeV2({
+    version: 2,
+    days: ["mon"],
+    hours: { default: [540, 1020] },
+    rooms: [{ id: "1", cap: 12 }],
+    catalog: [],
+    placements: [],
+  });
+  assert.equal(v2.programLabel, DEFAULT_PROGRAM_LABEL);
+});
+
+test("normalizeV2 preserves custom programLabel", () => {
+  const v2 = normalizeV2({
+    version: 2,
+    days: ["mon"],
+    hours: { default: [540, 1020] },
+    rooms: [{ id: "1", cap: 12 }],
+    catalog: [],
+    placements: [],
+    programLabel: "  2026 Fall · Jericho  ",
+  });
+  assert.equal(v2.programLabel, "2026 Fall · Jericho");
+});
+
+test("cleanProgramLabel falls back when blank", () => {
+  assert.equal(cleanProgramLabel(""), DEFAULT_PROGRAM_LABEL);
+  assert.equal(cleanProgramLabel("  2027 Spring · Jericho "), "2027 Spring · Jericho");
 });
