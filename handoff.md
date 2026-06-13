@@ -1,5 +1,7 @@
 # Handoff — Classroom Scheduler
 
+> **For AI agents**: Also read [AGENTS.md](./AGENTS.md) (concise, structured rules for Claude Code, Cursor, Codex, etc.). It points back here for deep context.
+
 ## What this is
 
 **Premier Plus · Classroom Scheduler** — an interactive scheduling board for the 2026 Summer program at Jericho. Staff define classes in a **Class Library**, then schedule them onto a weekly grid (rooms × time slots) either by drag-and-drop or by editing meeting times in the class dialog. Class signed-up counts, rooms, room capacities, and time slots are all editable in place.
@@ -174,11 +176,21 @@ via `slotPeriod(sectionId, label)` (`9-10:30am`, `2-3:30pm`) plus room, and morn
 case-insensitively via `teacherKey()`. The class dialog's Teacher field is a dropdown over the roster
 plus "(Teacher TBD)" and "＋ Add new teacher…" (prompt; the name joins the roster when the class is
 saved). The **👤 By Teacher** tab (`tab === "byTeacher"`, not a real section) replaces the grid with a
-teachers × days table — each cell lists that teacher's classes with time + room, amber ⚠ when one
-teacher has two classes in the same slot, click-to-edit. Its "Manage teachers" button opens
-`TeacherModal`: rename cascades to all classes (matched via `teacherKey`), removal sets classes to
-TBD, a "(Teacher TBD)" row in the view collects unassigned classes. When `tab === "byTeacher"` the
-class dialog's `defaultSection` falls back to `"morning"`.
+teachers × days table. Each cell contains one or more rounded pill cards (one per class the teacher
+teaches in that day/period group), using the same visual treatment as By Class: full `slotPeriod`
+labels (e.g. "10:30am-12pm", "2-3:30pm"), "MF·" prefix for morning (to save space while the column
+header already says "Daily"), teal background for morning, light gray for PM, amber + ⚠ for
+double-bookings (same teacher in two rooms at once). All class pills use a consistent `minHeight`
+so every "方块" (class block) has the same dimensions; when a teacher has multiple slots on one day
+the pills stack neatly with small gaps inside the cell (clean vertical list of identical cards).
+Click any card to edit the class. "Manage teachers" button and TBD row behavior unchanged. When
+`tab === "byTeacher"` the class dialog's `defaultSection` falls back to `"morning"`.
+
+The overview tables (both By Class and By Teacher) were hardened against window resize: base column
+width increased, scroll containers explicitly `width:100%`, and pills have robust `overflow:hidden +
+text-overflow:ellipsis` (long names gracefully truncate instead of bleeding into neighboring cells
+or causing layout overlap). A wider gap between the collapsible Class Library rail and the main
+content area also improves separation on narrow viewports.
 
 ### Conflicts: room (red, blocking) vs teacher (amber, soft)
 
@@ -224,6 +236,7 @@ app runs exactly as the old browser-only version.
 
 ## Change log
 
+- 2026-06-12 (branch `improve-by-grok`, pushed; consider merging or PR to main) — **By Teacher view UI alignment + resize robustness + uniform blocks**: aligned the By Teacher day cells with the existing By Class pill design (full period times via `slotPeriod`, "MF·" short prefix for morning, rounded bordered cards with proper morning/PM colors and amber clash styling); fixed browser window resize problems (text overflow into adjacent cells, rightmost columns clipped/cut off at the container edge, cramped layouts) by increasing the base column width for overview tables, adding `width:"100%"` to the `overflowX:auto` wrappers so `minWidth` is honored reliably, and giving variable-content lines `overflow:hidden + textOverflow:ellipsis + width:"100%"`; made every class "方块" (pill card) the same size with `minHeight:42` on all pills + a flex column + gap wrapper for any stacked meetings inside a cell (much more uniform, grid-like, and tidy appearance even when teachers have 2+ slots on one day); removed per-pill margins in favor of container gap; widened the flex gap between the Class Library rail and main content; added `.DS_Store` to `.gitignore`; `app.js` rebuilt after every src change and committed together. See the branch diff for the exact pill rendering and table style updates in `src/App.jsx`.
 - `f120258` — initial commit: grid-only scheduler (flat `classes` array).
 - `3cefdd3` — **Class Library**: data model split into `catalog` + `placements`; library tray
   with search/duplicate/delete; drag lib→grid to schedule, grid→lib to unschedule; linked

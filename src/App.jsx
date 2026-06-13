@@ -758,7 +758,7 @@ export default function ClassroomScheduler() {
         </div>
       )}
 
-      <div style={{ width: "100%", boxSizing: "border-box", padding: "16px 12px 40px", display: "flex", gap: 12, alignItems: "flex-start" }}>
+      <div style={{ width: "100%", boxSizing: "border-box", padding: "16px 12px 40px", display: "flex", gap: 16, alignItems: "flex-start" }}>
         {/* Class Library */}
         <aside style={{ flex: `0 0 ${libOpen ? 240 : 46}px`, width: libOpen ? 240 : 46, position: "sticky", top: 16, alignSelf: "flex-start" }}>
           {!libOpen && (
@@ -904,7 +904,7 @@ export default function ClassroomScheduler() {
 
         <div style={{ flex: 1, minWidth: 0 }}>
           {/* Tabs */}
-          <nav style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <nav style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 4 }}>
             {SECTIONS.map((s) => (
               <button
                 key={s.id}
@@ -943,7 +943,7 @@ export default function ClassroomScheduler() {
                 {v.label}
               </button>
             ))}
-            <span style={{ marginLeft: "auto", alignSelf: "center", fontSize: 13, color: "#64748b" }}>
+            <span style={{ marginLeft: "auto", alignSelf: "center", fontSize: 12, color: "#64748b", whiteSpace: "nowrap" }}>
               {tab === "byTeacher"
                 ? `${(teachers || []).length} teachers · ${noTeacherCount} classes need a teacher`
                 : tab === "byClass"
@@ -972,7 +972,7 @@ export default function ClassroomScheduler() {
               />
             ) : (
             <>
-            <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto" }}>
+            <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto", width: "100%" }}>
           <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 96 + curRooms.length * 112, tableLayout: "fixed" }}>
             <thead>
               <tr>
@@ -1438,11 +1438,11 @@ function ClassScheduleView({ catalog, placements, slots, onEditClass }) {
 
   return (
     <>
-      <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto" }}>
-        <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 210 + SECTIONS.length * 130, tableLayout: "fixed" }}>
+      <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto", width: "100%" }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 220 + SECTIONS.length * 155, tableLayout: "fixed" }}>
           <thead>
             <tr>
-              <th style={{ ...thStyle, width: 210, position: "sticky", left: 0, background: "#fafaf8", zIndex: 2 }}>Class</th>
+              <th style={{ ...thStyle, width: 220, position: "sticky", left: 0, background: "#fafaf8", zIndex: 2 }}>Class</th>
               {SECTIONS.map((s) => (
                 <th key={s.id} style={thStyle}>{s.label}</th>
               ))}
@@ -1482,24 +1482,28 @@ function ClassScheduleView({ catalog, placements, slots, onEditClass }) {
                         {list.length === 0 ? (
                           <span style={{ color: "#cbd5d1", fontSize: 12 }}>—</span>
                         ) : (
-                          list.map((p) => (
-                            <div
-                              key={p.id}
-                              style={{
-                                display: "inline-flex", flexDirection: "column", gap: 2, maxWidth: "100%",
-                                padding: "4px 7px", borderRadius: 6, border: "1px solid #d6dad4",
-                                background: p.section === "morning" ? "#f0fdfa" : "#f8fafc",
-                                color: "#334155", lineHeight: 1.25,
-                              }}
-                            >
-                              <span style={{ fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
-                                {slotPeriod(p.section, (slots[p.section] || [])[p.slotIdx])}
-                              </span>
-                              <span style={{ fontSize: 11, color: "#64748b", whiteSpace: "nowrap" }}>
-                                {p.section === "morning" ? "Mon-Fri · " : ""}Rm {p.room}
-                              </span>
-                            </div>
-                          ))
+                          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                            {list.map((p) => (
+                              <div
+                                key={p.id}
+                                style={{
+                                  display: "inline-flex", flexDirection: "column", gap: 2, maxWidth: "100%",
+                                  padding: "4px 7px", borderRadius: 6, border: "1px solid #d6dad4",
+                                  background: p.section === "morning" ? "#f0fdfa" : "#f8fafc",
+                                  color: "#334155", lineHeight: 1.25,
+                                  overflow: "hidden",
+                                  minHeight: 42,
+                                }}
+                              >
+                                <span style={{ fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
+                                  {slotPeriod(p.section, (slots[p.section] || [])[p.slotIdx])}
+                                </span>
+                                <span style={{ fontSize: 11, color: "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%" }}>
+                                  {p.section === "morning" ? "MF·" : ""}Rm {p.room}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
                         )}
                       </td>
                     );
@@ -1547,24 +1551,39 @@ function TeacherScheduleView({ teachers, catalog, placements, slots, onEditClass
         {list.length === 0 ? (
           <span style={{ color: "#cbd5d1", fontSize: 12 }}>—</span>
         ) : (
-          list.map(({ p, cls }) => {
-            const clash = bySlot[p.slotIdx] > 1;
-            return (
-              <div
-                key={p.id}
-                onClick={() => onEditClass(cls.id)}
-                title={clash ? "Two classes at the same time — click to edit" : "Click to edit this class"}
-                style={{
-                  fontSize: 12, lineHeight: 1.3, cursor: "pointer", padding: "2px 4px", borderRadius: 4,
-                  background: clash ? "#fffbeb" : "transparent",
-                  color: clash ? "#b45309" : "#334155",
-                  fontWeight: clash ? 700 : 400,
-                }}
-              >
-                {slotShort((slots[p.section] || [])[p.slotIdx])} {cls.name} · Rm {p.room}{clash ? " ⚠" : ""}
-              </div>
-            );
-          })
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {list.map(({ p, cls }) => {
+              const clash = bySlot[p.slotIdx] > 1;
+              const slotLabel = (slots[p.section] || [])[p.slotIdx];
+              const timeStr = slotPeriod(p.section, slotLabel);
+              const isMorning = p.section === "morning";
+              return (
+                <div
+                  key={p.id}
+                  onClick={() => onEditClass(cls.id)}
+                  title={clash ? "Two classes at the same time — click to edit" : "Click to edit this class"}
+                  style={{
+                    display: "inline-flex", flexDirection: "column", gap: 2, maxWidth: "100%",
+                    padding: "4px 7px", borderRadius: 6,
+                    border: clash ? "1px solid #fde68a" : "1px solid #d6dad4",
+                    background: clash ? "#fffbeb" : (isMorning ? "#f0fdfa" : "#f8fafc"),
+                    color: clash ? "#b45309" : "#334155",
+                    lineHeight: 1.25,
+                    cursor: "pointer",
+                    overflow: "hidden",
+                    minHeight: 42,
+                  }}
+                >
+                  <span style={{ fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
+                    {timeStr}
+                  </span>
+                  <span style={{ fontSize: 11, color: clash ? "#b45309" : "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%" }}>
+                    {cls.name} {isMorning ? "MF·" : ""}Rm {p.room}{clash ? " ⚠" : ""}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
         )}
       </td>
     );
@@ -1582,11 +1601,11 @@ function TeacherScheduleView({ teachers, catalog, placements, slots, onEditClass
 
   return (
     <>
-      <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto" }}>
-        <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 130 + SECTIONS.length * 130, tableLayout: "fixed" }}>
+      <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto", width: "100%" }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 180 + SECTIONS.length * 155, tableLayout: "fixed" }}>
           <thead>
             <tr>
-              <th style={{ ...thStyle, width: 130, position: "sticky", left: 0, background: "#fafaf8", zIndex: 2 }}>Teacher</th>
+              <th style={{ ...thStyle, width: 180, position: "sticky", left: 0, background: "#fafaf8", zIndex: 2 }}>Teacher</th>
               {SECTIONS.map((s) => (
                 <th key={s.id} style={thStyle}>{s.label}</th>
               ))}
@@ -1611,10 +1630,10 @@ function TeacherScheduleView({ teachers, catalog, placements, slots, onEditClass
         </div>
       </div>
       <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
-        👤 Each row is one teacher's week (Morning = every day). Click any class to edit it.
-        <span style={{ color: "#b45309", fontWeight: 700 }}> Amber ⚠ </span>
-        marks two classes at the same time. <b>Manage teachers</b> renames or removes teachers —
-        renames apply to all their classes; removing a teacher sets their classes to TBD.
+        👤 One row per teacher — classes they teach across the week (Morning = every day). Click any class card to edit.
+        <span style={{ color: "#b45309", fontWeight: 700 }}> Amber </span>
+        cards mark double-booked slots (same teacher in two rooms at once).
+        <b> Manage teachers</b> renames (cascades to classes) or removes teachers (sets their classes to TBD).
       </p>
     </>
   );
