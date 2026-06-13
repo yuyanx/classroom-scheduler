@@ -76,6 +76,14 @@ After rebuilding, commit `app.js` along with your `src/` changes so Vercel serve
 **Every commit must update this file** — add a changelog entry (and adjust architecture sections when
 behavior or UI changes). Keep `handoff.md` in sync with the code you ship.
 
+### Performance (feature branch)
+
+Hot paths use precomputed indexes (`buildScheduleIndexes`: catalog/placements by id,
+day, and day+room), memoized tab grid layout and conflict metadata (`computeTabBlockMeta`),
+`requestAnimationFrame` throttling for drag ghosts and resize previews, debounced
+`localStorage` writes (200 ms, flushed on tab close), and poll skips `setData` when the
+upgraded remote payload is unchanged.
+
 ### Localhost dev seed (production snapshot)
 
 `LIVE_V1_SEED` in `App.jsx` is a frozen copy of the **live** Supabase schedule (v1 shape from
@@ -339,6 +347,8 @@ app runs exactly as the old browser-only version.
   fixed counter footer so signed-up counts and capacity bars never overflow the card at narrow
   widths; secondary lines ellipsis; combined-room label shortened to "Rm 2+3"; hide +/- steppers in
   side-by-side conflict lanes; first/last hour labels no longer clip at the grid edge.
+- 2026-06-12 — **performance indexes + drag throttle**: schedule Maps/memos, rAF ghost/resize
+  previews, debounced local saves, skip redundant remote poll updates.
 - 2026-06-12 — **production snapshot seed**: `LIVE_V1_SEED` from live Supabase (classes, teachers,
   placements, room caps as of 2026-06-12); localhost auto-imports via `LIVE_SEED_TAG`; Reset Data
   uses the same snapshot (migrated to v2 on load).

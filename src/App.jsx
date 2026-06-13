@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef } from "react";
+import React, { useState, useCallback, useEffect, useRef, useMemo } from "react";
 
 // ───────────────────────── Week / time constants ─────────────────────────
 const ALL_DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
@@ -1032,6 +1032,80 @@ const saveData = (data) => {
 // ───────────────────────── Interval helpers ─────────────────────────
 const overlaps = (a, b) => a.day === b.day && a.start < b.end && b.start < a.end;
 
+// Fast lookups — rebuilt when `data` changes (see useMemo in ClassroomScheduler).
+function buildScheduleIndexes(data) {
+  const catalogById = new Map();
+  (data.catalog || []).forEach((k) => catalogById.set(k.id, k));
+
+  const placementsByClassId = new Map();
+  const placementsByDay = new Map();
+  const placementsByDayRoom = new Map(); // key: `${day}\0${roomId}`
+  (data.placements || []).forEach((p) => {
+    if (!placementsByClassId.has(p.classId)) placementsByClassId.set(p.classId, []);
+    placementsByClassId.get(p.classId).push(p);
+    if (!placementsByDay.has(p.day)) placementsByDay.set(p.day, []);
+    placementsByDay.get(p.day).push(p);
+    p.rooms.forEach((rid) => {
+      const key = `${p.day}\0${rid}`;
+      if (!placementsByDayRoom.has(key)) placementsByDayRoom.set(key, []);
+      placementsByDayRoom.get(key).push(p);
+    });
+  });
+
+  const roomCapById = new Map((data.rooms || []).map((r) => [r.id, r.cap]));
+  const roomPos = new Map((data.rooms || []).map((r, i) => [r.id, i]));
+  const scheduledClassIds = new Set((data.placements || []).map((p) => p.classId));
+  return { catalogById, placementsByClassId, placementsByDay, placementsByDayRoom, roomCapById, roomPos, scheduledClassIds };
+}
+
+function roomConflictsIndexed(idx, cand, opts = {}) {
+  const seen = new Set();
+  const hits = [];
+  cand.rooms.forEach((rid) => {
+    (idx.placementsByDayRoom.get(`${cand.day}\0${rid}`) || []).forEach((p) => {
+      if (seen.has(p.id)) return;
+      if (p.id === opts.excludeId) return;
+      if (opts.excludeClassId != null && p.classId === opts.excludeClassId) return;
+      if (overlaps(p, cand)) {
+        seen.add(p.id);
+        hits.push(p);
+      }
+    });
+  });
+  return hits;
+}
+
+function teacherBusyIndexed(idx, cand, teacher, opts = {}) {
+  const key = teacherKey(teacher);
+  if (!key) return [];
+  return (idx.placementsByDay.get(cand.day) || [])
+    .filter((p) => p.id !== opts.excludePlacementId && p.classId !== opts.excludeClassId && overlaps(p, cand))
+    .map((p) => ({ placement: p, cls: idx.catalogById.get(p.classId) }))
+    .filter(({ cls }) => teacherKey(cls?.teacher) === key);
+}
+
+function computeTabBlockMeta(idx, day) {
+  const meta = new Map();
+  const dayPls = idx.placementsByDay.get(day) || [];
+  dayPls.forEach((p) => {
+    const cls = idx.catalogById.get(p.classId);
+    const cand = { day: p.day, start: p.start, end: p.end, rooms: p.rooms };
+    const roomClashes = roomConflictsIndexed(idx, cand, { excludeId: p.id });
+    const teacherItems = teacherBusyIndexed(idx, p, cls?.teacher, { excludePlacementId: p.id });
+    const otherDays = [...new Set((idx.placementsByClassId.get(p.classId) || []).filter((x) => x.id !== p.id).map((x) => DAY_SHORT[x.day]))];
+    meta.set(p.id, {
+      roomClashes,
+      teacherLabels: [...new Set(teacherItems.map(({ placement, cls }) =>
+        `${cls?.name || "Class"} (${DAY_SHORT[placement.day]} ${fmtRange(placement.start, placement.end)} · Rm ${placement.rooms.join("+")})`
+      ))],
+      otherDays,
+    });
+  });
+  return meta;
+}
+
+const dataSignature = (d) => JSON.stringify(d);
+
 // Overlapping placements in one room share the column side by side (calendar-style lanes)
 function layoutLanes(list) {
   const sorted = [...list].sort((a, b) => a.start - b.start || a.end - b.end);
@@ -1080,7 +1154,12 @@ export default function ClassroomScheduler() {
   const [dragOver, setDragOver] = useState(null); // "tray" | null
   const [ghost, setGhost] = useState(null); // {room, start, dur, names: []}
   const ghostRef = useRef(null);
+  const ghostPendingRef = useRef(null);
+  const ghostRafRef = useRef(0);
   const [resize, setResize] = useState(null); // {plId, end}
+  const resizeRafRef = useRef(0);
+  const resizePendingRef = useRef(null);
+  const localSaveTimer = useRef(null);
   const [flash, setFlash] = useState(null);
   const flashTimer = useRef(null);
   const [libOpen, setLibOpenState] = useState(() => {
@@ -1097,6 +1176,40 @@ export default function ClassroomScheduler() {
   const remoteRef = useRef({ timer: null, retryTimer: null, lastSyncedAt: null, pendingSave: false, lastSaveFailed: false });
   const dataRef = useRef(data);
   dataRef.current = data; // latest data for retries and the tab-close flush
+
+  const scheduleGhost = useCallback((next) => {
+    ghostPendingRef.current = next;
+    if (ghostRafRef.current) return;
+    ghostRafRef.current = requestAnimationFrame(() => {
+      ghostRafRef.current = 0;
+      setGhost(ghostPendingRef.current);
+      ghostPendingRef.current = null;
+    });
+  }, []);
+
+  const scheduleResizePreview = useCallback((plId, end) => {
+    resizePendingRef.current = { plId, end };
+    if (resizeRafRef.current) return;
+    resizeRafRef.current = requestAnimationFrame(() => {
+      resizeRafRef.current = 0;
+      const r = resizePendingRef.current;
+      if (r) setResize(r);
+    });
+  }, []);
+
+  const flushLocalSave = useCallback((payload) => {
+    clearTimeout(localSaveTimer.current);
+    localSaveTimer.current = null;
+    return saveData(payload);
+  }, []);
+
+  const queueLocalSave = useCallback((payload) => {
+    clearTimeout(localSaveTimer.current);
+    localSaveTimer.current = setTimeout(() => {
+      localSaveTimer.current = null;
+      updateSaveStatus(saveData(payload));
+    }, 200);
+  }, [updateSaveStatus]);
 
   const timeLabel = () => new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
@@ -1136,16 +1249,17 @@ export default function ClassroomScheduler() {
 
   const persist = useCallback((next) => {
     setData(next);
+    dataRef.current = next;
     if (!REMOTE_ENABLED) {
-      updateSaveStatus(saveData(next));
+      queueLocalSave(next);
       return;
     }
-    saveData(next); // keep a local cache as offline fallback
+    queueLocalSave(next); // debounced local cache as offline fallback
     setSaveStatus((s) => ({ ...s, ok: true, error: "", label: "Saving…" }));
     remoteRef.current.pendingSave = true;
     clearTimeout(remoteRef.current.timer);
     remoteRef.current.timer = setTimeout(() => flushRemoteSave(next), 600);
-  }, [updateSaveStatus]);
+  }, [queueLocalSave]);
 
   useEffect(() => {
     if (!REMOTE_ENABLED) {
@@ -1160,7 +1274,10 @@ export default function ClassroomScheduler() {
         if (cancelled) return;
         if (row) {
           remoteRef.current.lastSyncedAt = row.updated_at;
-          setData(upgrade(row.data));
+          const next = upgrade(row.data);
+          dataRef.current = next;
+          setData(next);
+          flushLocalSave(next);
           setStatus(true, `Shared schedule loaded at ${timeLabel()}`);
         } else {
           // First run ever: publish this browser's copy as the shared schedule
@@ -1178,9 +1295,16 @@ export default function ClassroomScheduler() {
         if (ts && remoteRef.current.lastSyncedAt && ts > remoteRef.current.lastSyncedAt) {
           const row = await remoteLoad();
           if (row && !remoteRef.current.pendingSave) {
-            remoteRef.current.lastSyncedAt = row.updated_at;
-            setData(upgrade(row.data));
-            setStatus(true, `Updated from another computer at ${timeLabel()}`);
+            const next = upgrade(row.data);
+            if (dataSignature(next) !== dataSignature(dataRef.current)) {
+              remoteRef.current.lastSyncedAt = row.updated_at;
+              dataRef.current = next;
+              setData(next);
+              flushLocalSave(next);
+              setStatus(true, `Updated from another computer at ${timeLabel()}`);
+            } else {
+              remoteRef.current.lastSyncedAt = row.updated_at;
+            }
           }
         }
       } catch (e) { /* ignore transient poll errors */ }
@@ -1192,6 +1316,9 @@ export default function ClassroomScheduler() {
     window.addEventListener("online", onOnline);
     // Flush a still-debouncing save when the tab closes, so the last edit isn't lost
     const onPageHide = () => {
+      clearTimeout(localSaveTimer.current);
+      localSaveTimer.current = null;
+      saveData(dataRef.current);
       if (remoteRef.current.timer) {
         clearTimeout(remoteRef.current.timer);
         remoteRef.current.timer = null;
@@ -1209,15 +1336,19 @@ export default function ClassroomScheduler() {
   }, []);
 
   const saveNow = () => {
+    clearTimeout(localSaveTimer.current);
+    localSaveTimer.current = null;
     if (!REMOTE_ENABLED) {
-      updateSaveStatus(saveData(data));
+      updateSaveStatus(flushLocalSave(data));
       return;
     }
+    flushLocalSave(data);
     clearTimeout(remoteRef.current.timer);
     flushRemoteSave(data);
   };
 
   const { days, hours, rooms, catalog, placements, teachers } = data;
+  const idx = useMemo(() => buildScheduleIndexes(data), [data]);
 
   // Make sure the active tab still exists (e.g. after remote data changes the day list)
   useEffect(() => {
@@ -1225,33 +1356,18 @@ export default function ClassroomScheduler() {
   }, [days, tab]);
 
   // ── Rooms: a placement may span several rooms (combined classroom) ──
-  const roomPos = new Map(rooms.map((r, i) => [r.id, i]));
-  const sortRoomIds = (list) => [...list].sort((a, b) => (roomPos.get(a) ?? 99) - (roomPos.get(b) ?? 99));
+  const sortRoomIds = (list) => [...list].sort((a, b) => (idx.roomPos.get(a) ?? 99) - (idx.roomPos.get(b) ?? 99));
   const roomsLabel = (list) => sortRoomIds(list).join("+");
   const shareRoom = (a, b) => a.some((x) => b.includes(x));
-  const roomCap = (id) => rooms.find((r) => r.id === id)?.cap ?? 12;
+  const roomCap = (id) => idx.roomCapById.get(id) ?? 12;
   const capOfRooms = (list) => list.reduce((s, id) => s + roomCap(id), 0);
 
-  const classOfId = (id) => catalog.find((k) => k.id === id);
-  const placementsOf = (classId) => placements.filter((p) => p.classId === classId);
+  const classOfId = (id) => idx.catalogById.get(id);
+  const placementsOf = (classId) => idx.placementsByClassId.get(classId) || [];
 
-  const roomConflictsFor = (cand, opts = {}) =>
-    placements.filter(
-      (p) =>
-        p.id !== opts.excludeId &&
-        (opts.excludeClassId == null || p.classId !== opts.excludeClassId) &&
-        overlaps(p, cand) &&
-        shareRoom(p.rooms, cand.rooms)
-    );
+  const roomConflictsFor = (cand, opts = {}) => roomConflictsIndexed(idx, cand, opts);
 
-  const teacherBusy = (cand, teacher, opts = {}) => {
-    const key = teacherKey(teacher);
-    if (!key) return [];
-    return placements
-      .filter((p) => p.id !== opts.excludePlacementId && p.classId !== opts.excludeClassId && overlaps(p, cand))
-      .map((p) => ({ placement: p, cls: classOfId(p.classId) }))
-      .filter(({ cls }) => teacherKey(cls?.teacher) === key);
-  };
+  const teacherBusy = (cand, teacher, opts = {}) => teacherBusyIndexed(idx, cand, teacher, opts);
   const teacherConflictsForPlacement = (pl) => {
     const cls = classOfId(pl.classId);
     return teacherBusy(pl, cls?.teacher, { excludePlacementId: pl.id });
@@ -1261,22 +1377,49 @@ export default function ClassroomScheduler() {
       `${cls?.name || "Class"} (${DAY_SHORT[placement.day]} ${fmtRange(placement.start, placement.end)} · Rm ${placement.rooms.join("+")})`
     ))];
 
-  const totalReg = catalog.reduce((s, k) => s + (k.reg || 0), 0);
-  const noTeacherCount = catalog.filter((k) => !teacherKey(k.teacher)).length;
+  const totalReg = useMemo(() => catalog.reduce((s, k) => s + (k.reg || 0), 0), [catalog]);
+  const noTeacherCount = useMemo(() => catalog.filter((k) => !teacherKey(k.teacher)).length, [catalog]);
 
   // ── Day-grid geometry for the active tab ──
   const isDayTab = days.includes(tab);
   const winCfg = (isDayTab && hours[tab]) || hours.default;
-  const tabPls = isDayTab ? placements.filter((p) => p.day === tab) : [];
-  const tabReg = tabPls.reduce((s, p) => s + ((classOfId(p.classId) || {}).reg || 0), 0);
-  // The grid always shows the configured window, stretched to fit any placement outside it
-  const gridStart = Math.floor(Math.min(winCfg[0], ...tabPls.map((p) => p.start)) / 60) * 60;
-  const gridEnd = Math.ceil(Math.max(winCfg[1], ...tabPls.map((p) => p.end)) / 60) * 60;
-  const gridH = (gridEnd - gridStart) * PX_PER_MIN;
-  const hourMarks = [];
-  for (let t = gridStart; t <= gridEnd; t += 60) hourMarks.push(t);
-  const halfMarks = [];
-  for (let t = gridStart + 30; t < gridEnd; t += 60) halfMarks.push(t);
+  const tabPls = useMemo(
+    () => (isDayTab ? (idx.placementsByDay.get(tab) || []) : []),
+    [idx, isDayTab, tab]
+  );
+  const tabReg = useMemo(
+    () => tabPls.reduce((s, p) => s + ((classOfId(p.classId) || {}).reg || 0), 0),
+    [tabPls, idx]
+  );
+  const tabBlockMeta = useMemo(
+    () => (isDayTab ? computeTabBlockMeta(idx, tab) : new Map()),
+    [idx, isDayTab, tab]
+  );
+  const tabGridLayout = useMemo(() => {
+    if (!isDayTab) return null;
+    const starts = tabPls.map((p) => p.start);
+    const ends = tabPls.map((p) => p.end);
+    const gridStart = Math.floor(Math.min(winCfg[0], ...(starts.length ? starts : [winCfg[0]])) / 60) * 60;
+    const gridEnd = Math.ceil(Math.max(winCfg[1], ...(ends.length ? ends : [winCfg[1]])) / 60) * 60;
+    const gridH = (gridEnd - gridStart) * PX_PER_MIN;
+    const hourMarks = [];
+    for (let t = gridStart; t <= gridEnd; t += 60) hourMarks.push(t);
+    const halfMarks = [];
+    for (let t = gridStart + 30; t < gridEnd; t += 60) halfMarks.push(t);
+    const colByRoom = new Map();
+    const lanesByRoom = new Map();
+    rooms.forEach((r) => {
+      const colPls = tabPls.filter((p) => p.rooms.includes(r.id));
+      colByRoom.set(r.id, colPls);
+      lanesByRoom.set(r.id, layoutLanes(colPls));
+    });
+    return { gridStart, gridEnd, gridH, hourMarks, halfMarks, colByRoom, lanesByRoom };
+  }, [isDayTab, tabPls, winCfg, rooms]);
+  const gridStart = tabGridLayout?.gridStart ?? 0;
+  const gridEnd = tabGridLayout?.gridEnd ?? 0;
+  const gridH = tabGridLayout?.gridH ?? 0;
+  const hourMarks = tabGridLayout?.hourMarks ?? [];
+  const halfMarks = tabGridLayout?.halfMarks ?? [];
 
   // Chips like "Mon 2:00" for everywhere a class is scheduled
   const placementChips = (classId) =>
@@ -1344,7 +1487,7 @@ export default function ClassroomScheduler() {
       ghostRef.current = key;
       const cand = { day: tab, start, end: start + drag.dur, rooms: candRooms };
       const clashes = roomConflictsFor(cand, { excludeId: drag.type === "pl" ? drag.id : undefined });
-      setGhost({
+      scheduleGhost({
         rooms: candRooms, start, dur: drag.dur,
         names: [...new Set(clashes.map((c) => classOfId(c.classId)?.name || "another class"))],
       });
@@ -1422,7 +1565,7 @@ export default function ClassroomScheduler() {
       end = Math.max(p.start + SNAP, Math.min(end, limit));
       if (end !== cur) {
         cur = end;
-        setResize({ plId: p.id, end });
+        scheduleResizePreview(p.id, end);
       }
     };
     const up = () => {
@@ -1563,15 +1706,21 @@ export default function ClassroomScheduler() {
 
   // ── Library list (filtered, unscheduled first) ──
   const q = libQuery.trim().toLowerCase();
-  const libList = catalog
-    .filter((k) => !q || k.name.toLowerCase().includes(q) || (k.teacher || "").toLowerCase().includes(q))
-    .sort((a, b) => {
-      const ap = placements.some((p) => p.classId === a.id);
-      const bp = placements.some((p) => p.classId === b.id);
-      if (ap !== bp) return ap ? 1 : -1;
-      return a.name.localeCompare(b.name);
-    });
-  const unscheduledCount = catalog.filter((k) => !placements.some((p) => p.classId === k.id)).length;
+  const libList = useMemo(() =>
+    catalog
+      .filter((k) => !q || k.name.toLowerCase().includes(q) || (k.teacher || "").toLowerCase().includes(q))
+      .sort((a, b) => {
+        const ap = idx.scheduledClassIds.has(a.id);
+        const bp = idx.scheduledClassIds.has(b.id);
+        if (ap !== bp) return ap ? 1 : -1;
+        return a.name.localeCompare(b.name);
+      }),
+    [catalog, q, idx.scheduledClassIds]
+  );
+  const unscheduledCount = useMemo(
+    () => catalog.filter((k) => !idx.scheduledClassIds.has(k.id)).length,
+    [catalog, idx.scheduledClassIds]
+  );
 
   // ── One scheduled card on the day grid ──
   const renderBlock = (p, laneInfo) => {
@@ -1585,11 +1734,18 @@ export default function ClassroomScheduler() {
     const cap = capOfRooms(p.rooms);
     const col = ratioColor(cls.reg, cap);
     const pct = cap ? Math.min(100, Math.round((cls.reg / cap) * 100)) : 0;
-    const roomClashes = roomConflictsFor({ day: p.day, start: p.start, end, rooms: p.rooms }, { excludeId: p.id });
-    const teacherConflicts = teacherConflictLabels(teacherConflictsForPlacement(p));
+    const cached = resize?.plId === p.id ? null : tabBlockMeta.get(p.id);
+    const roomClashes = cached
+      ? cached.roomClashes
+      : roomConflictsFor({ day: p.day, start: p.start, end, rooms: p.rooms }, { excludeId: p.id });
+    const teacherConflicts = cached
+      ? cached.teacherLabels
+      : teacherConflictLabels(teacherConflictsForPlacement({ ...p, end }));
     const hasRoomClash = roomClashes.length > 0;
     const hasTeacherConflict = teacherConflicts.length > 0;
-    const otherDays = [...new Set(placementsOf(cls.id).filter((x) => x.id !== p.id).map((x) => DAY_SHORT[x.day]))];
+    const otherDays = cached
+      ? cached.otherDays
+      : [...new Set(placementsOf(cls.id).filter((x) => x.id !== p.id).map((x) => DAY_SHORT[x.day]))];
     const isDragging = drag?.type === "pl" && drag.id === p.id;
     return (
       <div
@@ -2020,8 +2176,8 @@ export default function ClassroomScheduler() {
                     ))}
                   </div>
                   {rooms.map((room) => {
-                    const colPls = tabPls.filter((p) => p.rooms.includes(room.id));
-                    const lanes = layoutLanes(colPls);
+                    const colPls = tabGridLayout?.colByRoom.get(room.id) || [];
+                    const lanes = tabGridLayout?.lanesByRoom.get(room.id) || new Map();
                     return (
                       <div
                         key={room.id}
