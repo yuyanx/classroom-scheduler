@@ -3623,15 +3623,27 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
         </div>
         {h >= 64 && (
           <div style={{ flexShrink: 0, marginTop: 2, minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 3, minWidth: 0 }}>
-              {!planReadOnly && h >= 88 && laneCount === 1 && (
-                <button type="button" onClick={(e) => { e.stopPropagation(); onBumpReg(cls.id, -1); }} style={stepBtn}>−</button>
+            <div style={{ display: "flex", alignItems: "center", gap: laneCount > 1 ? 1 : 3, minWidth: 0 }}>
+              {!planReadOnly && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onBumpReg(cls.id, -1); }}
+                  style={laneCount > 1 ? stepBtnCompact : stepBtn}
+                >
+                  −
+                </button>
               )}
-              <span style={{ fontSize: 11, fontWeight: 700, color: col.text, minWidth: 0, flex: 1, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden" }}>
+              <span style={{ fontSize: laneCount > 1 ? 10 : 11, fontWeight: 700, color: col.text, minWidth: 0, flex: 1, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden" }}>
                 {cls.reg}/{cap}{cls.reg >= cap && cap > 0 ? " · FULL" : ""}
               </span>
-              {!planReadOnly && h >= 88 && laneCount === 1 && (
-                <button type="button" onClick={(e) => { e.stopPropagation(); onBumpReg(cls.id, +1); }} style={stepBtn}>＋</button>
+              {!planReadOnly && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onBumpReg(cls.id, +1); }}
+                  style={laneCount > 1 ? stepBtnCompact : stepBtn}
+                >
+                  ＋
+                </button>
               )}
             </div>
             <div style={{ height: 4, background: "#e2e8f0", borderRadius: 2, marginTop: 3, overflow: "hidden" }}>
@@ -4217,6 +4229,10 @@ const miniBtn = {
 const stepBtn = {
   width: 20, height: 20, flex: "0 0 20px", borderRadius: 6, border: "1px solid #cbd5d1", background: "#fff",
   cursor: "pointer", fontSize: 13, lineHeight: 1, color: "#334155", padding: 0,
+};
+const stepBtnCompact = {
+  ...stepBtn,
+  width: 16, height: 16, flex: "0 0 16px", borderRadius: 4, fontSize: 11,
 };
 
 // Pure helpers exported for node:test (see tests/ + src/test-exports.js).
