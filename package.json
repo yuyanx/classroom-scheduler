@@ -6,7 +6,8 @@
   "scripts": {
     "build": "esbuild src/main.jsx --bundle --minify --outfile=app.js --define:process.env.NODE_ENV='\"production\"'",
     "test:build": "esbuild src/test-exports.js --bundle --platform=node --format=esm --outfile=dist/test-logic.mjs --packages=external --jsx=automatic --loader:.jsx=jsx",
-    "test": "npm run test:build && node --test tests/*.test.mjs"
+    "test": "npm run test:build && node --test tests/*.test.mjs",
+    "test:ci": "npm test && npm run build"
   },
   "keywords": [],
   "author": "",

@@ -955,9 +955,22 @@ const STORAGE_KEY = "premier-classroom-schedule";
 // live shared schedule.
 const SUPABASE_URL = "https://zbvedbwbxdzcsnftvyph.supabase.co";
 const SUPABASE_KEY = "sb_publishable_cDEmeJDF7lwuafg8ZYKF4Q_Sl_fUSTE";
-const IS_LOCAL_DEV =
-  typeof window !== "undefined" && /^(localhost|127\.|0\.0\.0\.0|\[::1\])/.test(window.location.hostname);
-const REMOTE_ENABLED = Boolean(SUPABASE_URL && SUPABASE_KEY) && !IS_LOCAL_DEV;
+const PRODUCTION_HOST = "classroom-scheduler-ruddy.vercel.app";
+
+const isLocalDevHost = (hostname) => /^(localhost|127\.|0\.0\.0\.0|\[::1\])/.test(hostname || "");
+// Vercel preview URLs share the production Supabase row unless gated off here.
+const isPreviewHost = (hostname) =>
+  /\.vercel\.app$/i.test(hostname || "") &&
+  hostname !== PRODUCTION_HOST &&
+  !String(hostname || "").endsWith(`.${PRODUCTION_HOST}`);
+
+const isRemoteSyncEnabled = (hostname) =>
+  Boolean(SUPABASE_URL && SUPABASE_KEY) && !isLocalDevHost(hostname) && !isPreviewHost(hostname);
+
+const IS_LOCAL_DEV = typeof window !== "undefined" && isLocalDevHost(window.location.hostname);
+const IS_PREVIEW_DEPLOY = typeof window !== "undefined" && isPreviewHost(window.location.hostname);
+const REMOTE_ENABLED =
+  typeof window !== "undefined" ? isRemoteSyncEnabled(window.location.hostname) : false;
 const REMOTE_ROW_ID = 1;
 const REMOTE_POLL_MS = 30000;
 
@@ -1056,6 +1069,22 @@ function buildScheduleIndexes(data) {
   const roomPos = new Map((data.rooms || []).map((r, i) => [r.id, i]));
   const scheduledClassIds = new Set((data.placements || []).map((p) => p.classId));
   return { catalogById, placementsByClassId, placementsByDay, placementsByDayRoom, roomCapById, roomPos, scheduledClassIds };
+}
+
+// Latest end minute when extending placement.end (room conflicts via day+room index).
+function maxEndForPlacement(idx, placement, gridEnd) {
+  const { day, start, end, rooms, id } = placement;
+  let limit = gridEnd;
+  rooms.forEach((rid) => {
+    (idx.placementsByDayRoom.get(`${day}\0${rid}`) || []).forEach((o) => {
+      if (o.id === id) return;
+      if (start < o.end && o.start < limit) {
+        if (o.start >= start) limit = Math.min(limit, o.start);
+        if (o.start < start && o.end > end) limit = Math.min(limit, end);
+      }
+    });
+  });
+  return limit;
 }
 
 function roomConflictsIndexed(idx, cand, opts = {}) {
@@ -1247,7 +1276,10 @@ export default function ClassroomScheduler() {
     }
   };
 
-  const persist = useCallback((next) => {
+  const persist = useCallback((nextOrMutator) => {
+    const prev = dataRef.current;
+    const next = typeof nextOrMutator === "function" ? nextOrMutator(prev) : nextOrMutator;
+    if (!next || next === prev) return;
     setData(next);
     dataRef.current = next;
     if (!REMOTE_ENABLED) {
@@ -1263,7 +1295,19 @@ export default function ClassroomScheduler() {
 
   useEffect(() => {
     if (!REMOTE_ENABLED) {
-      updateSaveStatus(saveData(data));
+      const result = saveData(data);
+      const now = new Date();
+      const offlineLabel = IS_PREVIEW_DEPLOY
+        ? "Preview — not syncing to shared schedule"
+        : IS_LOCAL_DEV
+          ? "Local dev — not syncing to shared schedule"
+          : `Saved to this browser at ${now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+      setSaveStatus({
+        ok: result.ok,
+        lastSavedAt: result.ok ? now : null,
+        error: result.error || "",
+        label: result.ok ? offlineLabel : "Not saved",
+      });
       return;
     }
     let cancelled = false;
@@ -1442,27 +1486,29 @@ export default function ClassroomScheduler() {
   // ── Placement ops ──
   const addPlacementAt = (classId, cand) => {
     if (!classOfId(classId)) return;
-    const nid = data.nextId || 1000;
-    persist({
-      ...data,
-      placements: [...placements, { id: "p" + nid, classId, day: cand.day, start: cand.start, end: cand.end, rooms: cand.rooms }],
-      nextId: nid + 1,
+    persist((d) => {
+      const nid = d.nextId || 1000;
+      return {
+        ...d,
+        placements: [...d.placements, { id: "p" + nid, classId, day: cand.day, start: cand.start, end: cand.end, rooms: cand.rooms }],
+        nextId: nid + 1,
+      };
     });
   };
 
   const removePlacement = (plId) =>
-    persist({ ...data, placements: placements.filter((p) => p.id !== plId) });
+    persist((d) => ({ ...d, placements: d.placements.filter((p) => p.id !== plId) }));
 
   const movePlacement = (plId, cand) => {
     const src = placements.find((p) => p.id === plId);
     if (!src) return;
     if (src.day === cand.day && src.start === cand.start && src.rooms.join("|") === cand.rooms.join("|")) return;
-    persist({
-      ...data,
-      placements: placements.map((p) =>
+    persist((d) => ({
+      ...d,
+      placements: d.placements.map((p) =>
         p.id === plId ? { ...p, day: cand.day, start: cand.start, end: cand.end, rooms: cand.rooms } : p
       ),
-    });
+    }));
   };
 
   // ── Drag & drop on the day grid ──
@@ -1552,12 +1598,7 @@ export default function ClassroomScheduler() {
     e.preventDefault();
     e.stopPropagation();
     const startY = e.clientY;
-    const limit = Math.min(
-      gridEnd,
-      ...placements
-        .filter((o) => o.id !== p.id && o.day === p.day && o.start >= p.start && shareRoom(o.rooms, p.rooms))
-        .map((o) => o.start)
-    );
+    const limit = maxEndForPlacement(idx, p, gridEnd);
     let cur = p.end;
     const move = (ev) => {
       const dy = ev.clientY - startY;
@@ -1572,9 +1613,19 @@ export default function ClassroomScheduler() {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       setResize(null);
-      if (cur !== p.end) {
-        persist({ ...data, placements: placements.map((x) => (x.id === p.id ? { ...x, end: cur } : x)) });
+      if (cur === p.end) return;
+      const freshIdx = buildScheduleIndexes(dataRef.current);
+      const cand = { day: p.day, start: p.start, end: cur, rooms: p.rooms };
+      const clashes = roomConflictsIndexed(freshIdx, cand, { excludeId: p.id });
+      if (clashes.length) {
+        const names = [...new Set(clashes.map((c) => freshIdx.catalogById.get(c.classId)?.name || "another class"))];
+        flashMsg(`Can't extend there — overlaps ${names.join(", ")}.`);
+        return;
       }
+      persist((d) => ({
+        ...d,
+        placements: d.placements.map((x) => (x.id === p.id ? { ...x, end: cur } : x)),
+      }));
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
@@ -1583,12 +1634,12 @@ export default function ClassroomScheduler() {
 
   // ── Signed-up count stepper (shared roster: updates every placement of the class) ──
   const bump = (classId, delta) => {
-    persist({
-      ...data,
-      catalog: catalog.map((k) =>
+    persist((d) => ({
+      ...d,
+      catalog: d.catalog.map((k) =>
         k.id === classId ? { ...k, reg: Math.max(0, (k.reg || 0) + delta) } : k
       ),
-    });
+    }));
   };
 
   // ── Save class (add / edit) — form fields plus its full meeting-time list ──
@@ -1608,27 +1659,35 @@ export default function ClassroomScheduler() {
     const newTeachers = tKey && !(teachers || []).some((t) => teacherKey(t) === tKey)
       ? [...(teachers || []), form.teacher].sort((a, b) => a.localeCompare(b))
       : teachers;
-    persist({ ...data, catalog: newCatalog, placements: [...others, ...mine], teachers: newTeachers, nextId: nid });
+    persist((d) => ({
+      ...d,
+      catalog: newCatalog,
+      placements: [...others, ...mine],
+      teachers: newTeachers,
+      nextId: nid,
+    }));
     setEditing(null);
   };
 
   const deleteClass = (classId) => {
     const n = placementsOf(classId).length;
     if (n > 1 && !window.confirm(`This class meets ${n} times. Delete it everywhere?`)) return;
-    persist({
-      ...data,
-      catalog: catalog.filter((k) => k.id !== classId),
-      placements: placements.filter((p) => p.classId !== classId),
-    });
+    persist((d) => ({
+      ...d,
+      catalog: d.catalog.filter((k) => k.id !== classId),
+      placements: d.placements.filter((p) => p.classId !== classId),
+    }));
     setEditing(null);
   };
 
   const duplicateClass = (k) => {
-    const nid = data.nextId || 1000;
-    persist({
-      ...data,
-      catalog: [...catalog, { ...k, id: "k" + nid, name: k.name + " (copy)" }],
-      nextId: nid + 1,
+    persist((d) => {
+      const nid = d.nextId || 1000;
+      return {
+        ...d,
+        catalog: [...d.catalog, { ...k, id: "k" + nid, name: k.name + " (copy)" }],
+        nextId: nid + 1,
+      };
     });
   };
 
@@ -1642,7 +1701,7 @@ export default function ClassroomScheduler() {
         rooms: [...new Set(p.rooms.map((r) => renames[r] || r))].filter((r) => ids.has(r)),
       }))
       .filter((p) => p.rooms.length > 0);
-    persist({ ...data, rooms: list, placements: np });
+    persist((d) => ({ ...d, rooms: list, placements: np }));
     setRoomMgrOpen(false);
   };
 
@@ -1659,7 +1718,10 @@ export default function ClassroomScheduler() {
       return;
     }
     const { roomId } = roomCapEditing;
-    persist({ ...data, rooms: rooms.map((r) => (r.id === roomId ? { ...r, cap: n } : r)) });
+    persist((d) => ({
+      ...d,
+      rooms: d.rooms.map((r) => (r.id === roomId ? { ...r, cap: n } : r)),
+    }));
     setRoomCapEditing(null);
   };
 
@@ -1682,7 +1744,7 @@ export default function ClassroomScheduler() {
       return;
     }
     const { day } = hoursEditing;
-    persist({ ...data, hours: { ...hours, [day]: [s, e] } });
+    persist((d) => ({ ...d, hours: { ...d.hours, [day]: [s, e] } }));
     setHoursEditing(null);
   };
 
@@ -1695,12 +1757,12 @@ export default function ClassroomScheduler() {
     removed.forEach((oldName) => {
       nc = nc.map((k) => (teacherKey(k.teacher) === teacherKey(oldName) ? { ...k, teacher: "" } : k));
     });
-    persist({ ...data, teachers: names, catalog: nc });
+    persist((d) => ({ ...d, teachers: names, catalog: nc }));
     setTeacherMgrOpen(false);
   };
 
   const resetAll = () => {
-    persist(defaultData());
+    persist(() => defaultData());
     setConfirmReset(false);
   };
 
@@ -1873,7 +1935,11 @@ export default function ClassroomScheduler() {
             </span>
             <span
               title={saveStatus.ok
-                ? (REMOTE_ENABLED ? "Everyone opening this site sees this shared schedule." : "Changes are stored in this browser.")
+                ? (REMOTE_ENABLED
+                  ? "Everyone opening this site sees this shared schedule."
+                  : IS_PREVIEW_DEPLOY
+                    ? "Preview deploy — changes stay in this browser only."
+                    : "Changes are stored in this browser.")
                 : saveStatus.error}
               style={{
                 fontSize: 12,
@@ -3245,6 +3311,7 @@ export {
   upgrade,
   overlaps,
   buildScheduleIndexes,
+  maxEndForPlacement,
   roomConflictsIndexed,
   teacherBusyIndexed,
   computeTabBlockMeta,
@@ -3253,6 +3320,10 @@ export {
   formatDayRange,
   classScheduleLines,
   sortCatalogForByClassView,
+  isLocalDevHost,
+  isPreviewHost,
+  isRemoteSyncEnabled,
+  PRODUCTION_HOST,
   LIVE_V1_SEED,
   LIVE_SEED_TAG,
 };

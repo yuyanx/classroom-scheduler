@@ -8,6 +8,7 @@ export {
   upgrade,
   overlaps,
   buildScheduleIndexes,
+  maxEndForPlacement,
   roomConflictsIndexed,
   teacherBusyIndexed,
   computeTabBlockMeta,
@@ -16,6 +17,10 @@ export {
   formatDayRange,
   classScheduleLines,
   sortCatalogForByClassView,
+  isLocalDevHost,
+  isPreviewHost,
+  isRemoteSyncEnabled,
+  PRODUCTION_HOST,
   LIVE_V1_SEED,
   LIVE_SEED_TAG,
 } from "./App.jsx";

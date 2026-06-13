@@ -47,8 +47,12 @@ classroom-scheduler/
 │   ├── test-exports.js   # Test-only re-export entry (not loaded by the app)
 │   └── App.jsx           # Entire application (single file, ~2400 lines)
 ├── tests/
-│   ├── schedule.test.mjs # Pure-logic tests (migrations, indexes, overview helpers)
-│   └── smoke.test.mjs    # Regression guards (TDZ order, bundle size)
+│   ├── schedule.test.mjs  # Core helper regression tests
+│   ├── migration.test.mjs # migrateOld / migrateV1toV2 / normalizeV2
+│   ├── conflicts.test.mjs # maxEndForPlacement, room/teacher conflict edge cases
+│   ├── sync.test.mjs      # Preview / localhost remote-sync gating
+│   └── smoke.test.mjs     # TDZ order, bundle size
+├── .github/workflows/ci.yml # npm test + npm run build on push/PR
 ├── .claude/launch.json   # Local preview server config (python3 http.server on :4173)
 └── handoff.md            # This file
 ```
@@ -85,9 +89,13 @@ npm test
 ```
 
 Runs `node:test` against pure schedule helpers (esbuild bundles `src/test-exports.js` →
-`dist/test-logic.mjs`, gitignored). Covers `upgrade()` / `LIVE_V1_SEED`, conflict indexes,
-`classScheduleLines`, By Class sort, layout lanes, and smoke checks (callback declaration order,
-`app.js` present). **Run tests before every commit on this branch.**
+`dist/test-logic.mjs`, gitignored). **35 tests** cover migrations, conflict indexes,
+`maxEndForPlacement`, preview/localhost sync gating, overview helpers, and smoke guards.
+CI (`.github/workflows/ci.yml`) runs `npm test` + `npm run build` on push/PR.
+**Run `npm test` before every commit on this branch.**
+
+**Preview deploys** (`*.vercel.app` except production host) do **not** sync to Supabase —
+same as localhost. Header shows “Preview — not syncing to shared schedule”.
 
 **Every commit must update this file** — add a changelog entry (and adjust architecture sections when
 behavior or UI changes). Keep `handoff.md` in sync with the code you ship.
@@ -387,6 +395,12 @@ app runs exactly as the old browser-only version.
   (wrong precedence) so unscheduled rows sorted last; now `(sa == null) !== (sb == null)`.
 - 2026-06-12 — **Vercel deploy fix**: `vercel.json` sets `outputDirectory: "."` so preview builds
   on `grok-feature-day-calendar` serve root `index.html` + `app.js` (not `public/`).
+- 2026-06-13 — **Wave 1 — SCH-002**: `maxEndForPlacement` + resize commit guard (room conflicts
+  blocked on pointer-up, envelope blockers respected).
+- 2026-06-13 — **Wave 1 — API-001a**: Vercel preview host gated off Supabase; `persist()` accepts
+  mutator functions using `dataRef` (fixes stale-closure overwrites on resize and other edits).
+- 2026-06-13 — **Wave 1 — TEST-P0 + CI**: `migration.test.mjs`, `conflicts.test.mjs`,
+  `sync.test.mjs`, GitHub Actions CI; **35 tests** green.
 
 ---
 
