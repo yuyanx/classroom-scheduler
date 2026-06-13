@@ -1019,10 +1019,8 @@ const SUPABASE_URL = "https://zbvedbwbxdzcsnftvyph.supabase.co";
 const SUPABASE_KEY = "sb_publishable_cDEmeJDF7lwuafg8ZYKF4Q_Sl_fUSTE";
 // Legacy alias; Vercel production hostname can change — prefer VERCEL_ENV at build time.
 const PRODUCTION_HOST = "classroom-scheduler-ruddy.vercel.app";
-const VERCEL_ENV =
-  typeof process !== "undefined" && process.env && process.env.VERCEL_ENV
-    ? String(process.env.VERCEL_ENV)
-    : "";
+// Inlined at build time via scripts/build.mjs (--define process.env.VERCEL_ENV).
+const VERCEL_ENV = process.env.VERCEL_ENV || "";
 
 const isLocalDevHost = (hostname) => /^(localhost|127\.|0\.0\.0\.0|\[::1\])/.test(hostname || "");
 // Vercel preview deploys must not write to the shared Supabase row.
