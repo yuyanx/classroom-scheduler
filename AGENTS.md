@@ -15,81 +15,72 @@ This file contains the practical rules and context you need to make changes that
     --define:process.env.NODE_ENV='"production"'
   ```
 - Commit **both** the source change **and** the updated `app.js` together.
-- Test by opening `index.html` directly in a browser (or run `npx serve .`). No hot-reload dev server is required for most work.
-- Work on a feature branch (e.g. `improve-xxx-ui`, `fix-resize-overview`). Push and let the user decide on merging/PR.
+- Test: `npm run test:ci` (51 tests + build). Open `index.html` or `npx serve .`.
+- Work on a feature branch. Push and let the user decide on merging/PR. **Do not push `main` unless asked.**
+
+## Branches (as of 2026-06-13)
+
+| Branch | Status |
+|--------|--------|
+| `main` | Production line — single shared schedule, Week Overview, library sort, etc. |
+| `v3-plans` | **Multi-plan v3** — not merged to `main`. Push to `origin/v3-plans` only until user merges. |
+
+Local v3 preview: `npx serve . -l 4180` → http://localhost:4180
 
 ## Core Architecture (must internalize)
 
-- **Single source of truth for UI**: Everything lives in `src/App.jsx` (one big component + helper functions at the bottom). Do not introduce new files or split components unless the user explicitly asks.
-- **Data model** (see handoff.md for diagrams):
-  - `catalog[]` — one record per class/cohort (`id, name, teacher, reg, note`). This is the "master" with the shared roster.
-  - `placements[]` — the scheduling entries (`classId, section, slotIdx, room`).
-  - A class can appear in many placements (multiple days/times) but `reg` and name edits are shared.
-- **Three coordinated views** that must stay visually and behaviorally consistent:
-  1. Main drag/drop grid (taller fixed-height cards with capacity bars).
-  2. 📋 **By Class** overview (rows = classes, day columns contain pill cards).
-  3. 👤 **By Teacher** overview (rows = teachers, day columns contain pill cards — possibly stacked when one teacher has >1 slot on a day).
-- **Pill / card design language** (critical for consistency):
-  - Rounded, bordered, 2-line.
-  - Morning: `#f0fdfa` teal background + "MF·" prefix (column header already says "Daily").
-  - PM: `#f8fafc` light gray.
-  - Conflict (teacher double-booked): amber border/background + ⚠.
-  - All pills now use `minHeight: 42` so every class "方块" (block) has the same physical size.
-  - Long names use `overflow: hidden; text-overflow: ellipsis; width: 100%`.
-  - Stacked pills inside one cell use a parent `flex flex-col gap-4` (not per-pill margins).
-- **Resize / responsiveness contract**:
-  - The app is intentionally full-width (no centered max-width container).
-  - Overview tables (By Class / By Teacher) have large `minWidth` and horizontal scroll inside their white container.
-  - Test on realistic widths (≈1200–1600 px browser window) + drag the edge while on those tabs.
-  - Library rail (collapsed vertical state) must never visually overlap or cramp the content — use the established gap.
-- **Styling rule**: Inline styles only. Reuse/extend the style objects defined at the bottom of `App.jsx` (`thStyle`, `tdStyle`, `pill` patterns, `btnPrimary`, `miniBtn`, `chipStyle`, `teacherWarningStyle`, etc.). Do not add `<style>` tags or external CSS.
+- **Single source of truth for UI**: Everything lives in `src/App.jsx` (one big component + helper functions at the bottom). Do not introduce new component files unless the user explicitly asks.
+- **Allowed helper modules**: `src/planService.js` (v3 plans), `src/scheduleService.js` (localStorage + sync guard), `src/domain/scheduleLogic.ts` (pure schedule math).
+- **Data model** (see handoff.md):
+  - `catalog[]` — one record per class/cohort (`id, name, teacher, reg, note`).
+  - `placements[]` — scheduling entries (`classId, day, start, end, rooms[]`).
+  - Multi-placement classes share one catalog entry (one roster).
+- **Three coordinated views** (grid, 📋 By Class, 👤 By Teacher) + 📅 Week Overview — pill/card design must stay consistent across all (see handoff.md).
+- **Styling rule**: Inline styles only. Reuse style objects at the bottom of `App.jsx`.
 
 ## Persistence & Shared State
 
-- Supabase (single row, public anon key is **intentional** — RLS limits what it can do).
-- `localStorage` is the offline cache/fallback.
-- All save/load logic is centralized in `loadData`, `saveData`, `persist`, `flushRemoteSave`, `remote*` helpers near the top of `App.jsx`.
-- When you touch storage, also think about the "Retry now" banner, save status in the header, and the `pagehide` keepalive flush.
+### `main` (production)
 
-## Testing Checklist (run mentally or actually after any UI change)
+- Supabase single row `id=1` (public anon key is intentional — RLS limits what it can do).
+- `localStorage` key `premier-classroom-schedule` — offline cache.
 
-- Drag from Library ↔ grid, grid ↔ grid (swap), grid → Library tray (unschedule).
-- Multi-placement class: edit name/teacher/reg/note once → appears everywhere.
-- Teacher conflicts visible in grid cards, Library sidebar, and both overview tabs.
-- **Resize test** (most common regression):
-  - Narrow the window on By Teacher and By Class.
-  - No text bleeding across cell borders.
-  - Rightmost columns (Thu/Fri) remain accessible via the inner horizontal scrollbar.
-  - All class pills stay the same height; stacked pills look like a tidy vertical list of identical cards.
-  - Library rail (open and collapsed) has clear separation.
-- Modals (Class edit, Room, Teacher, capacity quick-edit) still validate conflicts.
-- "Manage teachers", room reordering/caps, slot add/rename/remove, Reset Data.
-- Shared sync still works (or falls back gracefully if keys are cleared for testing).
+### `v3-plans` (multi-plan)
 
-## Things Agents Frequently Get Wrong (avoid these)
+- Supabase **one row per plan**; v3 envelope `{ planVersion, plan, schedule }` in `planService.js`.
+- **Default** (`id=1`, `kind: live`) — protected, cannot delete; **Reset Data** restores seed.
+- **Plan** — editable shared copy; **Clear schedule** wipes placements + zeroes `reg`.
+- **Archive** — read-only; restore copies to new Plan.
+- Active plan: `premier-active-plan-id`. Edits sync only for the active plan row; colleagues must switch to the same plan to see edits.
+- localhost: `premier-plans-v3` local store; remote sync off (`IS_LOCAL_DEV`).
+
+Central hooks in `App.jsx`: `persist`, `flushRemoteSave`, `switchPlan`, `planApi` from `createRemotePlanApi`.
+
+## Testing Checklist
+
+- Drag Library ↔ grid, grid ↔ grid, grid → Library tray.
+- Multi-placement class: edit name/teacher/reg once → everywhere.
+- Teacher conflicts in grid, Library, both overview tabs.
+- **Resize test** on By Class / By Teacher (narrow window, horizontal scroll, uniform pill heights).
+- **v3 (on `v3-plans`)**: switch plans, new plan, delete plan (not Default), archive + restore, Clear schedule vs Reset Data.
+
+## Things Agents Frequently Get Wrong
 
 - Editing `app.js` directly.
-- Introducing Tailwind, CSS modules, or separate component files without explicit permission.
-- Changing pill rendering in only one of (grid / By Class / By Teacher).
-- Using `tableLayout: "auto"` on the schedule grid (it must stay fixed for uniform room columns) — overview tables are the ones we relaxed.
-- Forgetting to rebuild + commit `app.js`.
-- Assuming the viewport will always be wide; always verify narrow + scroll cases for the overview tabs.
-- Treating the Supabase keys as secrets (they are public by design for this app).
-
-## Current Feature Branches & Recent Work (as of latest commit)
-
-- `improve-by-grok` (pushed) — the work that produced the uniform pill sizes, resize hardening, and By Teacher alignment with By Class.
-- Main is the stable production line. Feature work happens on branches; user decides when to merge.
+- Splitting `App.jsx` or adding Tailwind/CSS files without permission.
+- Changing pills in only one view.
+- Forgetting rebuild + commit `app.js`.
+- Deleting Default plan (must stay protected).
+- Assuming all users see edits without switching to the same active plan (v3).
 
 ## References
 
-- Detailed human handoff & full architecture rationale: [handoff.md](./handoff.md) (read this first)
-- Source: `src/App.jsx` + `src/main.jsx`
-- Build output: `app.js` (committed)
-- Original README and package.json for basic commands
+- [handoff.md](./handoff.md) — full architecture + v3 section
+- Source: `src/App.jsx`, `src/planService.js`, `src/main.jsx`
+- Build: `app.js` (committed)
 
-When an agent takes over future work, start here + handoff.md. Keep this file and handoff.md in sync when you make significant changes.
+When an agent makes significant changes, update **both** `handoff.md` (changelog + architecture) and this file.
 
 ---
 
-**Last updated**: along with the `improve-by-grok` changes (uniform class blocks, resize fixes, etc.).
+**Last updated**: v3 multi-plan on `v3-plans` (simplified plans, delete/restore, Default protected, Clear schedule).
