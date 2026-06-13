@@ -3610,59 +3610,37 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
         }}
       >
         <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column", gap: compact ? 1 : 2 }}>
-          <div style={{ fontWeight: 700, fontSize: compact ? 11 : 12.5, lineHeight: 1.2, overflowWrap: "anywhere", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: compact ? 1 : 2, WebkitBoxOrient: "vertical" }}>
-            {cls.name}{(roomClash || teacherClash) ? " ⚠" : ""}
-          </div>
-          {singleGroup ? (
-            <>
-              {h >= 32 && (
-                <div style={{ ...metaLine, color: "#475569" }}>
-                  {groups[0].timeLabel}
-                </div>
-              )}
-              {compact ? (
-                <>
-                  {h >= 34 && (
-                    <div style={{ ...metaLine, color: "#334155", fontWeight: 600 }}>
-                      {teacherLabel}
-                    </div>
-                  )}
-                  {h >= 46 && (
-                    <div style={{ ...metaLine, color: "#0f766e" }}>
-                      {groups[0].dayLabel}
-                    </div>
-                  )}
-                </>
-              ) : (
-                <>
-                  {h >= 44 && (
-                    <div style={{ ...metaLine, color: "#0f766e" }}>
-                      {groups[0].dayLabel}
-                    </div>
-                  )}
-                  {h >= 48 && (
-                    <div style={{ ...metaLine, color: "#334155", fontWeight: 600 }}>
-                      {teacherLabel}
-                    </div>
-                  )}
-                </>
-              )}
-            </>
-          ) : (
-            <>
-              {groups.map((g, i) => (
+          <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column", gap: compact ? 1 : 2 }}>
+            <div style={{ fontWeight: 700, fontSize: compact ? 11 : 12.5, lineHeight: 1.2, overflowWrap: "anywhere", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: compact ? 1 : 2, WebkitBoxOrient: "vertical" }}>
+              {cls.name}{(roomClash || teacherClash) ? " ⚠" : ""}
+            </div>
+            {singleGroup ? (
+              <>
+                {h >= 32 && (
+                  <div style={{ ...metaLine, color: "#475569" }}>
+                    {groups[0].timeLabel}
+                  </div>
+                )}
+                {h >= 44 && (
+                  <div style={{ ...metaLine, color: "#0f766e" }}>
+                    {groups[0].dayLabel}
+                  </div>
+                )}
+              </>
+            ) : (
+              groups.map((g, i) => (
                 h >= 34 + i * (compact ? 18 : 20) && (
                   <div key={i} style={{ ...metaLine, color: "#475569" }}>
                     {g.timeLabel} · {g.dayLabel}
                   </div>
                 )
-              ))}
-              {h >= (compact ? 40 : 48) && (
-                <div style={{ ...metaLine, color: "#334155", fontWeight: 600 }}>
-                  {teacherLabel}
-                </div>
-              )}
-            </>
+              ))
+            )}
+          </div>
+          {h >= 40 && (
+            <div style={{ ...metaLine, flexShrink: 0, color: "#334155", fontWeight: 600 }}>
+              {teacherLabel}
+            </div>
           )}
         </div>
         {h >= regThreshold && (
