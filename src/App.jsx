@@ -81,6 +81,13 @@ const fmtTime = (min) => {
 };
 const fmtAmPm = (min) => `${fmtTime(min)} ${min < 720 ? "AM" : "PM"}`;
 const fmtRange = (s, e) => `${fmtTime(s)}–${fmtTime(e)}`;
+const fmtRangeAmPm = (s, e) => {
+  const startAm = s < 720;
+  const endAm = e <= 720 ? e < 720 : false;
+  if (startAm === endAm) return `${fmtTime(s)}–${fmtTime(e)} ${startAm ? "AM" : "PM"}`;
+  return `${fmtAmPm(s)}–${fmtAmPm(e)}`;
+};
+const DAY_ROOM_MIN_W = 148;
 const toInput = (min) => `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
 const fromInput = (v) => {
   const m = /^(\d{1,2}):(\d{2})$/.exec(v || "");
@@ -2142,18 +2149,21 @@ export default function ClassroomScheduler() {
     [catalog, idx.scheduledClassIds]
   );
 
-  // ── One scheduled card on the day grid ──
-  const renderBlock = (p, laneInfo) => {
+  const roomOrder = useMemo(() => rooms.map((r) => r.id), [rooms]);
+
+  // ── One scheduled card on the day grid (layout matches By Class tab) ──
+  const renderBlock = (p, laneInfo, colorRoomId) => {
     const cls = classOfId(p.classId);
     if (!cls) return null;
     const end = resize?.plId === p.id ? resize.end : p.end;
     const top = (p.start - gridStart) * PX_PER_MIN;
-    const h = (end - p.start) * PX_PER_MIN;
+    const h = Math.max(14, (end - p.start) * PX_PER_MIN - 2);
     const { lane, lanes } = laneInfo || { lane: 0, lanes: 1 };
     const combined = p.rooms.length > 1;
     const cap = capOfRooms(p.rooms);
     const col = ratioColor(cls.reg, cap);
     const pct = cap ? Math.min(100, Math.round((cls.reg / cap) * 100)) : 0;
+    const rc = roomOverviewColor(colorRoomId, roomOrder);
     const cached = resize?.plId === p.id ? null : tabBlockMeta.get(p.id);
     const roomClashes = cached
       ? cached.roomClashes
@@ -2163,9 +2173,20 @@ export default function ClassroomScheduler() {
       : teacherConflictLabels(teacherConflictsForPlacement({ ...p, end }));
     const hasRoomClash = roomClashes.length > 0;
     const hasTeacherConflict = teacherConflicts.length > 0;
-    const otherDays = cached
-      ? cached.otherDays
-      : [...new Set(placementsOf(cls.id).filter((x) => x.id !== p.id).map((x) => DAY_SHORT[x.day]))];
+    const otherDayKeys = [...new Set(placementsOf(cls.id).filter((x) => x.id !== p.id).map((x) => x.day))];
+    const dayLabel = otherDayKeys.length ? formatDayRange(otherDayKeys) : "";
+    const teacherLabel = cls.teacher || <i style={{ color: "#b45309" }}>TBD</i>;
+    const compact = lanes > 1;
+    const metaFs = compact ? 10 : 11;
+    const regThreshold = compact ? 56 : 64;
+    const metaLine = {
+      fontSize: metaFs,
+      lineHeight: 1.2,
+      whiteSpace: "nowrap",
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      minWidth: 0,
+    };
     const isDragging = drag?.type === "pl" && drag.id === p.id;
     return (
       <div
@@ -2185,84 +2206,77 @@ export default function ClassroomScheduler() {
         onDragEnd={() => { setDrag(null); setGhost(null); ghostRef.current = null; setDragOver(null); }}
         onClick={(e) => { e.stopPropagation(); setEditing({ isNew: false, classId: cls.id, placementId: p.id }); }}
         title={
-          `${cls.name} · ${fmtRange(p.start, end)}` +
-          (combined ? ` · combined Rooms ${roomsLabel(p.rooms)} (drags move its time; change rooms in the dialog)` : "") +
+          `${cls.name} · ${fmtRangeAmPm(p.start, end)}` +
+          (dayLabel ? ` · also ${dayLabel}` : "") +
+          ` · ${cls.teacher || "TBD"} · ${overviewRoomLabel(p.rooms)}` +
+          (combined ? ` · combined Rooms ${roomsLabel(p.rooms)}` : "") +
           (hasRoomClash ? ` · ROOM CONFLICT with ${[...new Set(roomClashes.map((c) => classOfId(c.classId)?.name))].join(", ")}` : "") +
           (hasTeacherConflict ? ` · same teacher also has ${teacherConflicts.join(", ")}` : "") +
           " — drag to move · drag the bottom edge to change length · click to edit"
         }
         style={{
           position: "absolute",
-          top: top + 1,
-          height: Math.max(14, h - 2),
-          left: `calc(${(lane / lanes) * 100}% + 2px)`,
-          width: `calc(${100 / lanes}% - 5px)`,
+          top: top + 3,
+          height: h,
+          left: `calc(${(lane / lanes) * 100}% + 4px)`,
+          width: `calc(${100 / lanes}% - 8px)`,
           boxSizing: "border-box",
           zIndex: 1,
-          background: col.bg,
-          border: hasRoomClash ? "2px solid #dc2626" : hasTeacherConflict ? "2px solid #d97706" : "1px solid #d6dad4",
+          background: hasRoomClash ? "#fee2e2" : hasTeacherConflict ? "#fffbeb" : rc.bg,
+          border: hasRoomClash ? "2px solid #dc2626" : hasTeacherConflict ? "2px solid #d97706" : `1px solid ${rc.border}`,
           boxShadow: hasRoomClash
             ? "0 0 0 3px rgba(220,38,38,.12)"
             : hasTeacherConflict
               ? "0 0 0 3px rgba(217,119,6,.12)"
               : "none",
           borderRadius: 8,
-          padding: "4px 7px 9px",
+          padding: compact ? "3px 5px 6px" : "4px 7px 9px",
           overflow: "hidden",
           cursor: "grab",
           opacity: isDragging ? 0.35 : 1,
+          color: rc.text,
           display: "flex",
           flexDirection: "column",
           transition: "opacity .15s, box-shadow .15s",
         }}
       >
-        {/* Text area clips when space runs out; the counter section below never gets pushed out */}
-        <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column", gap: 2 }}>
-          <div style={{ fontWeight: 700, fontSize: 12.5, lineHeight: 1.2, overflowWrap: "anywhere", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
-            {cls.name}
-          </div>
-          <div style={{ fontSize: 11, color: "#475569", lineHeight: 1.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            {fmtRange(p.start, end)}
-            {h >= 56 && <> · {cls.teacher || <i style={{ color: "#b45309" }}>TBD</i>}</>}
-          </div>
-          {combined && h >= 44 && (
-            <div
-              style={{ fontSize: 10.5, color: "#7c3aed", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
-              title={`This class uses Rooms ${roomsLabel(p.rooms)} at the same time`}
-            >
-              ⇆ Rm {roomsLabel(p.rooms)} combined
+        <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column", gap: compact ? 1 : 2 }}>
+          <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column", gap: compact ? 1 : 2 }}>
+            <div style={{ fontWeight: 700, fontSize: compact ? 11 : 12.5, lineHeight: 1.2, overflowWrap: "anywhere", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: compact ? 1 : 2, WebkitBoxOrient: "vertical" }}>
+              {cls.name}{(hasRoomClash || hasTeacherConflict) ? " ⚠" : ""}
             </div>
-          )}
-          {h >= 78 && hasRoomClash && (
-            <div style={{ ...roomConflictStyle, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Room conflict</div>
-          )}
-          {h >= 78 && !hasRoomClash && hasTeacherConflict && (
-            <div style={{ ...teacherWarningStyle, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Teacher conflict</div>
-          )}
-          {h >= 100 && otherDays.length > 0 && (
-            <div
-              style={{ fontSize: 11, color: "#0f766e", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
-              title="Same class (one roster) also meets on these days"
-            >
-              ⇄ also {otherDays.join(" · ")}
+            {h >= 32 && (
+              <div style={{ ...metaLine, color: "#475569" }}>
+                {fmtRangeAmPm(p.start, end)}
+              </div>
+            )}
+            {h >= 44 && dayLabel && (
+              <div style={{ ...metaLine, color: "#0f766e" }} title="Same class (one roster) also meets on these days">
+                also {dayLabel}
+              </div>
+            )}
+          </div>
+          {h >= 40 && (
+            <div style={{ ...metaLine, flexShrink: 0, color: "#334155", fontWeight: 600 }}>
+              {teacherLabel}
             </div>
           )}
         </div>
-        {h >= 64 && (
+        {h >= regThreshold && (
           <div style={{ flexShrink: 0, marginTop: 2, minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 3, minWidth: 0 }}>
-              {h >= 88 && lanes === 1 && (
-                <button onClick={(e) => { e.stopPropagation(); bump(cls.id, -1); }} style={stepBtn}>−</button>
+            <div style={{ display: "flex", alignItems: "center", gap: compact ? 1 : 3, minWidth: 0 }}>
+              {!planReadOnly && (
+                <button onClick={(e) => { e.stopPropagation(); bump(cls.id, -1); }} style={compact ? stepBtnCompact : stepBtn}>−</button>
               )}
-              <span style={{ fontSize: 11, fontWeight: 700, color: col.text, minWidth: 0, flex: 1, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden" }}>
+              <span style={{ fontSize: compact ? 10 : 11, fontWeight: 700, color: col.text, minWidth: 0, flex: 1, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden" }}>
                 {cls.reg}/{cap}{cls.reg >= cap && cap > 0 ? " · FULL" : ""}
               </span>
-              {h >= 88 && lanes === 1 && (
-                <button onClick={(e) => { e.stopPropagation(); bump(cls.id, +1); }} style={stepBtn}>＋</button>
+              {!planReadOnly && (
+                <button onClick={(e) => { e.stopPropagation(); bump(cls.id, +1); }} style={compact ? stepBtnCompact : stepBtn}>＋</button>
               )}
             </div>
             <div style={{ height: 4, background: "#e2e8f0", borderRadius: 2, marginTop: 3, overflow: "hidden" }}>
-              <div style={{ width: pct + "%", height: "100%", background: col.bar, borderRadius: 2, transition: "width .25s" }} />
+              <div style={{ width: `${pct}%`, height: "100%", background: col.bar, borderRadius: 2, transition: "width .25s" }} />
             </div>
           </div>
         )}
@@ -2766,15 +2780,16 @@ export default function ClassroomScheduler() {
               />
             ) : (
             <>
-            <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto" }}>
-              <div style={{ minWidth: 64 + rooms.length * 110, position: "relative" }}>
+            <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto", width: "100%" }}>
+              <OverviewRoomLegendBar rooms={rooms} />
+              <div style={{ minWidth: 64 + rooms.length * DAY_ROOM_MIN_W, position: "relative" }}>
                 {/* Room header row */}
                 <div style={{ display: "flex", borderBottom: "2px solid #d6dad4", background: "#fafaf8" }}>
                   <div style={{ flex: "0 0 64px", width: 64, position: "sticky", left: 0, zIndex: 4, background: "#fafaf8", boxSizing: "border-box", padding: "10px 6px", fontSize: 12, fontWeight: 600, color: "#475569", textAlign: "center" }}>
                     Time
                   </div>
                   {rooms.map((r) => (
-                    <div key={r.id} style={{ flex: 1, minWidth: 110, boxSizing: "border-box", padding: "8px 4px 9px", textAlign: "center", borderLeft: "1px solid #eceeea" }}>
+                    <div key={r.id} style={{ flex: 1, minWidth: DAY_ROOM_MIN_W, boxSizing: "border-box", padding: "8px 4px 9px", textAlign: "center", borderLeft: "1px solid #eceeea" }}>
                       <div
                         onClick={() => openRoomCapEditor(r.id)}
                         title={`Click to change Room ${r.id}'s capacity`}
@@ -2799,12 +2814,15 @@ export default function ClassroomScheduler() {
                         style={{
                           position: "absolute",
                           top: (t - gridStart) * PX_PER_MIN,
-                          right: 6,
+                          right: 4,
                           transform: t === gridStart ? "translateY(2px)" : t === gridEnd ? "translateY(calc(-100% - 2px))" : "translateY(-50%)",
-                          fontSize: 11, fontWeight: 700, color: "#94a3b8",
+                          fontSize: 10,
+                          fontWeight: 700,
+                          color: "#94a3b8",
+                          whiteSpace: "nowrap",
                         }}
                       >
-                        {fmtTime(t)}
+                        {fmtAmPm(t)}
                       </div>
                     ))}
                   </div>
@@ -2824,9 +2842,9 @@ export default function ClassroomScheduler() {
                         key={room.id}
                         {...colHandlers(room.id)}
                         title="Click an empty time to add a class here — or drag a card from the Class Library"
-                        style={{ flex: 1, minWidth: 110, position: "relative", height: gridH, boxSizing: "border-box", borderLeft: "1px solid #eceeea" }}
+                        style={{ flex: 1, minWidth: DAY_ROOM_MIN_W, position: "relative", height: gridH, boxSizing: "border-box", borderLeft: "1px solid #eceeea", background: "#fcfcfb" }}
                       >
-                        {colPls.map((p) => renderBlock(p, lanes.get(p.id)))}
+                        {colPls.map((p) => renderBlock(p, lanes.get(p.id), room.id))}
                         {ghost && ghost.rooms.includes(room.id) && (() => {
                           const lane = ghost.laneInfo?.[room.id] || { lane: 0, lanes: 1 };
                           const roomClash = ghost.roomConflict;
@@ -2883,7 +2901,7 @@ export default function ClassroomScheduler() {
               and click several room chips — the class then appears in every combined room's column (purple ⇆ note)
               and its capacity is the rooms' total. Drag a card back into the library to unschedule it. Red border =
               two classes overlap in one room; amber = the teacher is double-booked.
-              Green = room has space, amber = nearly full, red = at or over room capacity.{" "}
+              Card colors match rooms (see legend above); the enrollment bar shows capacity fill.{" "}
               {REMOTE_ENABLED ? "Everyone sees this same shared schedule." : "Data is saved in this browser."}
             </p>
             </>
