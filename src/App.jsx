@@ -51,6 +51,7 @@ import {
   layoutLanes,
   formatDayRange,
   classScheduleLines,
+  classScheduleGroups,
   sortCatalogForByClassView,
   overviewPillStyle,
   overviewRoomLabel,
@@ -3456,7 +3457,6 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
   const roomOrder = rooms.map((r) => r.id);
   const roomCap = (id) => idx?.roomCapById?.get(id) ?? 12;
   const capOfRooms = (list) => (list || []).reduce((s, id) => s + roomCap(id), 0);
-  const classOfId = (id) => catalog.find((k) => k.id === id);
 
   const layout = useMemo(
     () => computeWeekOverviewLayout(days, hours, idx.placementsByDay, PX_PER_MIN),
@@ -3464,52 +3464,78 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
   );
   const { gridStart, gridEnd, gridH, hourMarks, halfMarks } = layout;
 
+  const classBlocks = useMemo(() => {
+    return sortCatalogForByClassView(catalog, placements)
+      .filter((k) => idx.scheduledClassIds?.has(k.id))
+      .map((cls) => {
+        const groups = classScheduleGroups(placements, cls.id);
+        if (!groups.length) return null;
+        const start = Math.min(...groups.map((g) => g.start));
+        const end = Math.max(...groups.map((g) => g.end));
+        const primary = groups[0];
+        const roomId = primaryRoomForPlacement(primary.rooms, roomOrder);
+        return { classId: cls.id, cls, start, end, roomId, rooms: primary.rooms, groups };
+      })
+      .filter(Boolean);
+  }, [catalog, placements, idx.scheduledClassIds, roomOrder]);
+
   const roomGrid = useMemo(() => {
     const colByRoom = new Map();
     const lanesByRoom = new Map();
     rooms.forEach((r) => {
-      const colPls = placements.filter((p) => p.rooms.includes(r.id));
-      colByRoom.set(r.id, colPls);
-      lanesByRoom.set(r.id, layoutLanes(colPls));
+      const colBlocks = classBlocks.filter((b) => b.roomId === r.id);
+      const laneItems = colBlocks.map((b) => ({ id: b.classId, start: b.start, end: b.end }));
+      colByRoom.set(r.id, colBlocks);
+      lanesByRoom.set(r.id, layoutLanes(laneItems));
     });
     return { colByRoom, lanesByRoom };
-  }, [placements, rooms]);
+  }, [classBlocks, rooms]);
 
   const unscheduled = useMemo(
     () => sortCatalogForByClassView(catalog, placements).filter((k) => !idx.scheduledClassIds?.has(k.id)),
     [catalog, placements, idx.scheduledClassIds]
   );
 
-  const blockClash = (p, cls) => {
-    const ev = evaluatePlacement(
-      idx,
-      { day: p.day, start: p.start, end: p.end, rooms: p.rooms },
-      { excludePlacementId: p.id, teacher: cls?.teacher }
-    );
-    return { roomClash: ev.roomClashes.length > 0, teacherClash: ev.hasTeacherConflict };
+  const classClash = (cls) => {
+    let roomClash = false;
+    let teacherClash = false;
+    placements
+      .filter((p) => p.classId === cls.id)
+      .forEach((p) => {
+        const ev = evaluatePlacement(
+          idx,
+          { day: p.day, start: p.start, end: p.end, rooms: p.rooms },
+          { excludePlacementId: p.id, teacher: cls?.teacher }
+        );
+        if (ev.roomClashes.length) roomClash = true;
+        if (ev.hasTeacherConflict) teacherClash = true;
+      });
+    return { roomClash, teacherClash };
   };
 
-  const renderBlock = (p, roomId, laneInfo) => {
-    const cls = classOfId(p.classId);
-    if (!cls) return null;
+  const renderBlock = (block, roomId, laneInfo) => {
+    const { cls, classId, start, end, rooms: blockRooms, groups } = block;
     const { lane, lanes: laneCount } = laneInfo || { lane: 0, lanes: 1 };
-    const top = (p.start - gridStart) * PX_PER_MIN;
-    const h = (p.end - p.start) * PX_PER_MIN;
-    const cap = capOfRooms(p.rooms);
+    const top = (start - gridStart) * PX_PER_MIN;
+    const slotH = (end - start) * PX_PER_MIN;
+    const contentMinH = 52 + groups.length * 28 + 36;
+    const h = Math.max(56, slotH - 2, contentMinH);
+    const cap = capOfRooms(blockRooms);
     const col = ratioColor(cls.reg, cap);
     const pct = cap ? Math.min(100, Math.round((cls.reg / cap) * 100)) : 0;
     const rc = roomOverviewColor(roomId, roomOrder);
-    const { roomClash, teacherClash } = blockClash(p, cls);
-    const combined = p.rooms.length > 1;
+    const { roomClash, teacherClash } = classClash(cls);
+    const combined = blockRooms.length > 1;
+    const summary = groups.map((g) => `${g.dayLabel} ${g.timeLabel}`).join(" · ");
     return (
       <div
-        key={p.id}
-        onClick={(e) => { e.stopPropagation(); onEditClass(cls.id, p.id); }}
-        title={`${DAY_LABEL[p.day]} · ${cls.name} · ${fmtRange(p.start, p.end)} · ${cls.teacher || "TBD"} · ${overviewRoomLabel(p.rooms)} — click to edit`}
+        key={classId}
+        onClick={(e) => { e.stopPropagation(); onEditClass(cls.id); }}
+        title={`${cls.name} · ${summary} · ${cls.teacher || "TBD"} · ${overviewRoomLabel(blockRooms)} — click to edit`}
         style={{
           position: "absolute",
           top: top + 1,
-          height: Math.max(42, h - 2),
+          height: h,
           left: `calc(${(lane / laneCount) * 100}% + 2px)`,
           width: `calc(${100 / laneCount}% - 4px)`,
           boxSizing: "border-box",
@@ -3526,42 +3552,44 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
         }}
       >
         <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column", gap: 1 }}>
-          <div style={{ fontWeight: 700, fontSize: 11.5, lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            <span style={{ opacity: 0.85, marginRight: 3 }}>{DAY_SHORT[p.day]}</span>
+          <div style={{ fontWeight: 700, fontSize: 12, lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {cls.name}{(roomClash || teacherClash) ? " ⚠" : ""}
           </div>
-          <div style={{ fontSize: 10.5, opacity: 0.92, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            {fmtRange(p.start, p.end)}
+          {groups.map((g, i) => (
+            <React.Fragment key={i}>
+              <div style={{ fontSize: 10.5, opacity: 0.95, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {g.timeLabel}
+              </div>
+              <div style={{ fontSize: 10.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {g.dayLabel}
+              </div>
+            </React.Fragment>
+          ))}
+          <div style={{ fontSize: 10.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {cls.teacher || <i style={{ color: "#b45309" }}>TBD</i>}
           </div>
-          {h >= 48 && (
-            <div style={{ fontSize: 10.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-              {cls.teacher || <i style={{ color: "#b45309" }}>TBD</i>}
-            </div>
-          )}
-          {combined && h >= 56 && (
+          {combined && (
             <div style={{ fontSize: 10, color: "#7c3aed", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-              ⇆ Rm {[...p.rooms].sort((a, b) => (roomOrder.indexOf(a) ?? 99) - (roomOrder.indexOf(b) ?? 99)).join("+")}
+              ⇆ Rm {[...blockRooms].sort((a, b) => (roomOrder.indexOf(a) ?? 99) - (roomOrder.indexOf(b) ?? 99)).join("+")}
             </div>
           )}
         </div>
-        {h >= 52 && (
-          <div style={{ flexShrink: 0, marginTop: 2 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 2, minWidth: 0 }}>
-              {!planReadOnly && h >= 68 && (
-                <button type="button" onClick={(e) => { e.stopPropagation(); onBumpReg(cls.id, -1); }} style={stepBtn}>−</button>
-              )}
-              <span style={{ fontSize: 10.5, fontWeight: 700, color: col.text, flex: 1, textAlign: "center", whiteSpace: "nowrap" }}>
-                {cls.reg}/{cap}
-              </span>
-              {!planReadOnly && h >= 68 && (
-                <button type="button" onClick={(e) => { e.stopPropagation(); onBumpReg(cls.id, +1); }} style={stepBtn}>＋</button>
-              )}
-            </div>
-            <div style={{ height: 4, background: "#e2e8f0", borderRadius: 2, marginTop: 2, overflow: "hidden" }}>
-              <div style={{ width: `${pct}%`, height: "100%", background: col.bar, borderRadius: 2 }} />
-            </div>
+        <div style={{ flexShrink: 0, marginTop: 2 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 2, minWidth: 0 }}>
+            {!planReadOnly && h >= 68 && (
+              <button type="button" onClick={(e) => { e.stopPropagation(); onBumpReg(cls.id, -1); }} style={stepBtn}>−</button>
+            )}
+            <span style={{ fontSize: 10.5, fontWeight: 700, color: col.text, flex: 1, textAlign: "center", whiteSpace: "nowrap" }}>
+              {cls.reg}/{cap}
+            </span>
+            {!planReadOnly && h >= 68 && (
+              <button type="button" onClick={(e) => { e.stopPropagation(); onBumpReg(cls.id, +1); }} style={stepBtn}>＋</button>
+            )}
           </div>
-        )}
+          <div style={{ height: 4, background: "#e2e8f0", borderRadius: 2, marginTop: 2, overflow: "hidden" }}>
+            <div style={{ width: `${pct}%`, height: "100%", background: col.bar, borderRadius: 2 }} />
+          </div>
+        </div>
       </div>
     );
   };
@@ -3615,14 +3643,14 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
               ))}
             </div>
             {rooms.map((room) => {
-              const colPls = roomGrid.colByRoom.get(room.id) || [];
+              const colBlocks = roomGrid.colByRoom.get(room.id) || [];
               const lanes = roomGrid.lanesByRoom.get(room.id) || new Map();
               return (
                 <div
                   key={room.id}
                   style={{ flex: 1, minWidth: 110, position: "relative", height: gridH, boxSizing: "border-box", borderLeft: "1px solid #eceeea", background: "#fcfcfb" }}
                 >
-                  {colPls.map((p) => renderBlock(p, room.id, lanes.get(p.id)))}
+                  {colBlocks.map((b) => renderBlock(b, room.id, lanes.get(b.classId)))}
                 </div>
               );
             })}
@@ -3647,8 +3675,8 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
         </div>
       )}
       <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
-        📋 All classes on one grid — time ({fmtAmPm(gridStart)}–{fmtAmPm(gridEnd)}) × rooms.
-        Day + class name on each block; colors follow the room legend. Use −/+ to adjust enrollment — no drag here.
+        📋 One block per class — time ({fmtAmPm(gridStart)}–{fmtAmPm(gridEnd)}) × rooms.
+        Name, time, days (Mon to Fri / Mon & Tue), teacher, and cap bar on each block. Use −/+ to adjust enrollment — no drag here.
       </p>
     </>
   );

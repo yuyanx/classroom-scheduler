@@ -249,6 +249,13 @@ const fmtTimeRangeAmPm = (start: number, end: number) => {
   return `${fmtAmPm(start)}–${fmtAmPm(end)}`;
 };
 
+const formatDayRun = (r: string[]) => {
+  if (r.length === 1) return DAY_SHORT[r[0]];
+  if (r.length === 2) return `${DAY_SHORT[r[0]]} & ${DAY_SHORT[r[1]]}`;
+  if (r.length === 5 && r[0] === "mon" && r[4] === "fri") return "Mon to Fri";
+  return `${DAY_SHORT[r[0]]} to ${DAY_SHORT[r[r.length - 1]]}`;
+};
+
 export const formatDayRange = (dayList: string[]) => {
   const sorted = [...new Set(dayList)].sort((a, b) => dayIdx(a) - dayIdx(b));
   if (!sorted.length) return "";
@@ -259,25 +266,45 @@ export const formatDayRange = (dayList: string[]) => {
     else { runs.push(run); run = [sorted[i]]; }
   }
   runs.push(run);
-  return runs.map((r) => {
-    if (r.length === 1) return DAY_SHORT[r[0]];
-    if (r.length === 5 && r[0] === "mon" && r[4] === "fri") return "Mon to Fri";
-    return `${DAY_SHORT[r[0]]} to ${DAY_SHORT[r[r.length - 1]]}`;
-  }).join(", ");
+  if (runs.length > 1 && runs.every((r) => r.length === 1)) {
+    return runs.map((r) => formatDayRun(r)).join(" & ");
+  }
+  return runs.map((r) => formatDayRun(r)).join(", ");
+};
+
+const groupClassPlacements = (pls: { day: string; start: number; end: number; rooms: string[] }[]) => {
+  const groups = new Map<string, { start: number; end: number; days: string[]; rooms: string[] }>();
+  pls.forEach((p) => {
+    const key = `${p.start}|${p.end}|${[...p.rooms].sort().join("+")}`;
+    if (!groups.has(key)) groups.set(key, { start: p.start, end: p.end, days: [], rooms: p.rooms });
+    groups.get(key)!.days.push(p.day);
+  });
+  return [...groups.values()].sort(
+    (a, b) =>
+      a.start - b.start ||
+      dayIdx([...a.days].sort((x, y) => dayIdx(x) - dayIdx(y))[0]) -
+        dayIdx([...b.days].sort((x, y) => dayIdx(x) - dayIdx(y))[0]),
+  );
+};
+
+export const classScheduleGroups = (
+  placements: { classId: string; day: string; start: number; end: number; rooms: string[] }[],
+  classId: string,
+) => {
+  const pls = placements.filter((p) => p.classId === classId);
+  return groupClassPlacements(pls).map((g) => ({
+    start: g.start,
+    end: g.end,
+    rooms: g.rooms,
+    dayLabel: formatDayRange(g.days),
+    timeLabel: fmtTimeRangeAmPm(g.start, g.end),
+  }));
 };
 
 export const classScheduleLines = (placements: { classId: string; day: string; start: number; end: number; rooms: string[] }[], classId: string) => {
   const pls = placements.filter((p) => p.classId === classId);
   if (!pls.length) return [];
-  const groups = new Map<string, { start: number; end: number; days: string[] }>();
-  pls.forEach((p) => {
-    const key = `${p.start}|${p.end}|${[...p.rooms].sort().join("+")}`;
-    if (!groups.has(key)) groups.set(key, { start: p.start, end: p.end, days: [] });
-    groups.get(key)!.days.push(p.day);
-  });
-  return [...groups.values()]
-    .sort((a, b) => a.start - b.start || dayIdx([...a.days].sort((x, y) => dayIdx(x) - dayIdx(y))[0]) - dayIdx([...b.days].sort((x, y) => dayIdx(x) - dayIdx(y))[0]))
-    .map((g) => `${formatDayRange(g.days)} ${fmtTimeRangeAmPm(g.start, g.end)}`);
+  return groupClassPlacements(pls).map((g) => `${formatDayRange(g.days)} ${fmtTimeRangeAmPm(g.start, g.end)}`);
 };
 
 /** Group key for catalog sort — "5/6th ELA" and "5/6th Math" share bucket "5/6th". */

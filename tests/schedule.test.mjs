@@ -10,6 +10,7 @@ import {
   teacherBusyIndexed,
   computeTabBlockMeta,
   classScheduleLines,
+  classScheduleGroups,
   sortCatalogForByClassView,
   layoutLanes,
   formatDayRange,
@@ -152,6 +153,19 @@ test("classScheduleLines groups weekdays", () => {
 
 test("formatDayRange collapses Mon–Fri", () => {
   assert.equal(formatDayRange(["fri", "mon", "wed", "tue", "thu"]), "Mon to Fri");
+});
+
+test("formatDayRange uses & for two days", () => {
+  assert.equal(formatDayRange(["mon", "tue"]), "Mon & Tue");
+  assert.equal(formatDayRange(["mon", "wed"]), "Mon & Wed");
+});
+
+test("classScheduleGroups splits time and day labels", () => {
+  const placements = WEEKDAY_PLACEMENTS("k1", 540, 630, ["1"]);
+  const groups = classScheduleGroups(placements, "k1");
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].dayLabel, "Mon to Fri");
+  assert.equal(groups[0].timeLabel, "9:00–10:30 AM");
 });
 
 test("sortCatalogForByClassView: unscheduled first, then letter, then time", () => {

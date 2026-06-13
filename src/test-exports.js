@@ -14,6 +14,7 @@ export {
   layoutLanes,
   formatDayRange,
   classScheduleLines,
+  classScheduleGroups,
   sortCatalogForByClassView,
   roomOverviewColor,
   primaryRoomForPlacement,
