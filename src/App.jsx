@@ -3451,7 +3451,7 @@ function WeekOverviewView({ days, hours, rooms, idx, onEditClass }) {
   );
 }
 
-// ───────────────────────── By-class schedule view (time axis × days) ─────────────────────────
+// ───────────────────────── By-class schedule view (time axis × rooms) ─────────────────────────
 function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planReadOnly, onBumpReg, onEditClass }) {
   const roomOrder = rooms.map((r) => r.id);
   const roomCap = (id) => idx?.roomCapById?.get(id) ?? 12;
@@ -3464,10 +3464,10 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
   );
   const { gridStart, gridEnd, gridH, hourMarks, halfMarks } = layout;
 
-  const meetingsFor = (classId, day) =>
+  const meetingsForClass = (classId) =>
     placements
-      .filter((p) => p.classId === classId && p.day === day)
-      .sort((a, b) => a.start - b.start);
+      .filter((p) => p.classId === classId)
+      .sort((a, b) => a.start - b.start || dayIdx(a.day) - dayIdx(b.day));
 
   const blockClash = (p, cls) => {
     const ev = evaluatePlacement(
@@ -3491,27 +3491,28 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
           key={t}
           style={{
             position: "absolute",
-            right: 4,
+            right: 6,
             top: (t - gridStart) * PX_PER_MIN,
             transform: t === gridStart ? "translateY(2px)" : t === gridEnd ? "translateY(calc(-100% - 2px))" : "translateY(-50%)",
-            fontSize: 10,
-            color: "#64748b",
+            fontSize: 11,
+            color: "#94a3b8",
             fontWeight: 700,
             whiteSpace: "nowrap",
             zIndex: 2,
           }}
         >
-          {fmtAmPm(t)}
+          {fmtTime(t)}
         </div>
       ))}
     </div>
   );
 
-  const renderDayCell = (k, d) => {
-    const list = meetingsFor(k.id, d);
+  const renderRoomCell = (cls, roomId) => {
+    const list = meetingsForClass(cls.id).filter((p) => p.rooms.includes(roomId));
     const lanes = layoutLanes(list);
+    const rc = roomOverviewColor(roomId, roomOrder);
     return (
-      <td key={d} style={{ ...tdStyle, padding: 0, verticalAlign: "top", borderRight: "1px solid #eceeea" }}>
+      <td key={roomId} style={{ ...tdStyle, padding: 0, verticalAlign: "top", borderRight: "1px solid #eceeea", minWidth: 110 }}>
         <div style={{ position: "relative", height: gridH, background: "#fcfcfb", overflow: "hidden" }}>
           {halfMarks.map((t) => (
             <div
@@ -3526,7 +3527,6 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
             />
           ))}
           {list.map((p) => {
-            const cls = k;
             const laneInfo = lanes.get(p.id) || { lane: 0, lanes: 1 };
             const { lane, lanes: laneCount } = laneInfo;
             const top = (p.start - gridStart) * PX_PER_MIN;
@@ -3534,15 +3534,13 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
             const cap = capOfRooms(p.rooms);
             const col = ratioColor(cls.reg, cap);
             const pct = cap ? Math.min(100, Math.round((cls.reg / cap) * 100)) : 0;
-            const primaryRoom = primaryRoomForPlacement(p.rooms, roomOrder);
-            const rc = roomOverviewColor(primaryRoom, roomOrder);
             const { roomClash, teacherClash } = blockClash(p, cls);
             const combined = p.rooms.length > 1;
             return (
               <div
                 key={p.id}
                 onClick={(e) => { e.stopPropagation(); onEditClass(cls.id, p.id); }}
-                title={`${cls.name} · ${fmtRange(p.start, p.end)} · ${cls.teacher || "TBD"} · ${overviewRoomLabel(p.rooms)} — click to edit`}
+                title={`${DAY_LABEL[p.day]} · ${cls.name} · ${fmtRange(p.start, p.end)} · ${cls.teacher || "TBD"} · ${overviewRoomLabel(p.rooms)} — click to edit`}
                 style={{
                   position: "absolute",
                   top: top + 1,
@@ -3564,6 +3562,7 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
               >
                 <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column", gap: 1 }}>
                   <div style={{ fontWeight: 700, fontSize: 11.5, lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    <span style={{ opacity: 0.85, marginRight: 3 }}>{DAY_SHORT[p.day]}</span>
                     {cls.name}{(roomClash || teacherClash) ? " ⚠" : ""}
                   </div>
                   <div style={{ fontSize: 10.5, opacity: 0.92, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -3606,7 +3605,7 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
     );
   };
 
-  const tableMinW = 200 + 64 + days.length * 132;
+  const tableMinW = 200 + 64 + rooms.length * 110;
 
   return (
     <>
@@ -3617,14 +3616,22 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
             <tr>
               <th style={{ ...thStyle, width: 200, position: "sticky", left: 0, background: "#fafaf8", zIndex: 3 }}>Class</th>
               <th style={{ ...thStyle, width: 64, background: "#fafaf8" }}>Time</th>
-              {days.map((d) => (
-                <th key={d} style={{ ...thStyle, minWidth: 132 }}>{DAY_LABEL[d]}</th>
-              ))}
+              {rooms.map((r) => {
+                const rc = roomOverviewColor(r.id, roomOrder);
+                return (
+                  <th key={r.id} style={{ ...thStyle, minWidth: 110 }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, justifyContent: "center" }}>
+                      <span style={{ width: 10, height: 10, borderRadius: 3, background: rc.bg, border: `1px solid ${rc.border}`, flexShrink: 0 }} />
+                      Room {r.id}
+                    </span>
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody>
             {rows.map((k) => {
-              const scheduled = idx.scheduledClassIds?.has(k.id) || days.some((d) => meetingsFor(k.id, d).length > 0);
+              const scheduled = idx.scheduledClassIds?.has(k.id) || meetingsForClass(k.id).length > 0;
               return (
                 <tr key={k.id} style={{ background: scheduled ? "transparent" : "#fffbeb" }}>
                   <td
@@ -3652,13 +3659,13 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
                   <td style={{ ...tdStyle, width: 64, padding: "4px 2px", verticalAlign: "top", background: "#fafaf8" }}>
                     {renderTimeGutter()}
                   </td>
-                  {days.map((d) => renderDayCell(k, d))}
+                  {rooms.map((r) => renderRoomCell(k, r.id))}
                 </tr>
               );
             })}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={days.length + 2} style={{ ...tdStyle, color: "#94a3b8", fontSize: 13 }}>
+                <td colSpan={rooms.length + 2} style={{ ...tdStyle, color: "#94a3b8", fontSize: 13 }}>
                   No classes yet — add one in the Class Library.
                 </td>
               </tr>
@@ -3667,8 +3674,8 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
         </table>
       </div>
       <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
-        📋 One row per class — vertical axis matches the day tabs ({fmtAmPm(gridStart)}–{fmtAmPm(gridEnd)}).
-        Block colors follow the room legend; use −/+ to adjust enrollment. Click a block to edit — no drag here.
+        📋 One row per class — time on the left ({fmtAmPm(gridStart)}–{fmtAmPm(gridEnd)}), rooms across the top.
+        Day label on each block; colors follow the room legend. Use −/+ to adjust enrollment — no drag here.
       </p>
     </>
   );
