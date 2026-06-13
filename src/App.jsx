@@ -2781,7 +2781,6 @@ export default function ClassroomScheduler() {
             ) : (
             <>
             <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto", width: "100%" }}>
-              <OverviewRoomLegendBar rooms={rooms} />
               <div style={{ minWidth: 64 + rooms.length * DAY_ROOM_MIN_W, position: "relative" }}>
                 {/* Room header row */}
                 <div style={{ display: "flex", borderBottom: "2px solid #d6dad4", background: "#fafaf8" }}>
@@ -2899,7 +2898,7 @@ export default function ClassroomScheduler() {
               and click several room chips — the class then appears in every combined room's column (purple ⇆ note)
               and its capacity is the rooms' total. Drag a card back into the library to unschedule it. Red border =
               two classes overlap in one room; amber = the teacher is double-booked.
-              Card colors match rooms (see legend above); the enrollment bar shows capacity fill.{" "}
+              Card colors match room column headers; the enrollment bar shows capacity fill.{" "}
               {REMOTE_ENABLED ? "Everyone sees this same shared schedule." : "Data is saved in this browser."}
             </p>
             </>
@@ -3352,25 +3351,6 @@ function RoomHeaderBadge({ roomId, roomOrder }) {
   );
 }
 
-// ───────────────────────── Room color legend (shared by overview tabs) ─────────────────────────
-function OverviewRoomLegendBar({ rooms }) {
-  const roomIds = rooms.map((r) => r.id);
-  return (
-    <div style={{ padding: "8px 12px", borderBottom: "1px solid #eceeea", display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", background: "#fafaf8" }}>
-      <span style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Room colors:</span>
-      {rooms.map((r) => {
-        const c = roomOverviewColor(r.id, roomIds);
-        return (
-          <span key={r.id} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: c.text }}>
-            <span style={{ width: 14, height: 14, borderRadius: 4, background: c.bg, border: `1px solid ${c.border}`, flexShrink: 0 }} />
-            Room {r.id}
-          </span>
-        );
-      })}
-    </div>
-  );
-}
-
 // ───────────────────────── Week overview (time × days, room-colored) ─────────────────────────
 function WeekOverviewView({ days, hours, rooms, idx, onEditClass }) {
   const roomIds = rooms.map((r) => r.id);
@@ -3388,7 +3368,6 @@ function WeekOverviewView({ days, hours, rooms, idx, onEditClass }) {
 
   return (
     <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto", width: "100%" }}>
-      <OverviewRoomLegendBar rooms={rooms} />
       <div style={{ minWidth: 64 + days.length * 132, position: "relative" }}>
         <div style={{ display: "flex", borderBottom: "2px solid #d6dad4", background: "#fafaf8" }}>
           <div style={{ flex: "0 0 64px", width: 64, position: "sticky", left: 0, zIndex: 6, background: "#fafaf8", boxSizing: "border-box", padding: "10px 4px", fontSize: 11, fontWeight: 600, color: "#475569", textAlign: "center", boxShadow: "2px 0 4px rgba(15,23,42,.06)" }}>
@@ -3718,7 +3697,6 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
   return (
     <>
       <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto", width: "100%" }}>
-        <OverviewRoomLegendBar rooms={rooms} />
         <div style={{ minWidth: 64 + rooms.length * BY_CLASS_ROOM_MIN_W, position: "relative" }}>
           <div style={{ display: "flex", borderBottom: "2px solid #d6dad4", background: "#fafaf8" }}>
             <div style={{ flex: "0 0 64px", width: 64, position: "sticky", left: 0, zIndex: 4, background: "#fafaf8", boxSizing: "border-box", padding: "10px 6px", fontSize: 12, fontWeight: 600, color: "#475569", textAlign: "center" }}>
@@ -3893,7 +3871,6 @@ function TeacherScheduleView({ teachers, catalog, placements, days, rooms, idx, 
   return (
     <>
       <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto", width: "100%" }}>
-        <OverviewRoomLegendBar rooms={rooms} />
         <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 180 + days.length * 155, tableLayout: "fixed" }}>
           <thead>
             <tr>
@@ -3935,7 +3912,7 @@ function TeacherScheduleView({ teachers, catalog, placements, days, rooms, idx, 
       </div>
       <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
         👤 One row per teacher — classes they teach across the week. Click any class card to edit.
-        Pill colors match the room legend above.
+        Pill colors match each room.
         <span style={{ color: "#b91c1c", fontWeight: 700 }}> Red </span>
         = room overlap ·
         <span style={{ color: "#b45309", fontWeight: 700 }}> amber </span>
