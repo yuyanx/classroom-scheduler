@@ -1036,22 +1036,20 @@ const isVercelGitPreviewHost = (hostname) => {
   const h = hostname || "";
   return /\.vercel\.app$/i.test(h) && /-git-/i.test(h);
 };
-// Vercel preview deploys must not write to the shared Supabase row.
+// Preview = branch deploys (-git-) or explicit VERCEL_ENV=preview only.
+// Production deployment URLs (hash-team.vercel.app) must sync even when the
+// committed bundle has an empty VERCEL_ENV (local esbuild default).
 const isPreviewHost = (hostname, vercelEnv = VERCEL_ENV) => {
   if (isVercelGitPreviewHost(hostname)) return true;
   if (vercelEnv === "preview") return true;
-  if (vercelEnv === "production") return false;
-  const h = hostname || "";
-  return /\.vercel\.app$/i.test(h) && h !== PRODUCTION_HOST && !h.endsWith(`.${PRODUCTION_HOST}`);
+  return false;
 };
 
 const isRemoteSyncEnabled = (hostname, vercelEnv = VERCEL_ENV) => {
   if (!SUPABASE_URL || !SUPABASE_KEY) return false;
   if (isLocalDevHost(hostname)) return false;
-  if (isVercelGitPreviewHost(hostname)) return false;
-  if (vercelEnv === "preview") return false;
-  if (vercelEnv === "production") return true;
-  return !isPreviewHost(hostname, vercelEnv);
+  if (isPreviewHost(hostname, vercelEnv)) return false;
+  return true;
 };
 
 const IS_LOCAL_DEV = typeof window !== "undefined" && isLocalDevHost(window.location.hostname);
@@ -1126,13 +1124,15 @@ function emptyDragImage() {
 // ───────────────────────── Main component ─────────────────────────
 export default function ClassroomScheduler() {
   const initialPlanId = typeof window !== "undefined" ? getActivePlanId() : 1;
-  const initialCached = typeof window !== "undefined" ? readScheduleCache(initialPlanId) : null;
+  const initialCached = typeof window !== "undefined" && !REMOTE_ENABLED
+    ? readScheduleCache(initialPlanId)
+    : null;
   const [activePlanId, setActivePlanId] = useState(initialPlanId);
   const [plans, setPlans] = useState([]);
   const [planMeta, setPlanMeta] = useState({ name: "Main schedule", kind: PLAN_KIND.LIVE, createdAt: null });
   const [planMenuOpen, setPlanMenuOpen] = useState(false);
   const [planDialog, setPlanDialog] = useState(null); // { mode, name, copyFromCurrent? }
-  const [plansReady, setPlansReady] = useState(false);
+  const [plansReady, setPlansReady] = useState(!REMOTE_ENABLED);
   const [data, setData] = useState(() => (initialCached ? upgrade(initialCached) : loadData()));
   const [saveStatus, setSaveStatus] = useState({
     ok: true,
@@ -1622,7 +1622,15 @@ export default function ClassroomScheduler() {
           });
         }
       } catch (e) {
-        if (!cancelled) setStatus(false, "Offline — using this browser's copy", e?.message || "");
+        if (!cancelled) {
+          const cached = readScheduleCache(getActivePlanId());
+          if (cached && (!dataRef.current.placements?.length || dataSignature(upgrade(cached)) !== dataSignature(dataRef.current))) {
+            const next = upgrade(cached);
+            const planId = getActivePlanId();
+            loadPlanIntoState(planId, next, planMetaRef.current, null);
+          }
+          setStatus(false, "Offline — using this browser's copy", e?.message || "");
+        }
       } finally {
         if (!cancelled) setPlansReady(true);
       }
@@ -1660,7 +1668,29 @@ export default function ClassroomScheduler() {
         }
       } catch (e) { /* ignore transient poll errors */ }
     }, REMOTE_POLL_MS);
+    const refreshFromRemote = async () => {
+      if (document.hidden || !canApplyRemotePoll(remoteRef.current)) return;
+      if (activePlanIdRef.current !== planId) return;
+      try {
+        const row = await planApi.remoteLoadPlan(planId);
+        if (!row || !canApplyRemotePoll(remoteRef.current) || activePlanIdRef.current !== planId) return;
+        const next = scheduleFromRowData(row.data);
+        if (dataSignature(next) !== dataSignature(dataRef.current)) {
+          const meta = planMetaFromRow(row);
+          dataRef.current = next;
+          setData(next);
+          setPlanMeta(meta);
+          writeScheduleCache(planId, next);
+          flushLocalSave(next);
+          setStatus(true, `“${meta.name}” updated from shared schedule at ${timeLabel()}`);
+        }
+        remoteRef.current.lastSyncedAt = row.updated_at;
+        markRevisionSaved(remoteRef.current);
+      } catch (e) { /* ignore */ }
+    };
+    const onVisible = () => { if (!document.hidden) refreshFromRemote(); };
     const onOnline = () => {
+      refreshFromRemote();
       if (remoteRef.current.lastSaveFailed && !remoteRef.current.pendingSave && !isPlanReadOnly(planMetaRef.current.kind)) {
         flushRemoteSave(dataRef.current);
       }
@@ -1683,11 +1713,13 @@ export default function ClassroomScheduler() {
       }
     };
     window.addEventListener("online", onOnline);
+    window.addEventListener("visibilitychange", onVisible);
     window.addEventListener("pagehide", onPageHide);
     return () => {
       clearInterval(iv);
       clearTimeout(remoteRef.current.retryTimer);
       window.removeEventListener("online", onOnline);
+      window.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("pagehide", onPageHide);
     };
   }, [activePlanId, plansReady, flushRemoteSave, flushLocalSave]);
@@ -2475,6 +2507,12 @@ export default function ClassroomScheduler() {
           </div>
         </div>
       </header>
+
+      {REMOTE_ENABLED && !plansReady && (
+        <div style={{ background: "#ecfdf5", borderBottom: "1px solid #a7f3d0", padding: "8px 24px", fontSize: 13, color: "#065f46" }}>
+          Loading shared schedule from the server…
+        </div>
+      )}
 
       {planReadOnly && (
         <div style={{ background: "#f8fafc", borderBottom: "1px solid #e2e8f0", padding: "8px 24px", fontSize: 13, color: "#475569", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>

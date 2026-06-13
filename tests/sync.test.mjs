@@ -17,6 +17,7 @@ test("isLocalDevHost recognizes localhost", () => {
 test("isPreviewHost gates Vercel preview but not production", () => {
   assert.equal(isPreviewHost("foo-git-branch-user.vercel.app"), true);
   assert.equal(isPreviewHost(PRODUCTION_HOST), false);
+  assert.equal(isPreviewHost("classroom-scheduler-abc123-yuyanxs-projects.vercel.app"), false);
   assert.equal(isPreviewHost("localhost"), false);
 });
 
@@ -47,6 +48,7 @@ test("VERCEL_ENV=preview blocks sync even on production-looking host", () => {
 
 test("isRemoteSyncEnabled false for localhost and preview", () => {
   assert.equal(isRemoteSyncEnabled("localhost"), false);
-  assert.equal(isRemoteSyncEnabled("branch-preview.vercel.app"), false);
+  assert.equal(isRemoteSyncEnabled("foo-git-branch-user.vercel.app"), false);
+  assert.equal(isRemoteSyncEnabled("classroom-scheduler-abc123-yuyanxs-projects.vercel.app"), true);
   assert.equal(isRemoteSyncEnabled(PRODUCTION_HOST), true);
 });
