@@ -2163,7 +2163,7 @@ export default function ClassroomScheduler() {
     if (!cls) return null;
     const end = resize?.plId === p.id ? resize.end : p.end;
     const top = (p.start - gridStart) * PX_PER_MIN;
-    const h = Math.max(14, (end - p.start) * PX_PER_MIN - 6);
+    const h = Math.max(14, (end - p.start) * PX_PER_MIN - 2);
     const { lane, lanes } = laneInfo || { lane: 0, lanes: 1 };
     const combined = p.rooms.length > 1;
     const cap = capOfRooms(p.rooms);
@@ -2235,7 +2235,7 @@ export default function ClassroomScheduler() {
               ? "0 0 0 3px rgba(217,119,6,.12)"
               : "none",
           borderRadius: 8,
-          padding: compact ? "3px 5px 6px" : "4px 7px 9px",
+          padding: compact ? "3px 5px 2px" : "4px 7px 2px",
           overflow: "hidden",
           cursor: "grab",
           opacity: isDragging ? 0.35 : 1,
@@ -2259,39 +2259,41 @@ export default function ClassroomScheduler() {
             </div>
           )}
         </div>
-        {h >= 40 && (
-          <div style={{ ...metaLine, flexShrink: 0, color: "#334155", fontWeight: 600 }}>
-            {teacherLabel}
-          </div>
-        )}
-        {h >= regThreshold && (
-          <div style={{ flexShrink: 0, marginTop: 2, minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: compact ? 1 : 3, minWidth: 0 }}>
-              {!planReadOnly && (
-                <button onClick={(e) => { e.stopPropagation(); bump(cls.id, -1); }} style={compact ? stepBtnCompact : stepBtn}>−</button>
-              )}
-              <span style={{ fontSize: compact ? 10 : 11, fontWeight: 700, color: col.text, minWidth: 0, flex: 1, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden" }}>
-                {cls.reg}/{cap}{cls.reg >= cap && cap > 0 ? " · FULL" : ""}
-              </span>
-              {!planReadOnly && (
-                <button onClick={(e) => { e.stopPropagation(); bump(cls.id, +1); }} style={compact ? stepBtnCompact : stepBtn}>＋</button>
-              )}
+        <div style={{ flexShrink: 0, marginTop: "auto", minWidth: 0, display: "flex", flexDirection: "column", gap: compact ? 1 : 2 }}>
+          {h >= 40 && (
+            <div style={{ ...metaLine, color: "#334155", fontWeight: 600 }}>
+              {teacherLabel}
             </div>
-            <div style={{ height: 4, background: "#e2e8f0", borderRadius: 2, marginTop: 3, overflow: "hidden" }}>
-              <div style={{ width: `${pct}%`, height: "100%", background: col.bar, borderRadius: 2, transition: "width .25s" }} />
+          )}
+          {h >= regThreshold && (
+            <div style={{ minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: compact ? 1 : 3, minWidth: 0 }}>
+                {!planReadOnly && (
+                  <button onClick={(e) => { e.stopPropagation(); bump(cls.id, -1); }} style={compact ? stepBtnCompact : stepBtn}>−</button>
+                )}
+                <span style={{ fontSize: compact ? 10 : 11, fontWeight: 700, color: col.text, minWidth: 0, flex: 1, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden" }}>
+                  {cls.reg}/{cap}{cls.reg >= cap && cap > 0 ? " · FULL" : ""}
+                </span>
+                {!planReadOnly && (
+                  <button onClick={(e) => { e.stopPropagation(); bump(cls.id, +1); }} style={compact ? stepBtnCompact : stepBtn}>＋</button>
+                )}
+              </div>
+              <div style={{ height: 4, background: "#e2e8f0", borderRadius: 2, marginTop: 3, overflow: "hidden" }}>
+                <div style={{ width: `${pct}%`, height: "100%", background: col.bar, borderRadius: 2, transition: "width .25s" }} />
+              </div>
             </div>
-          </div>
-        )}
-        {h >= 30 && (
-          <div
-            onPointerDown={(e) => startResize(e, p)}
-            onClick={(e) => e.stopPropagation()}
-            title="Drag to change the end time"
-            style={{ flexShrink: 0, height: 10, marginTop: 1, cursor: "ns-resize", display: "flex", alignItems: "flex-end", justifyContent: "center" }}
-          >
-            <div style={{ width: 22, height: 3, borderRadius: 2, background: "rgba(15,23,42,.18)", marginBottom: 1 }} />
-          </div>
-        )}
+          )}
+          {h >= 30 && (
+            <div
+              onPointerDown={(e) => startResize(e, p)}
+              onClick={(e) => e.stopPropagation()}
+              title="Drag to change the end time"
+              style={{ flexShrink: 0, height: 10, cursor: "ns-resize", display: "flex", alignItems: "flex-end", justifyContent: "center" }}
+            >
+              <div style={{ width: 22, height: 3, borderRadius: 2, background: "rgba(15,23,42,.18)" }} />
+            </div>
+          )}
+        </div>
       </div>
     );
   };
@@ -2856,7 +2858,7 @@ export default function ClassroomScheduler() {
                               style={{
                                 position: "absolute",
                                 top: (ghost.start - gridStart) * PX_PER_MIN + 1,
-                                height: ghost.dur * PX_PER_MIN - 6,
+                                height: ghost.dur * PX_PER_MIN - 2,
                                 left: `calc(${(lane.lane / lane.lanes) * 100}% + 2px)`,
                                 width: `calc(${100 / lane.lanes}% - 5px)`,
                                 zIndex: 2, pointerEvents: "none", borderRadius: 8, boxSizing: "border-box",
