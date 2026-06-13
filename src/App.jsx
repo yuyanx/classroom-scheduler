@@ -1964,3 +1964,6 @@ const stepBtn = {
   width: 20, height: 20, flex: "0 0 20px", borderRadius: 6, border: "1px solid #cbd5d1", background: "#fff",
   cursor: "pointer", fontSize: 13, lineHeight: 1, color: "#334155", padding: 0,
 };
+
+// Ops helper — rollback-supabase-v1.mjs restores production shared row to v1 default.
+export { defaultData };
