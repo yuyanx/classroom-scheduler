@@ -78,7 +78,7 @@ This file contains the practical rules and context you need to make changes that
 
 ## Current Feature Branches & Recent Work (as of latest commit)
 
-- `improve-by-teacher-ui` (pushed) — the work that produced the uniform pill sizes, resize hardening, and By Teacher alignment with By Class.
+- `improve-by-grok` (pushed) — the work that produced the uniform pill sizes, resize hardening, and By Teacher alignment with By Class.
 - Main is the stable production line. Feature work happens on branches; user decides when to merge.
 
 ## References
@@ -92,4 +92,4 @@ When an agent takes over future work, start here + handoff.md. Keep this file an
 
 ---
 
-**Last updated**: along with the `improve-by-teacher-ui` changes (uniform class blocks, resize fixes, etc.).
+**Last updated**: along with the `improve-by-grok` changes (uniform class blocks, resize fixes, etc.).
