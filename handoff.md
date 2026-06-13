@@ -4,7 +4,9 @@
 
 **Premier Plus · Classroom Scheduler** — an interactive scheduling board for the 2026 Summer program at Jericho. Staff define classes in a **Class Library**, then schedule them onto a per-day calendar (rooms as columns × a continuous time axis, Mon–Sat) by drag-and-drop, by clicking an empty time, or by editing meeting times in the class dialog. Classes can start at any time (15-minute snap, no fixed slots). Class signed-up counts, rooms, room capacities, and per-day hours are all editable in place.
 
-State syncs through Supabase (project `zbvedbwbxdzcsnftvyph`, table `public.schedule`, **one row per plan** — `id` is the plan id, `data` jsonb). **v3** stores each row as `{ planVersion: 3, plan: { name, kind, createdAt }, schedule: <v2> }`. Editable plans use `kind: live` (default / id=1) or `plan`; read-only snapshots use `archive`. Legacy row `id=1` may still be flat v2 until the next save. Everyone sees the same plan list; the **active plan** (per browser, `premier-active-plan-id`) controls which row loads, saves, and polls. Archives can be **restored** as a new editable plan; plans can be **deleted** (at least one must remain). `localStorage`: `premier-classroom-schedule`, `premier-schedule-plan-{id}`, `premier-plans-v3` (localhost). **On `localhost` remote sync is off** (`IS_LOCAL_DEV`).
+**Production (`main`)** uses a single shared schedule (Supabase row `id=1`). **v3 multi-plan** lives on branch **`v3-plans`** (not merged to `main` yet) — see [v3 multi-plan](#v3-multi-plan-branch-v3-plans) below.
+
+State syncs through Supabase (project `zbvedbwbxdzcsnftvyph`, table `public.schedule`). On **`main`**: one row (`id=1`). On **`v3-plans`**: **one row per plan** (`id` = plan id, `data` jsonb). `localStorage` is the offline cache. **On `localhost` remote sync is off** (`IS_LOCAL_DEV`).
 
 ---
 
@@ -92,10 +94,11 @@ npm test
 ```
 
 Runs `node:test` against pure schedule helpers (esbuild bundles `src/test-exports.js` →
-`dist/test-logic.mjs`, gitignored). **35 tests** cover migrations, conflict indexes,
-`maxEndForPlacement`, preview/localhost sync gating, overview helpers, and smoke guards.
-CI (`.github/workflows/ci.yml`) runs `npm test` + `npm run build` on push/PR.
-**Run `npm test` before every commit on this branch.**
+`dist/test-logic.mjs`, gitignored). **51 tests** cover migrations, conflicts, sync gating,
+`planService` (v3), overview helpers, and smoke guards. CI runs `npm test` + `npm run build`.
+**Run `npm run test:ci` before every commit.**
+
+**Local preview (v3 branch):** `npx serve . -l 4180` → http://localhost:4180
 
 **Preview deploys** (`*.vercel.app` except production host) do **not** sync to Supabase —
 same as localhost. Header shows “Preview — not syncing to shared schedule”.
@@ -116,9 +119,76 @@ upgraded remote payload is unchanged.
 `LIVE_V1_SEED` in `App.jsx` is a frozen copy of the **live** Supabase schedule (v1 shape from
 production `main`). On **localhost only**, `loadData()` auto-imports it when `premier-live-seed-tag`
 does not match `LIVE_SEED_TAG` — runs `upgrade()` to v2, writes `localStorage`, and does **not**
-touch the shared Supabase row (`IS_LOCAL_DEV` keeps remote sync off). **Reset Data** also restores
-this snapshot (not the old registration-sheet defaults). To refresh from production later: fetch
-the `schedule` row, replace `LIVE_V1_SEED`, bump `LIVE_SEED_TAG`, rebuild `app.js`.
+touch the shared Supabase row (`IS_LOCAL_DEV` keeps remote sync off). On **`main`**, **Reset Data**
+restores this snapshot. On **`v3-plans`**, reset behavior depends on plan type (see v3 section).
+To refresh from production later: fetch the `schedule` row, replace `LIVE_V1_SEED`, bump
+`LIVE_SEED_TAG`, rebuild `app.js`.
+
+---
+
+## v3 multi-plan (branch `v3-plans`)
+
+**Status:** feature branch only — pushed to `origin/v3-plans`, **not** on production until merged to `main`.
+
+### Mental model
+
+Everyone sees the **same list of plans** in the header **📁** menu. Each plan is an independent copy
+of the full schedule (catalog + placements + rooms + hours). Edits save to **whichever plan is
+active** in your browser (`premier-active-plan-id` in `localStorage`). Colleagues see your
+changes **only if they switch to that same plan** — switching plans is like opening a different
+shared spreadsheet tab, not a private draft.
+
+### Plan kinds
+
+| Kind (UI label) | `kind` value | Editable | Delete | Notes |
+|-----------------|--------------|----------|--------|-------|
+| **Default** | `live` | yes | **no** | Main schedule; `id=1` protected (`isProtectedPlan`) |
+| **Plan** | `plan` (legacy `draft` displays as Plan) | yes | yes | Extra shared scenarios (e.g. next semester) |
+| **Archive** | `archive` | **read-only** | yes | Snapshot; **Restore as new plan** copies to editable plan |
+
+### Header actions (📁 menu)
+
+- **Switch** — click a plan name (✓ = active)
+- **+ New plan** — optional copy of current schedule
+- **Save archive copy** — read-only snapshot; you stay on current plan
+- **Rename current plan**
+- **× Delete** — on Plan / Archive only (≥1 plan must remain; Default has no ×)
+- **Restore as new plan** — when viewing an archive
+
+### Reset / clear (header button)
+
+| Active plan | Button | Action |
+|-------------|--------|--------|
+| Default | **Reset Data** | Restore `LIVE_V1_SEED` registration snapshot (everyone on Default) |
+| Plan | **Clear schedule** | Empty all `placements`; set every `catalog[].reg` to 0; keep names/teachers/rooms/hours |
+| Archive | disabled | — |
+
+### Supabase row shape (v3)
+
+```js
+{
+  planVersion: 3,
+  plan: { name: "Summer B", kind: "plan", createdAt: "2026-06-13T..." },
+  schedule: { version: 2, days, hours, rooms, catalog, placements, teachers, nextId }
+}
+```
+
+Legacy row `id=1` may still be a flat v2 `schedule` until the next save; the app treats it as Default.
+
+### Code layout
+
+- `src/planService.js` — pack/unpack, local plan store (`premier-plans-v3`), remote list/load/save/create/delete
+- `src/App.jsx` — plan switcher UI, `switchPlan`, `persist` gated on archive read-only
+- `tests/plan.test.mjs` — envelope + local store helpers
+
+### localStorage keys (v3)
+
+| Key | Purpose |
+|-----|---------|
+| `premier-active-plan-id` | Last selected plan id |
+| `premier-schedule-plan-{id}` | Per-plan schedule cache |
+| `premier-plans-v3` | Full multi-plan store (localhost / offline) |
+| `premier-classroom-schedule` | Legacy cache for active copy |
 
 ---
 
@@ -414,15 +484,18 @@ app runs exactly as the old browser-only version.
   each schedule row; `roomConflictsIndexed` guards missing `rooms` (crashed when teacher was set).
 - 2026-06-13 — **Week Overview time axis**: wider sticky column (64px), higher z-index, hour
   labels aligned to grid lines (no overlap from Monday blocks).
-- 2026-06-13 — **v3 multi-plan** (`v3-plans` branch): shared plans (default + named plans +
-  read-only archives), header switcher, new plan, delete plan, restore archive as editable
-  copy, per-plan Supabase rows via `src/planService.js`; localhost uses `premier-plans-v3`.
+- 2026-06-13 — **v3 multi-plan** (`v3-plans` branch): shared plans (Default + named Plan +
+  read-only Archive), header 📁 switcher, new/delete/restore, per-plan Supabase rows via
+  `src/planService.js`; localhost `premier-plans-v3`.
+- 2026-06-13 — **v3 simplify UX**: drop planning-mode banner; all editable plans sync the same
+  way; **Clear schedule** on Plan (empty times + zero reg) vs **Reset Data** on Default only.
+- 2026-06-13 — **v3 protect Default**: `isProtectedPlan` — `id=1` / `kind: live` cannot be deleted.
 
 ---
 
 ## Upgrade opportunities
 
-- **Backend / multi-user sync** — replace `loadData` / `saveData` with Supabase or Firebase realtime calls. The rest of the app is unaffected.
+- **Merge v3 to main** — multi-plan is implemented on `v3-plans`; production still single-row until merge + deploy.
 - **TypeScript** — the data model is well-defined; adding types to `App.jsx` is a self-contained change.
 - **Split into components** — `App.jsx` is a single ~2400-line file. `ClassModal`, `RoomModal`, and `Overlay` are already split into functions at the bottom; moving them to separate files under `src/components/` is straightforward.
 - **Build pipeline** — currently `app.js` is committed. Adding a `vercel.json` with a `buildCommand` would let Vercel run esbuild on deploy instead, removing the committed bundle.
