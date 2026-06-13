@@ -22,8 +22,8 @@ This file contains the practical rules and context you need to make changes that
 
 | Branch | Status |
 |--------|--------|
-| `main` | Production line — single shared schedule, Week Overview, library sort, etc. |
-| `v3-plans` | **Multi-plan v3** — not merged to `main`. Push to `origin/v3-plans` only until user merges. |
+| `main` | Production — v3 multi-plan, Week Overview, room-colored overview pills, library sort |
+| `v3-plans` | Merged into `main` (2026-06-13); branch kept for reference |
 
 Local v3 preview: `npx serve . -l 4180` → http://localhost:4180
 
@@ -40,14 +40,10 @@ Local v3 preview: `npx serve . -l 4180` → http://localhost:4180
 
 ## Persistence & Shared State
 
-### `main` (production)
-
-- Supabase single row `id=1` (public anon key is intentional — RLS limits what it can do).
-- `localStorage` key `premier-classroom-schedule` — offline cache.
-
-### `v3-plans` (multi-plan)
+### Production (`main`)
 
 - Supabase **one row per plan**; v3 envelope `{ planVersion, plan, schedule }` in `planService.js`.
+- `localStorage` — `premier-classroom-schedule`, `premier-active-plan-id`, `premier-schedule-plan-{id}`.
 - **Default** (`id=1`, `kind: live`) — protected, cannot delete; **Reset Data** restores seed.
 - **Plan** — editable shared copy; **Clear schedule** wipes placements + zeroes `reg`.
 - **Archive** — read-only; restore copies to new Plan.
@@ -62,7 +58,7 @@ Central hooks in `App.jsx`: `persist`, `flushRemoteSave`, `switchPlan`, `planApi
 - Multi-placement class: edit name/teacher/reg once → everywhere.
 - Teacher conflicts in grid, Library, both overview tabs.
 - **Resize test** on By Class / By Teacher (narrow window, horizontal scroll, uniform pill heights).
-- **v3 (on `v3-plans`)**: switch plans, new plan, delete plan (not Default), archive + restore, Clear schedule vs Reset Data.
+- **v3 plans**: switch plans, new plan, delete plan (not Default), archive + restore, Clear schedule vs Reset Data.
 
 ## Things Agents Frequently Get Wrong
 
@@ -83,4 +79,4 @@ When an agent makes significant changes, update **both** `handoff.md` (changelog
 
 ---
 
-**Last updated**: v3 multi-plan on `v3-plans` (simplified plans, delete/restore, Default protected, Clear schedule).
+**Last updated**: v3 merged to `main` (2026-06-13).

@@ -4,9 +4,7 @@
 
 **Premier Plus · Classroom Scheduler** — an interactive scheduling board for the 2026 Summer program at Jericho. Staff define classes in a **Class Library**, then schedule them onto a per-day calendar (rooms as columns × a continuous time axis, Mon–Sat) by drag-and-drop, by clicking an empty time, or by editing meeting times in the class dialog. Classes can start at any time (15-minute snap, no fixed slots). Class signed-up counts, rooms, room capacities, and per-day hours are all editable in place.
 
-**Production (`main`)** uses a single shared schedule (Supabase row `id=1`). **v3 multi-plan** lives on branch **`v3-plans`** (not merged to `main` yet) — see [v3 multi-plan](#v3-multi-plan-branch-v3-plans) below.
-
-State syncs through Supabase (project `zbvedbwbxdzcsnftvyph`, table `public.schedule`). On **`main`**: one row (`id=1`). On **`v3-plans`**: **one row per plan** (`id` = plan id, `data` jsonb). `localStorage` is the offline cache. **On `localhost` remote sync is off** (`IS_LOCAL_DEV`).
+State syncs through Supabase (project `zbvedbwbxdzcsnftvyph`, table `public.schedule`, **one row per plan** — `id` = plan id, `data` jsonb). **v3 multi-plan** is on **`main`** (merged 2026-06-13) — see [v3 multi-plan](#v3-multi-plan). `localStorage` is the offline cache. **On `localhost` remote sync is off** (`IS_LOCAL_DEV`).
 
 ---
 
@@ -120,15 +118,15 @@ upgraded remote payload is unchanged.
 production `main`). On **localhost only**, `loadData()` auto-imports it when `premier-live-seed-tag`
 does not match `LIVE_SEED_TAG` — runs `upgrade()` to v2, writes `localStorage`, and does **not**
 touch the shared Supabase row (`IS_LOCAL_DEV` keeps remote sync off). On **`main`**, **Reset Data**
-restores this snapshot. On **`v3-plans`**, reset behavior depends on plan type (see v3 section).
+restores this snapshot on **Default** only; named **Plan** uses **Clear schedule** (see v3 section).
 To refresh from production later: fetch the `schedule` row, replace `LIVE_V1_SEED`, bump
 `LIVE_SEED_TAG`, rebuild `app.js`.
 
 ---
 
-## v3 multi-plan (branch `v3-plans`)
+## v3 multi-plan
 
-**Status:** feature branch only — pushed to `origin/v3-plans`, **not** on production until merged to `main`.
+**Status:** merged to `main` (2026-06-13). Vercel redeploys on push to `main`.
 
 ### Mental model
 
@@ -495,9 +493,9 @@ app runs exactly as the old browser-only version.
 
 ## Upgrade opportunities
 
-- **Merge v3 to main** — multi-plan is implemented on `v3-plans`; production still single-row until merge + deploy.
+- **Export / print view** — a read-only printable summary of the week's schedule.
 - **TypeScript** — the data model is well-defined; adding types to `App.jsx` is a self-contained change.
 - **Split into components** — `App.jsx` is a single ~2400-line file. `ClassModal`, `RoomModal`, and `Overlay` are already split into functions at the bottom; moving them to separate files under `src/components/` is straightforward.
 - **Build pipeline** — currently `app.js` is committed. Adding a `vercel.json` with a `buildCommand` would let Vercel run esbuild on deploy instead, removing the committed bundle.
 - **Mobile layout** — the grid uses a `<table>` with `overflowX: auto`. A card-based layout for small screens would improve mobile usability.
-- **Export / print view** — a read-only printable summary of the week's schedule.
+
