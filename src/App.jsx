@@ -2738,9 +2738,12 @@ export default function ClassroomScheduler() {
                 catalog={catalog}
                 placements={placements}
                 days={days}
+                hours={hours}
                 rooms={rooms}
                 idx={idx}
-                onEditClass={(classId) => setEditing({ isNew: false, classId })}
+                planReadOnly={planReadOnly}
+                onBumpReg={bump}
+                onEditClass={(classId, placementId) => setEditing({ isNew: false, classId, placementId })}
               />
             ) : tab === "weekOverview" ? (
               <WeekOverviewView
@@ -3448,103 +3451,214 @@ function WeekOverviewView({ days, hours, rooms, idx, onEditClass }) {
   );
 }
 
-// ───────────────────────── By-class schedule view ─────────────────────────
-function ClassScheduleView({ catalog, placements, days, rooms, idx, onEditClass }) {
+// ───────────────────────── By-class schedule view (time axis × days) ─────────────────────────
+function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planReadOnly, onBumpReg, onEditClass }) {
   const roomOrder = rooms.map((r) => r.id);
-  const pillClash = (p) => {
-    if (!idx) return { roomClash: false, teacherClash: false };
-    const cls = idx.catalogById.get(p.classId);
-    const ev = evaluatePlacement(idx, { day: p.day, start: p.start, end: p.end, rooms: p.rooms }, { excludePlacementId: p.id, teacher: cls?.teacher });
-    return { roomClash: ev.roomClashes.length > 0, teacherClash: ev.hasTeacherConflict };
-  };
+  const roomCap = (id) => idx?.roomCapById?.get(id) ?? 12;
+  const capOfRooms = (list) => (list || []).reduce((s, id) => s + roomCap(id), 0);
+  const rows = sortCatalogForByClassView(catalog, placements);
+
+  const layout = useMemo(
+    () => computeWeekOverviewLayout(days, hours, idx.placementsByDay, PX_PER_MIN),
+    [days, hours, idx.placementsByDay]
+  );
+  const { gridStart, gridEnd, gridH, hourMarks, halfMarks } = layout;
+
   const meetingsFor = (classId, day) =>
     placements
       .filter((p) => p.classId === classId && p.day === day)
       .sort((a, b) => a.start - b.start);
 
-  // Earliest start time that day (minutes since midnight) — null when unscheduled
-  const rows = sortCatalogForByClassView(catalog, placements);
+  const blockClash = (p, cls) => {
+    const ev = evaluatePlacement(
+      idx,
+      { day: p.day, start: p.start, end: p.end, rooms: p.rooms },
+      { excludePlacementId: p.id, teacher: cls?.teacher }
+    );
+    return { roomClash: ev.roomClashes.length > 0, teacherClash: ev.hasTeacherConflict };
+  };
+
+  const renderTimeGutter = () => (
+    <div style={{ position: "relative", height: gridH, width: "100%" }}>
+      {halfMarks.map((t) => (
+        <div
+          key={`h-${t}`}
+          style={{ position: "absolute", left: 0, right: 0, top: (t - gridStart) * PX_PER_MIN, borderTop: "1px dashed #f0f2ee", pointerEvents: "none" }}
+        />
+      ))}
+      {hourMarks.map((t) => (
+        <div
+          key={t}
+          style={{
+            position: "absolute",
+            right: 4,
+            top: (t - gridStart) * PX_PER_MIN,
+            transform: t === gridStart ? "translateY(2px)" : t === gridEnd ? "translateY(calc(-100% - 2px))" : "translateY(-50%)",
+            fontSize: 10,
+            color: "#64748b",
+            fontWeight: 700,
+            whiteSpace: "nowrap",
+            zIndex: 2,
+          }}
+        >
+          {fmtAmPm(t)}
+        </div>
+      ))}
+    </div>
+  );
+
+  const renderDayCell = (k, d) => {
+    const list = meetingsFor(k.id, d);
+    const lanes = layoutLanes(list);
+    return (
+      <td key={d} style={{ ...tdStyle, padding: 0, verticalAlign: "top", borderRight: "1px solid #eceeea" }}>
+        <div style={{ position: "relative", height: gridH, background: "#fcfcfb", overflow: "hidden" }}>
+          {halfMarks.map((t) => (
+            <div
+              key={`h-${t}`}
+              style={{ position: "absolute", left: 0, right: 0, top: (t - gridStart) * PX_PER_MIN, borderTop: "1px dashed #eef0ed", pointerEvents: "none" }}
+            />
+          ))}
+          {hourMarks.map((t) => (
+            <div
+              key={`hr-${t}`}
+              style={{ position: "absolute", left: 0, right: 0, top: (t - gridStart) * PX_PER_MIN, borderTop: "1px solid #e8ebe8", pointerEvents: "none" }}
+            />
+          ))}
+          {list.map((p) => {
+            const cls = k;
+            const laneInfo = lanes.get(p.id) || { lane: 0, lanes: 1 };
+            const { lane, lanes: laneCount } = laneInfo;
+            const top = (p.start - gridStart) * PX_PER_MIN;
+            const h = (p.end - p.start) * PX_PER_MIN;
+            const cap = capOfRooms(p.rooms);
+            const col = ratioColor(cls.reg, cap);
+            const pct = cap ? Math.min(100, Math.round((cls.reg / cap) * 100)) : 0;
+            const primaryRoom = primaryRoomForPlacement(p.rooms, roomOrder);
+            const rc = roomOverviewColor(primaryRoom, roomOrder);
+            const { roomClash, teacherClash } = blockClash(p, cls);
+            const combined = p.rooms.length > 1;
+            return (
+              <div
+                key={p.id}
+                onClick={(e) => { e.stopPropagation(); onEditClass(cls.id, p.id); }}
+                title={`${cls.name} · ${fmtRange(p.start, p.end)} · ${cls.teacher || "TBD"} · ${overviewRoomLabel(p.rooms)} — click to edit`}
+                style={{
+                  position: "absolute",
+                  top: top + 1,
+                  height: Math.max(42, h - 2),
+                  left: `calc(${(lane / laneCount) * 100}% + 2px)`,
+                  width: `calc(${100 / laneCount}% - 4px)`,
+                  boxSizing: "border-box",
+                  zIndex: 1,
+                  background: roomClash ? "#fee2e2" : teacherClash ? "#fffbeb" : rc.bg,
+                  border: roomClash ? "2px solid #dc2626" : teacherClash ? "2px solid #d97706" : `1px solid ${rc.border}`,
+                  borderRadius: 8,
+                  padding: "4px 6px 6px",
+                  overflow: "hidden",
+                  cursor: "pointer",
+                  color: rc.text,
+                  display: "flex",
+                  flexDirection: "column",
+                }}
+              >
+                <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column", gap: 1 }}>
+                  <div style={{ fontWeight: 700, fontSize: 11.5, lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {cls.name}{(roomClash || teacherClash) ? " ⚠" : ""}
+                  </div>
+                  <div style={{ fontSize: 10.5, opacity: 0.92, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {fmtRange(p.start, p.end)}
+                  </div>
+                  {h >= 48 && (
+                    <div style={{ fontSize: 10.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {cls.teacher || <i style={{ color: "#b45309" }}>TBD</i>}
+                    </div>
+                  )}
+                  {combined && h >= 56 && (
+                    <div style={{ fontSize: 10, color: "#7c3aed", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      ⇆ Rm {[...p.rooms].sort((a, b) => (roomOrder.indexOf(a) ?? 99) - (roomOrder.indexOf(b) ?? 99)).join("+")}
+                    </div>
+                  )}
+                </div>
+                {h >= 52 && (
+                  <div style={{ flexShrink: 0, marginTop: 2 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 2, minWidth: 0 }}>
+                      {!planReadOnly && h >= 68 && (
+                        <button type="button" onClick={(e) => { e.stopPropagation(); onBumpReg(cls.id, -1); }} style={stepBtn}>−</button>
+                      )}
+                      <span style={{ fontSize: 10.5, fontWeight: 700, color: col.text, flex: 1, textAlign: "center", whiteSpace: "nowrap" }}>
+                        {cls.reg}/{cap}
+                      </span>
+                      {!planReadOnly && h >= 68 && (
+                        <button type="button" onClick={(e) => { e.stopPropagation(); onBumpReg(cls.id, +1); }} style={stepBtn}>＋</button>
+                      )}
+                    </div>
+                    <div style={{ height: 4, background: "#e2e8f0", borderRadius: 2, marginTop: 2, overflow: "hidden" }}>
+                      <div style={{ width: `${pct}%`, height: "100%", background: col.bar, borderRadius: 2 }} />
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </td>
+    );
+  };
+
+  const tableMinW = 200 + 64 + days.length * 132;
 
   return (
     <>
       <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto", width: "100%" }}>
         <OverviewRoomLegendBar rooms={rooms} />
-        <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 220 + days.length * 155, tableLayout: "fixed" }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", minWidth: tableMinW, tableLayout: "fixed" }}>
           <thead>
             <tr>
-              <th style={{ ...thStyle, width: 220, position: "sticky", left: 0, background: "#fafaf8", zIndex: 2 }}>Class</th>
+              <th style={{ ...thStyle, width: 200, position: "sticky", left: 0, background: "#fafaf8", zIndex: 3 }}>Class</th>
+              <th style={{ ...thStyle, width: 64, background: "#fafaf8" }}>Time</th>
               {days.map((d) => (
-                <th key={d} style={thStyle}>{DAY_LABEL[d]}</th>
+                <th key={d} style={{ ...thStyle, minWidth: 132 }}>{DAY_LABEL[d]}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {rows.map((k) => {
-              const scheduleLines = classScheduleLines(placements, k.id);
-              const scheduled = scheduleLines.length > 0;
+              const scheduled = idx.scheduledClassIds?.has(k.id) || days.some((d) => meetingsFor(k.id, d).length > 0);
               return (
-                <tr
-                  key={k.id}
-                  onClick={() => onEditClass(k.id)}
-                  style={{ cursor: "pointer", background: scheduled ? "transparent" : "#fffbeb" }}
-                  title="Click to edit this class"
-                >
-                  <td style={{ ...tdStyle, position: "sticky", left: 0, background: scheduled ? "#fafaf8" : "#fffbeb", zIndex: 1, verticalAlign: "top" }}>
+                <tr key={k.id} style={{ background: scheduled ? "transparent" : "#fffbeb" }}>
+                  <td
+                    style={{
+                      ...tdStyle,
+                      width: 200,
+                      position: "sticky",
+                      left: 0,
+                      background: scheduled ? "#fafaf8" : "#fffbeb",
+                      zIndex: 2,
+                      verticalAlign: "top",
+                      cursor: "pointer",
+                    }}
+                    onClick={() => onEditClass(k.id)}
+                    title="Click to edit this class"
+                  >
                     <div style={{ fontWeight: 700, fontSize: 13, color: "#123c3a", overflowWrap: "anywhere" }}>{k.name}</div>
                     <div style={{ fontSize: 11, color: "#475569", marginTop: 2 }}>
                       {k.teacher || <i style={{ color: "#b45309" }}>Teacher TBD</i>}
-                      <b style={{ marginLeft: 6, color: "#123c3a" }}>{k.reg} signed up</b>
                     </div>
-                    {k.note && (
-                      <div style={{ fontSize: 11, color: "#7c3aed", marginTop: 2 }}>⏱ {k.note}</div>
+                    {!scheduled && (
+                      <span style={{ ...chipStyle, background: "#fef3c7", color: "#b45309", marginTop: 6, display: "inline-block" }}>unscheduled</span>
                     )}
-                    <div style={{ marginTop: 2 }}>
-                      {scheduled ? (
-                        scheduleLines.map((line, i) => (
-                          <div key={i} style={{ fontSize: 11, color: "#64748b", lineHeight: 1.35, marginTop: i ? 2 : 0 }}>
-                            {line}
-                          </div>
-                        ))
-                      ) : (
-                        <span style={{ ...chipStyle, background: "#fef3c7", color: "#b45309" }}>unscheduled</span>
-                      )}
-                    </div>
                   </td>
-                  {days.map((d) => {
-                    const list = meetingsFor(k.id, d);
-                    return (
-                      <td key={d} style={{ ...tdStyle, verticalAlign: "top" }}>
-                        {list.length === 0 ? (
-                          <span style={{ color: "#cbd5d1", fontSize: 12 }}>—</span>
-                        ) : (
-                          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                            {list.map((p) => {
-                              const { roomClash, teacherClash } = pillClash(p);
-                              const pill = overviewPillStyle({
-                                start: p.start, roomClash, teacherClash, rooms: p.rooms, roomOrder,
-                              });
-                              return (
-                                <div key={p.id} style={pill}>
-                                  <span style={{ fontSize: 12, fontWeight: 700, color: pill.color, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%" }}>
-                                    {fmtRange(p.start, p.end)}{(roomClash || teacherClash) ? " ⚠" : ""}
-                                  </span>
-                                  <span style={{ fontSize: 11, color: pill.color, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%" }}>
-                                    {overviewRoomLabel(p.rooms)}
-                                  </span>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </td>
-                    );
-                  })}
+                  <td style={{ ...tdStyle, width: 64, padding: "4px 2px", verticalAlign: "top", background: "#fafaf8" }}>
+                    {renderTimeGutter()}
+                  </td>
+                  {days.map((d) => renderDayCell(k, d))}
                 </tr>
               );
             })}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={days.length + 1} style={{ ...tdStyle, color: "#94a3b8", fontSize: 13 }}>
+                <td colSpan={days.length + 2} style={{ ...tdStyle, color: "#94a3b8", fontSize: 13 }}>
                   No classes yet — add one in the Class Library.
                 </td>
               </tr>
@@ -3553,9 +3667,8 @@ function ClassScheduleView({ catalog, placements, days, rooms, idx, onEditClass 
         </table>
       </div>
       <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
-        📋 One row per class — every meeting time and room across the week.
-        Pill colors match the room legend above.
-        Red = room overlap · amber = teacher double-booked. Amber rows are not scheduled yet.
+        📋 One row per class — vertical axis matches the day tabs ({fmtAmPm(gridStart)}–{fmtAmPm(gridEnd)}).
+        Block colors follow the room legend; use −/+ to adjust enrollment. Click a block to edit — no drag here.
       </p>
     </>
   );
