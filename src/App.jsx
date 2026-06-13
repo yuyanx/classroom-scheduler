@@ -1885,7 +1885,13 @@ function ClassScheduleView({ catalog, placements, days, onEditClass }) {
       const sa = earliestStart(a.id);
       const sb = earliestStart(b.id);
       if (sa == null !== sb == null) return sa == null ? -1 : 1; // unscheduled first
-      if (sa == null) return a.name.localeCompare(b.name);
+      const letter = (name) => (name.trim()[0] || "").toLowerCase();
+      const la = letter(a.name);
+      const lb = letter(b.name);
+      if (la !== lb) return la.localeCompare(lb);
+      if (sa == null && sb == null) return a.name.localeCompare(b.name);
+      if (sa == null) return 1;
+      if (sb == null) return -1;
       return sa - sb || a.name.localeCompare(b.name);
     });
 
