@@ -4147,15 +4147,16 @@ function RoomModal({ rooms, placements, onSave, onClose }) {
   };
 
   const rowInput = { ...inputStyle, padding: "6px 8px", background: "#fff" };
+  const roomRowGrid = "72px 64px 44px 76px";
 
   return (
-    <Overlay onClose={onClose} wide>
+    <Overlay onClose={onClose}>
       <h3 style={{ marginTop: 0 }}>Manage rooms</h3>
       <p style={{ fontSize: 13, color: "#64748b", margin: "0 0 14px", lineHeight: 1.45 }}>
         One room list for the whole week. Combine rooms per class via room chips in the class editor.
         Row tint is the schedule color — ↑↓ reorders; new rooms pick the next color.
       </p>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 68px 44px 78px", gap: 8, alignItems: "center", marginBottom: 6, padding: "0 10px", fontSize: 11, color: "#64748b", fontWeight: 700 }}>
+      <div style={{ display: "grid", gridTemplateColumns: roomRowGrid, gap: 8, alignItems: "center", marginBottom: 6, fontSize: 11, color: "#64748b", fontWeight: 700 }}>
         <span>Room</span>
         <span>Capacity</span>
         <span>Used</span>
@@ -4169,19 +4170,21 @@ function RoomModal({ rooms, placements, onSave, onClose }) {
               key={i}
               style={{
                 display: "grid",
-                gridTemplateColumns: "1fr 68px 44px 78px",
+                gridTemplateColumns: roomRowGrid,
                 gap: 8,
                 alignItems: "center",
                 padding: "8px 10px",
                 borderRadius: 8,
                 background: c.bg,
                 border: `1px solid ${c.border}`,
+                width: "fit-content",
+                maxWidth: "100%",
               }}
             >
               <input
-                style={{ ...rowInput, color: c.text, fontWeight: 600 }}
+                style={{ ...rowInput, width: 72, boxSizing: "border-box", color: c.text, fontWeight: 600, textAlign: "center" }}
                 value={r.name}
-                placeholder="Room name"
+                placeholder="#"
                 onChange={(e) => patch(i, { name: e.target.value })}
               />
               <input
