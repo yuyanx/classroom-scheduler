@@ -1053,6 +1053,7 @@ function buildScheduleIndexes(data) {
   const placementsByClassId = new Map();
   const placementsByDay = new Map();
   const placementsByDayRoom = new Map(); // key: `${day}\0${roomId}`
+  const placementsByDayTeacher = new Map(); // key: `${day}\0${teacherKey}`
   (data.placements || []).forEach((p) => {
     if (!placementsByClassId.has(p.classId)) placementsByClassId.set(p.classId, []);
     placementsByClassId.get(p.classId).push(p);
@@ -1063,12 +1064,18 @@ function buildScheduleIndexes(data) {
       if (!placementsByDayRoom.has(key)) placementsByDayRoom.set(key, []);
       placementsByDayRoom.get(key).push(p);
     });
+    const tk = teacherKey(catalogById.get(p.classId)?.teacher);
+    if (tk) {
+      const tkey = `${p.day}\0${tk}`;
+      if (!placementsByDayTeacher.has(tkey)) placementsByDayTeacher.set(tkey, []);
+      placementsByDayTeacher.get(tkey).push(p);
+    }
   });
 
   const roomCapById = new Map((data.rooms || []).map((r) => [r.id, r.cap]));
   const roomPos = new Map((data.rooms || []).map((r, i) => [r.id, i]));
   const scheduledClassIds = new Set((data.placements || []).map((p) => p.classId));
-  return { catalogById, placementsByClassId, placementsByDay, placementsByDayRoom, roomCapById, roomPos, scheduledClassIds };
+  return { catalogById, placementsByClassId, placementsByDay, placementsByDayRoom, placementsByDayTeacher, roomCapById, roomPos, scheduledClassIds };
 }
 
 // Latest end minute when extending placement.end (room conflicts via day+room index).
@@ -1107,10 +1114,97 @@ function roomConflictsIndexed(idx, cand, opts = {}) {
 function teacherBusyIndexed(idx, cand, teacher, opts = {}) {
   const key = teacherKey(teacher);
   if (!key) return [];
-  return (idx.placementsByDay.get(cand.day) || [])
+  return (idx.placementsByDayTeacher.get(`${cand.day}\0${key}`) || [])
     .filter((p) => p.id !== opts.excludePlacementId && p.classId !== opts.excludeClassId && overlaps(p, cand))
-    .map((p) => ({ placement: p, cls: idx.catalogById.get(p.classId) }))
-    .filter(({ cls }) => teacherKey(cls?.teacher) === key);
+    .map((p) => ({ placement: p, cls: idx.catalogById.get(p.classId) }));
+}
+
+// Unified conflict check for drag, resize, modal, and overview meta.
+function evaluatePlacement(idx, cand, opts = {}) {
+  const ex = {
+    excludeId: opts.excludePlacementId,
+    excludeClassId: opts.excludeClassId,
+  };
+  const roomClashes = roomConflictsIndexed(idx, cand, ex);
+  const teacher =
+    opts.teacher != null
+      ? opts.teacher
+      : opts.classId
+        ? idx.catalogById.get(opts.classId)?.teacher
+        : undefined;
+  const teacherItems = teacher
+    ? teacherBusyIndexed(idx, cand, teacher, {
+        excludePlacementId: opts.excludePlacementId,
+        excludeClassId: opts.excludeClassId,
+      })
+    : [];
+  const roomConflictNames = [...new Set(roomClashes.map((p) => idx.catalogById.get(p.classId)?.name || "another class"))];
+  const teacherLabels = [...new Set(teacherItems.map(({ placement, cls }) =>
+    `${cls?.name || "Class"} (${DAY_SHORT[placement.day]} ${fmtRange(placement.start, placement.end)} · Rm ${placement.rooms.join("+")})`
+  ))];
+  return {
+    ok: roomClashes.length === 0,
+    roomClashes,
+    teacherBusy: teacherItems,
+    roomConflictNames,
+    teacherLabels,
+    hasTeacherConflict: teacherItems.length > 0,
+  };
+}
+
+function freeRoomsAt(idx, cand, roomIds, opts = {}) {
+  return roomIds.filter((rid) => {
+    const probe = { day: cand.day, start: cand.start, end: cand.end, rooms: [rid] };
+    return roomConflictsIndexed(idx, probe, {
+      excludeId: opts.excludePlacementId,
+      excludeClassId: opts.excludeClassId,
+    }).length === 0;
+  });
+}
+
+function buildConflictReport(idx, data) {
+  const items = [];
+  const seen = new Set();
+  (data.placements || []).forEach((p) => {
+    const cls = idx.catalogById.get(p.classId);
+    const cand = { day: p.day, start: p.start, end: p.end, rooms: p.rooms };
+    const ev = evaluatePlacement(idx, cand, { excludePlacementId: p.id, teacher: cls?.teacher });
+    ev.roomClashes.forEach((other) => {
+      const pairKey = [p.id, other.id].sort().join("|") + ":room";
+      if (seen.has(pairKey)) return;
+      seen.add(pairKey);
+      const otherCls = idx.catalogById.get(other.classId);
+      const sharedRooms = [...new Set([...p.rooms, ...other.rooms])].sort().join("+");
+      items.push({
+        type: "room",
+        placementId: p.id,
+        otherPlacementId: other.id,
+        day: p.day,
+        classId: p.classId,
+        className: cls?.name || "Class",
+        start: p.start,
+        end: p.end,
+        label: `${cls?.name || "Class"} ↔ ${otherCls?.name || "Class"} · ${DAY_SHORT[p.day]} ${fmtRange(p.start, p.end)} · Rm ${sharedRooms}`,
+      });
+    });
+    ev.teacherBusy.forEach(({ placement: other, cls: otherCls }) => {
+      const pairKey = [p.id, other.id].sort().join("|") + ":teacher";
+      if (seen.has(pairKey)) return;
+      seen.add(pairKey);
+      items.push({
+        type: "teacher",
+        placementId: p.id,
+        otherPlacementId: other.id,
+        day: p.day,
+        classId: p.classId,
+        className: cls?.name || "Class",
+        start: p.start,
+        end: p.end,
+        label: `${cls?.teacher || "Teacher"} · ${cls?.name || "Class"} ↔ ${otherCls?.name || "Class"} · ${DAY_SHORT[p.day]} ${fmtRange(p.start, p.end)}`,
+      });
+    });
+  });
+  return items.sort((a, b) => dayIdx(a.day) - dayIdx(b.day) || a.start - b.start || a.type.localeCompare(b.type));
 }
 
 function computeTabBlockMeta(idx, day) {
@@ -1119,14 +1213,11 @@ function computeTabBlockMeta(idx, day) {
   dayPls.forEach((p) => {
     const cls = idx.catalogById.get(p.classId);
     const cand = { day: p.day, start: p.start, end: p.end, rooms: p.rooms };
-    const roomClashes = roomConflictsIndexed(idx, cand, { excludeId: p.id });
-    const teacherItems = teacherBusyIndexed(idx, p, cls?.teacher, { excludePlacementId: p.id });
+    const ev = evaluatePlacement(idx, cand, { excludePlacementId: p.id, teacher: cls?.teacher });
     const otherDays = [...new Set((idx.placementsByClassId.get(p.classId) || []).filter((x) => x.id !== p.id).map((x) => DAY_SHORT[x.day]))];
     meta.set(p.id, {
-      roomClashes,
-      teacherLabels: [...new Set(teacherItems.map(({ placement, cls }) =>
-        `${cls?.name || "Class"} (${DAY_SHORT[placement.day]} ${fmtRange(placement.start, placement.end)} · Rm ${placement.rooms.join("+")})`
-      ))],
+      roomClashes: ev.roomClashes,
+      teacherLabels: ev.teacherLabels,
       otherDays,
     });
   });
@@ -1161,6 +1252,16 @@ function layoutLanes(list) {
   });
   flush();
   return res;
+}
+
+let _emptyDragImg;
+function emptyDragImage() {
+  if (typeof Image === "undefined") return null;
+  if (!_emptyDragImg) {
+    _emptyDragImg = new Image();
+    _emptyDragImg.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+  }
+  return _emptyDragImg;
 }
 
 // ───────────────────────── Main component ─────────────────────────
@@ -1201,6 +1302,7 @@ export default function ClassroomScheduler() {
       return v;
     });
   const [libQuery, setLibQuery] = useState("");
+  const [conflictPanelOpen, setConflictPanelOpen] = useState(false);
 
   const remoteRef = useRef({ timer: null, retryTimer: null, lastSyncedAt: null, pendingSave: false, lastSaveFailed: false });
   const dataRef = useRef(data);
@@ -1410,6 +1512,13 @@ export default function ClassroomScheduler() {
   const placementsOf = (classId) => idx.placementsByClassId.get(classId) || [];
 
   const roomConflictsFor = (cand, opts = {}) => roomConflictsIndexed(idx, cand, opts);
+  const evaluateAt = (cand, opts = {}) => evaluatePlacement(idx, cand, opts);
+  const conflictReport = useMemo(() => buildConflictReport(idx, data), [idx, data]);
+  const conflictCounts = useMemo(() => {
+    const room = conflictReport.filter((x) => x.type === "room").length;
+    const teacher = conflictReport.filter((x) => x.type === "teacher").length;
+    return { room, teacher, total: room + teacher };
+  }, [conflictReport]);
 
   const teacherBusy = (cand, teacher, opts = {}) => teacherBusyIndexed(idx, cand, teacher, opts);
   const teacherConflictsForPlacement = (pl) => {
@@ -1464,6 +1573,24 @@ export default function ClassroomScheduler() {
   const gridH = tabGridLayout?.gridH ?? 0;
   const hourMarks = tabGridLayout?.hourMarks ?? [];
   const halfMarks = tabGridLayout?.halfMarks ?? [];
+
+  const lanesByRoomForGhost = (candRooms, start, dur) => {
+    const info = {};
+    candRooms.forEach((rid) => {
+      const colPls = (tabGridLayout?.colByRoom.get(rid) || []).filter((p) => !(drag?.type === "pl" && p.id === drag.id));
+      const ghostPl = { id: "__ghost__", start, end: start + dur };
+      const lanes = layoutLanes([...colPls, ghostPl]);
+      const laneData = lanes.get("__ghost__");
+      if (laneData) info[rid] = laneData;
+    });
+    return info;
+  };
+
+  const goToConflict = (item) => {
+    if (days.includes(item.day)) setTab(item.day);
+    setEditing({ isNew: false, classId: item.classId, placementId: item.placementId });
+    setConflictPanelOpen(false);
+  };
 
   // Chips like "Mon 2:00" for everywhere a class is scheduled
   const placementChips = (classId) =>
@@ -1532,10 +1659,19 @@ export default function ClassroomScheduler() {
       if (ghostRef.current === key) return;
       ghostRef.current = key;
       const cand = { day: tab, start, end: start + drag.dur, rooms: candRooms };
-      const clashes = roomConflictsFor(cand, { excludeId: drag.type === "pl" ? drag.id : undefined });
+      const ev = evaluateAt(cand, {
+        excludePlacementId: drag.type === "pl" ? drag.id : undefined,
+        classId: drag.type === "lib" ? drag.id : drag.classId,
+        teacher: drag.teacher,
+      });
+      const laneInfo = lanesByRoomForGhost(candRooms, start, drag.dur);
       scheduleGhost({
         rooms: candRooms, start, dur: drag.dur,
-        names: [...new Set(clashes.map((c) => classOfId(c.classId)?.name || "another class"))],
+        className: drag.className || "",
+        roomConflict: !ev.ok,
+        teacherConflict: ev.hasTeacherConflict,
+        names: ev.roomConflictNames,
+        laneInfo,
       });
       setDragOver(null);
     },
@@ -1547,10 +1683,13 @@ export default function ClassroomScheduler() {
       const start = snapStartFromEvent(e, dur);
       const candRooms = drag?.rooms && drag.rooms.length > 1 ? drag.rooms : [roomId];
       const cand = { day: tab, start, end: start + dur, rooms: candRooms };
-      const clashes = roomConflictsFor(cand, { excludeId: type === "pl" ? id : undefined });
-      if (clashes.length) {
-        const names = [...new Set(clashes.map((c) => classOfId(c.classId)?.name || "another class"))];
-        flashMsg(`Can't place it there — Room${candRooms.length > 1 ? "s" : ""} ${roomsLabel(candRooms)} ${fmtRange(cand.start, cand.end)} overlaps ${names.join(", ")}.`);
+      const ev = evaluateAt(cand, {
+        excludePlacementId: type === "pl" ? id : undefined,
+        classId: type === "lib" ? id : undefined,
+        teacher: type === "lib" ? classOfId(id)?.teacher : classOfId(placements.find((p) => p.id === id)?.classId)?.teacher,
+      });
+      if (!ev.ok) {
+        flashMsg(`Can't place it there — Room${candRooms.length > 1 ? "s" : ""} ${roomsLabel(candRooms)} ${fmtRange(cand.start, cand.end)} overlaps ${ev.roomConflictNames.join(", ")}.`);
       } else if (type === "lib") {
         addPlacementAt(id, cand);
       } else if (type === "pl") {
@@ -1616,10 +1755,10 @@ export default function ClassroomScheduler() {
       if (cur === p.end) return;
       const freshIdx = buildScheduleIndexes(dataRef.current);
       const cand = { day: p.day, start: p.start, end: cur, rooms: p.rooms };
-      const clashes = roomConflictsIndexed(freshIdx, cand, { excludeId: p.id });
-      if (clashes.length) {
-        const names = [...new Set(clashes.map((c) => freshIdx.catalogById.get(c.classId)?.name || "another class"))];
-        flashMsg(`Can't extend there — overlaps ${names.join(", ")}.`);
+      const cls = freshIdx.catalogById.get(p.classId);
+      const ev = evaluatePlacement(freshIdx, cand, { excludePlacementId: p.id, teacher: cls?.teacher });
+      if (!ev.ok) {
+        flashMsg(`Can't extend there — overlaps ${ev.roomConflictNames.join(", ")}.`);
         return;
       }
       persist((d) => ({
@@ -1817,7 +1956,12 @@ export default function ClassroomScheduler() {
           e.dataTransfer.setData("text/plain", "pl:" + p.id);
           e.dataTransfer.effectAllowed = "move";
           const rect = e.currentTarget.getBoundingClientRect();
-          setDrag({ type: "pl", id: p.id, dur: p.end - p.start, rooms: p.rooms, grabOffset: (e.clientY - rect.top) / PX_PER_MIN });
+          e.dataTransfer.setDragImage(emptyDragImage(), 0, 0);
+          setDrag({
+            type: "pl", id: p.id, dur: p.end - p.start, rooms: p.rooms,
+            grabOffset: (e.clientY - rect.top) / PX_PER_MIN,
+            className: cls.name, teacher: cls.teacher, classId: cls.id,
+          });
         }}
         onDragEnd={() => { setDrag(null); setGhost(null); ghostRef.current = null; setDragOver(null); }}
         onClick={(e) => { e.stopPropagation(); setEditing({ isNew: false, classId: cls.id, placementId: p.id }); }}
@@ -1933,6 +2077,22 @@ export default function ClassroomScheduler() {
             <span style={{ fontSize: 13, opacity: 0.85 }}>
               Total enrolled <b style={{ fontSize: 16 }}>{totalReg}</b>
             </span>
+            {conflictCounts.total > 0 && (
+              <button
+                onClick={() => setConflictPanelOpen((o) => !o)}
+                title="View scheduling conflicts"
+                style={{
+                  ...btnGhost,
+                  background: conflictPanelOpen ? "rgba(255,255,255,.15)" : "rgba(251,191,36,.2)",
+                  borderColor: "#fde68a",
+                  color: "#fef3c7",
+                  fontWeight: 700,
+                  fontSize: 12,
+                }}
+              >
+                ⚠ {conflictCounts.room} room · {conflictCounts.teacher} teacher
+              </button>
+            )}
             <span
               title={saveStatus.ok
                 ? (REMOTE_ENABLED
@@ -1954,6 +2114,33 @@ export default function ClassroomScheduler() {
           </div>
         </div>
       </header>
+
+      {conflictPanelOpen && conflictCounts.total > 0 && (
+        <div style={{ background: "#fffbeb", borderBottom: "1px solid #fde68a", padding: "10px 24px", maxHeight: 220, overflowY: "auto" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: "#b45309" }}>
+              {conflictCounts.total} scheduling conflict{conflictCounts.total === 1 ? "" : "s"}
+            </span>
+            <button onClick={() => setConflictPanelOpen(false)} style={{ ...btnSecondary, marginLeft: "auto", padding: "4px 10px", fontSize: 12 }}>
+              Close
+            </button>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {conflictReport.map((item, i) => (
+              <button
+                key={i}
+                onClick={() => goToConflict(item)}
+                style={{
+                  textAlign: "left", border: "1px solid #fde68a", background: "#fff",
+                  borderRadius: 8, padding: "6px 10px", fontSize: 12, cursor: "pointer", color: item.type === "room" ? "#b91c1c" : "#b45309",
+                }}
+              >
+                {item.type === "room" ? "🔴" : "🟠"} {item.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {!saveStatus.ok && (
         <div style={{ background: "#fef2f2", color: "#b91c1c", padding: "8px 24px", fontSize: 13, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -2056,7 +2243,11 @@ export default function ClassroomScheduler() {
                       onDragStart={(e) => {
                         e.dataTransfer.setData("text/plain", "lib:" + k.id);
                         e.dataTransfer.effectAllowed = "copyMove";
-                        setDrag({ type: "lib", id: k.id, dur: durationFor(k.id), grabOffset: 0 });
+                        e.dataTransfer.setDragImage(emptyDragImage(), 0, 0);
+                        setDrag({
+                          type: "lib", id: k.id, dur: durationFor(k.id), grabOffset: 0,
+                          className: k.name, teacher: k.teacher, classId: k.id,
+                        });
                       }}
                       onDragEnd={() => { setDrag(null); setGhost(null); ghostRef.current = null; setDragOver(null); }}
                       onClick={() => setEditing({ isNew: false, classId: k.id })}
@@ -2252,23 +2443,38 @@ export default function ClassroomScheduler() {
                         style={{ flex: 1, minWidth: 110, position: "relative", height: gridH, boxSizing: "border-box", borderLeft: "1px solid #eceeea" }}
                       >
                         {colPls.map((p) => renderBlock(p, lanes.get(p.id)))}
-                        {ghost && ghost.rooms.includes(room.id) && (
-                          <div
-                            style={{
-                              position: "absolute",
-                              top: (ghost.start - gridStart) * PX_PER_MIN + 1,
-                              height: ghost.dur * PX_PER_MIN - 2,
-                              left: 2, right: 2, zIndex: 2, pointerEvents: "none", borderRadius: 8,
-                              border: ghost.names.length ? "2px solid #dc2626" : "2px dashed #0d7a72",
-                              background: ghost.names.length ? "rgba(220,38,38,.07)" : "rgba(13,122,114,.07)",
-                              display: "flex", alignItems: "flex-start", justifyContent: "center",
-                            }}
-                          >
-                            <span style={{ fontSize: 11, fontWeight: 700, color: ghost.names.length ? "#b91c1c" : "#0d7a72", marginTop: 3, background: "rgba(255,255,255,.85)", borderRadius: 4, padding: "1px 6px" }}>
-                              {fmtRange(ghost.start, ghost.start + ghost.dur)}{ghost.names.length ? " · taken" : ""}
-                            </span>
-                          </div>
-                        )}
+                        {ghost && ghost.rooms.includes(room.id) && (() => {
+                          const lane = ghost.laneInfo?.[room.id] || { lane: 0, lanes: 1 };
+                          const roomClash = ghost.roomConflict;
+                          const teacherClash = ghost.teacherConflict;
+                          const borderColor = roomClash ? "#dc2626" : teacherClash ? "#d97706" : "#0d7a72";
+                          return (
+                            <div
+                              style={{
+                                position: "absolute",
+                                top: (ghost.start - gridStart) * PX_PER_MIN + 1,
+                                height: ghost.dur * PX_PER_MIN - 2,
+                                left: `calc(${(lane.lane / lane.lanes) * 100}% + 2px)`,
+                                width: `calc(${100 / lane.lanes}% - 5px)`,
+                                zIndex: 2, pointerEvents: "none", borderRadius: 8, boxSizing: "border-box",
+                                border: roomClash ? `2px solid ${borderColor}` : `2px dashed ${borderColor}`,
+                                background: roomClash ? "rgba(220,38,38,.07)" : teacherClash ? "rgba(217,119,6,.07)" : "rgba(13,122,114,.07)",
+                                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start",
+                                padding: "3px 5px", overflow: "hidden",
+                              }}
+                            >
+                              {ghost.className && (
+                                <span style={{ fontSize: 11, fontWeight: 700, color: borderColor, background: "rgba(255,255,255,.9)", borderRadius: 4, padding: "1px 5px", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                  {ghost.className}
+                                </span>
+                              )}
+                              <span style={{ fontSize: 10, fontWeight: 600, color: borderColor, marginTop: 2, background: "rgba(255,255,255,.85)", borderRadius: 4, padding: "1px 5px" }}>
+                                {fmtRange(ghost.start, ghost.start + ghost.dur)}
+                                {roomClash ? " · room taken" : teacherClash ? " · teacher busy" : ""}
+                              </span>
+                            </div>
+                          );
+                        })()}
                       </div>
                     );
                   })}
@@ -2322,13 +2528,14 @@ export default function ClassroomScheduler() {
           teachers={teachers || []}
           defaultDay={days.includes(tab) ? tab : days[0]}
           occupiedBy={(cand) => {
-            const f = placements.find(
-              (x) => x.classId !== editing.classId && overlaps(x, cand) && shareRoom(x.rooms, cand.rooms)
-            );
-            return f ? (classOfId(f.classId)?.name || "another class") : null;
+            const ev = evaluateAt(cand, { excludeClassId: editing.classId });
+            return ev.roomClashes[0] ? (classOfId(ev.roomClashes[0].classId)?.name || "another class") : null;
           }}
+          freeRoomsAt={(cand) =>
+            freeRoomsAt(idx, cand, rooms.map((r) => r.id), { excludeClassId: editing.classId })
+          }
           teacherConflictsAt={(cand, teacher) =>
-            teacherConflictLabels(teacherBusy(cand, teacher, { excludeClassId: editing.classId }))
+            evaluateAt(cand, { excludeClassId: editing.classId, teacher }).teacherLabels
           }
           contextLabel={
             editing.room != null
@@ -2395,7 +2602,7 @@ export default function ClassroomScheduler() {
 }
 
 // ───────────────────────── Class edit modal ─────────────────────────
-function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultDay, occupiedBy, teacherConflictsAt, contextLabel, onSave, onDelete, onClose }) {
+function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultDay, occupiedBy, freeRoomsAt, teacherConflictsAt, contextLabel, onSave, onDelete, onClose }) {
   const c = cls || {};
   const [name, setName] = useState(c.name || "");
   const [teacher, setTeacher] = useState(c.teacher || "");
@@ -2529,6 +2736,9 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
         const teacherOverlaps = teacherKey(teacher)
           ? teacherConflictsAt({ day: r.day, start: r.start, end: r.end }, teacher)
           : [];
+        const availableRooms = freeRoomsAt
+          ? freeRoomsAt({ day: r.day, start: r.start, end: r.end }).filter((id) => !r.rooms.includes(id))
+          : [];
         return (
           <div key={i} style={{ marginBottom: 10 }}>
             <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
@@ -2611,6 +2821,11 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
                   ? "— pick a room (click two to combine)"
                   : `capacity ${capOf(r.rooms)}${r.rooms.length > 1 ? ` · Rooms ${sortRoomIds(r.rooms).join("+")} combined` : ""}`}
               </span>
+              {availableRooms.length > 0 && (
+                <span style={{ fontSize: 11, color: "#0f766e", fontWeight: 600 }}>
+                  Free: {availableRooms.join(", ")}
+                </span>
+              )}
             </div>
             {selTaken.length > 0 && (
               <div style={{ ...roomConflictStyle, marginTop: 5 }}>
@@ -3314,6 +3529,9 @@ export {
   maxEndForPlacement,
   roomConflictsIndexed,
   teacherBusyIndexed,
+  evaluatePlacement,
+  freeRoomsAt,
+  buildConflictReport,
   computeTabBlockMeta,
   dataSignature,
   layoutLanes,
