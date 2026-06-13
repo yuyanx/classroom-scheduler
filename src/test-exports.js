@@ -1,11 +1,6 @@
 // Test-only entry — bundles pure schedule helpers without mounting React.
 export {
-  parseTimeRange,
   teacherKey,
-  normalizeV2,
-  migrateOld,
-  migrateV1toV2,
-  upgrade,
   overlaps,
   buildScheduleIndexes,
   maxEndForPlacement,
@@ -20,6 +15,14 @@ export {
   formatDayRange,
   classScheduleLines,
   sortCatalogForByClassView,
+} from "./domain/scheduleLogic.ts";
+
+export {
+  parseTimeRange,
+  normalizeV2,
+  migrateOld,
+  migrateV1toV2,
+  upgrade,
   isLocalDevHost,
   isPreviewHost,
   isRemoteSyncEnabled,

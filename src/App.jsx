@@ -7,6 +7,25 @@ import {
   canApplyRemotePoll,
   saveToLocalStorage,
 } from "./scheduleService.js";
+import {
+  teacherKey,
+  overlaps,
+  buildScheduleIndexes,
+  maxEndForPlacement,
+  roomConflictsIndexed,
+  teacherBusyIndexed,
+  evaluatePlacement,
+  freeRoomsAt,
+  buildConflictReport,
+  computeTabBlockMeta,
+  dataSignature,
+  layoutLanes,
+  formatDayRange,
+  classScheduleLines,
+  sortCatalogForByClassView,
+  overviewPillStyle,
+  overviewRoomLabel,
+} from "./domain/scheduleLogic.ts";
 
 // ───────────────────────── Week / time constants ─────────────────────────
 const ALL_DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
@@ -55,11 +74,6 @@ function cleanCap(value, fallback) {
   const n = parseInt(value, 10);
   return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
-
-const teacherKey = (teacher) => {
-  const key = (teacher || "").trim().toLowerCase();
-  return key === "tbd" || key === "n/a" || key === "na" ? "" : key;
-};
 
 const ratioColor = (reg, cap) => {
   if (!cap) return { bar: "#94a3b8", text: "#64748b", bg: "#f8fafc" };
@@ -1036,218 +1050,6 @@ const loadData = () => {
 };
 
 const saveData = (data) => saveToLocalStorage(data);
-
-// ───────────────────────── Interval helpers ─────────────────────────
-const overlaps = (a, b) => a.day === b.day && a.start < b.end && b.start < a.end;
-
-// Fast lookups — rebuilt when `data` changes (see useMemo in ClassroomScheduler).
-function buildScheduleIndexes(data) {
-  const catalogById = new Map();
-  (data.catalog || []).forEach((k) => catalogById.set(k.id, k));
-
-  const placementsByClassId = new Map();
-  const placementsByDay = new Map();
-  const placementsByDayRoom = new Map(); // key: `${day}\0${roomId}`
-  const placementsByDayTeacher = new Map(); // key: `${day}\0${teacherKey}`
-  (data.placements || []).forEach((p) => {
-    if (!placementsByClassId.has(p.classId)) placementsByClassId.set(p.classId, []);
-    placementsByClassId.get(p.classId).push(p);
-    if (!placementsByDay.has(p.day)) placementsByDay.set(p.day, []);
-    placementsByDay.get(p.day).push(p);
-    p.rooms.forEach((rid) => {
-      const key = `${p.day}\0${rid}`;
-      if (!placementsByDayRoom.has(key)) placementsByDayRoom.set(key, []);
-      placementsByDayRoom.get(key).push(p);
-    });
-    const tk = teacherKey(catalogById.get(p.classId)?.teacher);
-    if (tk) {
-      const tkey = `${p.day}\0${tk}`;
-      if (!placementsByDayTeacher.has(tkey)) placementsByDayTeacher.set(tkey, []);
-      placementsByDayTeacher.get(tkey).push(p);
-    }
-  });
-
-  const roomCapById = new Map((data.rooms || []).map((r) => [r.id, r.cap]));
-  const roomPos = new Map((data.rooms || []).map((r, i) => [r.id, i]));
-  const scheduledClassIds = new Set((data.placements || []).map((p) => p.classId));
-  return { catalogById, placementsByClassId, placementsByDay, placementsByDayRoom, placementsByDayTeacher, roomCapById, roomPos, scheduledClassIds };
-}
-
-// Latest end minute when extending placement.end (room conflicts via day+room index).
-function maxEndForPlacement(idx, placement, gridEnd) {
-  const { day, start, end, rooms, id } = placement;
-  let limit = gridEnd;
-  rooms.forEach((rid) => {
-    (idx.placementsByDayRoom.get(`${day}\0${rid}`) || []).forEach((o) => {
-      if (o.id === id) return;
-      if (start < o.end && o.start < limit) {
-        if (o.start >= start) limit = Math.min(limit, o.start);
-        if (o.start < start && o.end > end) limit = Math.min(limit, end);
-      }
-    });
-  });
-  return limit;
-}
-
-function roomConflictsIndexed(idx, cand, opts = {}) {
-  const seen = new Set();
-  const hits = [];
-  cand.rooms.forEach((rid) => {
-    (idx.placementsByDayRoom.get(`${cand.day}\0${rid}`) || []).forEach((p) => {
-      if (seen.has(p.id)) return;
-      if (p.id === opts.excludeId) return;
-      if (opts.excludeClassId != null && p.classId === opts.excludeClassId) return;
-      if (overlaps(p, cand)) {
-        seen.add(p.id);
-        hits.push(p);
-      }
-    });
-  });
-  return hits;
-}
-
-function teacherBusyIndexed(idx, cand, teacher, opts = {}) {
-  const key = teacherKey(teacher);
-  if (!key) return [];
-  return (idx.placementsByDayTeacher.get(`${cand.day}\0${key}`) || [])
-    .filter((p) => p.id !== opts.excludePlacementId && p.classId !== opts.excludeClassId && overlaps(p, cand))
-    .map((p) => ({ placement: p, cls: idx.catalogById.get(p.classId) }));
-}
-
-// Unified conflict check for drag, resize, modal, and overview meta.
-function evaluatePlacement(idx, cand, opts = {}) {
-  const ex = {
-    excludeId: opts.excludePlacementId,
-    excludeClassId: opts.excludeClassId,
-  };
-  const roomClashes = roomConflictsIndexed(idx, cand, ex);
-  const teacher =
-    opts.teacher != null
-      ? opts.teacher
-      : opts.classId
-        ? idx.catalogById.get(opts.classId)?.teacher
-        : undefined;
-  const teacherItems = teacher
-    ? teacherBusyIndexed(idx, cand, teacher, {
-        excludePlacementId: opts.excludePlacementId,
-        excludeClassId: opts.excludeClassId,
-      })
-    : [];
-  const roomConflictNames = [...new Set(roomClashes.map((p) => idx.catalogById.get(p.classId)?.name || "another class"))];
-  const teacherLabels = [...new Set(teacherItems.map(({ placement, cls }) =>
-    `${cls?.name || "Class"} (${DAY_SHORT[placement.day]} ${fmtRange(placement.start, placement.end)} · Rm ${placement.rooms.join("+")})`
-  ))];
-  return {
-    ok: roomClashes.length === 0,
-    roomClashes,
-    teacherBusy: teacherItems,
-    roomConflictNames,
-    teacherLabels,
-    hasTeacherConflict: teacherItems.length > 0,
-  };
-}
-
-function freeRoomsAt(idx, cand, roomIds, opts = {}) {
-  return roomIds.filter((rid) => {
-    const probe = { day: cand.day, start: cand.start, end: cand.end, rooms: [rid] };
-    return roomConflictsIndexed(idx, probe, {
-      excludeId: opts.excludePlacementId,
-      excludeClassId: opts.excludeClassId,
-    }).length === 0;
-  });
-}
-
-function buildConflictReport(idx, data) {
-  const items = [];
-  const seen = new Set();
-  (data.placements || []).forEach((p) => {
-    const cls = idx.catalogById.get(p.classId);
-    const cand = { day: p.day, start: p.start, end: p.end, rooms: p.rooms };
-    const ev = evaluatePlacement(idx, cand, { excludePlacementId: p.id, teacher: cls?.teacher });
-    ev.roomClashes.forEach((other) => {
-      const pairKey = [p.id, other.id].sort().join("|") + ":room";
-      if (seen.has(pairKey)) return;
-      seen.add(pairKey);
-      const otherCls = idx.catalogById.get(other.classId);
-      const sharedRooms = [...new Set([...p.rooms, ...other.rooms])].sort().join("+");
-      items.push({
-        type: "room",
-        placementId: p.id,
-        otherPlacementId: other.id,
-        day: p.day,
-        classId: p.classId,
-        className: cls?.name || "Class",
-        start: p.start,
-        end: p.end,
-        label: `${cls?.name || "Class"} ↔ ${otherCls?.name || "Class"} · ${DAY_SHORT[p.day]} ${fmtRange(p.start, p.end)} · Rm ${sharedRooms}`,
-      });
-    });
-    ev.teacherBusy.forEach(({ placement: other, cls: otherCls }) => {
-      const pairKey = [p.id, other.id].sort().join("|") + ":teacher";
-      if (seen.has(pairKey)) return;
-      seen.add(pairKey);
-      items.push({
-        type: "teacher",
-        placementId: p.id,
-        otherPlacementId: other.id,
-        day: p.day,
-        classId: p.classId,
-        className: cls?.name || "Class",
-        start: p.start,
-        end: p.end,
-        label: `${cls?.teacher || "Teacher"} · ${cls?.name || "Class"} ↔ ${otherCls?.name || "Class"} · ${DAY_SHORT[p.day]} ${fmtRange(p.start, p.end)}`,
-      });
-    });
-  });
-  return items.sort((a, b) => dayIdx(a.day) - dayIdx(b.day) || a.start - b.start || a.type.localeCompare(b.type));
-}
-
-function computeTabBlockMeta(idx, day) {
-  const meta = new Map();
-  const dayPls = idx.placementsByDay.get(day) || [];
-  dayPls.forEach((p) => {
-    const cls = idx.catalogById.get(p.classId);
-    const cand = { day: p.day, start: p.start, end: p.end, rooms: p.rooms };
-    const ev = evaluatePlacement(idx, cand, { excludePlacementId: p.id, teacher: cls?.teacher });
-    const otherDays = [...new Set((idx.placementsByClassId.get(p.classId) || []).filter((x) => x.id !== p.id).map((x) => DAY_SHORT[x.day]))];
-    meta.set(p.id, {
-      roomClashes: ev.roomClashes,
-      teacherLabels: ev.teacherLabels,
-      otherDays,
-    });
-  });
-  return meta;
-}
-
-const dataSignature = (d) => JSON.stringify(d);
-
-// Overlapping placements in one room share the column side by side (calendar-style lanes)
-function layoutLanes(list) {
-  const sorted = [...list].sort((a, b) => a.start - b.start || a.end - b.end);
-  const res = new Map();
-  let cluster = [];
-  let laneEnds = [];
-  let clusterEnd = 0;
-  const flush = () => {
-    cluster.forEach((it) => res.set(it.p.id, { lane: it.lane, lanes: laneEnds.length }));
-    cluster = [];
-    laneEnds = [];
-  };
-  sorted.forEach((p) => {
-    if (cluster.length && p.start >= clusterEnd) flush();
-    clusterEnd = cluster.length ? Math.max(clusterEnd, p.end) : p.end;
-    let lane = laneEnds.findIndex((e) => e <= p.start);
-    if (lane === -1) {
-      lane = laneEnds.length;
-      laneEnds.push(p.end);
-    } else {
-      laneEnds[lane] = p.end;
-    }
-    cluster.push({ p, lane });
-  });
-  flush();
-  return res;
-}
 
 let _emptyDragImg;
 function emptyDragImage() {
@@ -2418,6 +2220,7 @@ export default function ClassroomScheduler() {
                 catalog={catalog}
                 placements={placements}
                 days={days}
+                idx={idx}
                 onEditClass={(classId) => setEditing({ isNew: false, classId })}
                 onManageTeachers={() => setTeacherMgrOpen(true)}
               />
@@ -2426,6 +2229,7 @@ export default function ClassroomScheduler() {
                 catalog={catalog}
                 placements={placements}
                 days={days}
+                idx={idx}
                 onEditClass={(classId) => setEditing({ isNew: false, classId })}
               />
             ) : (
@@ -2916,93 +2720,14 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
   );
 }
 
-// ───────────────────────── Overview pill helpers (By Class / By Teacher) ─────────────────────────
-const overviewPillBg = (startMin) => (startMin < 720 ? "#f0fdfa" : "#f8fafc");
-
-const overviewRoomLabel = (rooms) =>
-  `Rm ${[...rooms].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })).join("+")}`;
-
-// Summarize a class's placements into lines like "Mon to Fri 9:00–10:30 AM".
-const fmtTimeRangeAmPm = (start, end) => {
-  const startAm = start < 720;
-  const endAm = end <= 720 ? end < 720 : false;
-  if (startAm === endAm) return `${fmtTime(start)}–${fmtTime(end)} ${startAm ? "AM" : "PM"}`;
-  return `${fmtAmPm(start)}–${fmtAmPm(end)}`;
-};
-
-const formatDayRange = (dayList) => {
-  const sorted = [...new Set(dayList)].sort((a, b) => dayIdx(a) - dayIdx(b));
-  if (!sorted.length) return "";
-  const runs = [];
-  let run = [sorted[0]];
-  for (let i = 1; i < sorted.length; i++) {
-    if (dayIdx(sorted[i]) === dayIdx(sorted[i - 1]) + 1) run.push(sorted[i]);
-    else { runs.push(run); run = [sorted[i]]; }
-  }
-  runs.push(run);
-  return runs.map((r) => {
-    if (r.length === 1) return DAY_SHORT[r[0]];
-    if (r.length === 5 && r[0] === "mon" && r[4] === "fri") return "Mon to Fri";
-    return `${DAY_SHORT[r[0]]} to ${DAY_SHORT[r[r.length - 1]]}`;
-  }).join(", ");
-};
-
-const classScheduleLines = (placements, classId) => {
-  const pls = placements.filter((p) => p.classId === classId);
-  if (!pls.length) return [];
-  const groups = new Map();
-  pls.forEach((p) => {
-    const key = `${p.start}|${p.end}|${[...p.rooms].sort().join("+")}`;
-    if (!groups.has(key)) groups.set(key, { start: p.start, end: p.end, days: [] });
-    groups.get(key).days.push(p.day);
-  });
-  return [...groups.values()]
-    .sort((a, b) => a.start - b.start || dayIdx([...a.days].sort((x, y) => dayIdx(x) - dayIdx(y))[0]) - dayIdx([...b.days].sort((x, y) => dayIdx(x) - dayIdx(y))[0]))
-    .map((g) => `${formatDayRange(g.days)} ${fmtTimeRangeAmPm(g.start, g.end)}`);
-};
-
-function sortCatalogForByClassView(catalog, placements) {
-  const earliestStart = (classId) => {
-    let best = null;
-    placements.forEach((p) => {
-      if (p.classId !== classId) return;
-      if (best == null || p.start < best) best = p.start;
-    });
-    return best;
-  };
-  return catalog.slice().sort((a, b) => {
-    const sa = earliestStart(a.id);
-    const sb = earliestStart(b.id);
-    if ((sa == null) !== (sb == null)) return sa == null ? -1 : 1;
-    const letter = (name) => (name.trim()[0] || "").toLowerCase();
-    const la = letter(a.name);
-    const lb = letter(b.name);
-    if (la !== lb) return la.localeCompare(lb);
-    if (sa == null && sb == null) return a.name.localeCompare(b.name);
-    if (sa == null) return 1;
-    if (sb == null) return -1;
-    return sa - sb || a.name.localeCompare(b.name);
-  });
-}
-
-const overviewPillStyle = ({ clash, start, clickable }) => ({
-  display: "inline-flex",
-  flexDirection: "column",
-  gap: 2,
-  maxWidth: "100%",
-  padding: "4px 7px",
-  borderRadius: 6,
-  border: clash ? "1px solid #fde68a" : "1px solid #d6dad4",
-  background: clash ? "#fffbeb" : overviewPillBg(start),
-  color: clash ? "#b45309" : "#334155",
-  lineHeight: 1.25,
-  overflow: "hidden",
-  minHeight: 42,
-  cursor: clickable ? "pointer" : undefined,
-});
-
 // ───────────────────────── By-class schedule view ─────────────────────────
-function ClassScheduleView({ catalog, placements, days, onEditClass }) {
+function ClassScheduleView({ catalog, placements, days, idx, onEditClass }) {
+  const pillClash = (p) => {
+    if (!idx) return { roomClash: false, teacherClash: false };
+    const cls = idx.catalogById.get(p.classId);
+    const ev = evaluatePlacement(idx, { day: p.day, start: p.start, end: p.end, rooms: p.rooms }, { excludePlacementId: p.id, teacher: cls?.teacher });
+    return { roomClash: ev.roomClashes.length > 0, teacherClash: ev.hasTeacherConflict };
+  };
   const meetingsFor = (classId, day) =>
     placements
       .filter((p) => p.classId === classId && p.day === day)
@@ -3063,16 +2788,20 @@ function ClassScheduleView({ catalog, placements, days, onEditClass }) {
                           <span style={{ color: "#cbd5d1", fontSize: 12 }}>—</span>
                         ) : (
                           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                            {list.map((p) => (
-                              <div key={p.id} style={overviewPillStyle({ start: p.start })}>
-                                <span style={{ fontSize: 12, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%" }}>
-                                  {fmtRange(p.start, p.end)}
-                                </span>
-                                <span style={{ fontSize: 11, color: "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%" }}>
-                                  {overviewRoomLabel(p.rooms)}
-                                </span>
-                              </div>
-                            ))}
+                            {list.map((p) => {
+                              const { roomClash, teacherClash } = pillClash(p);
+                              const pill = overviewPillStyle({ start: p.start, roomClash, teacherClash });
+                              return (
+                                <div key={p.id} style={pill}>
+                                  <span style={{ fontSize: 12, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%" }}>
+                                    {fmtRange(p.start, p.end)}{(roomClash || teacherClash) ? " ⚠" : ""}
+                                  </span>
+                                  <span style={{ fontSize: 11, color: pill.color, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%" }}>
+                                    {overviewRoomLabel(p.rooms)}
+                                  </span>
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
                       </td>
@@ -3094,14 +2823,14 @@ function ClassScheduleView({ catalog, placements, days, onEditClass }) {
       <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
         📋 One row per class — every meeting time and room across the week.
         Teal pills are morning (before noon); gray pills are afternoon.
-        Amber rows are not scheduled yet. Click a row to edit the class.
+        Red = room overlap · amber = teacher double-booked. Amber rows are not scheduled yet.
       </p>
     </>
   );
 }
 
 // ───────────────────────── By-teacher schedule view ─────────────────────────
-function TeacherScheduleView({ teachers, catalog, placements, days, onEditClass, onManageTeachers }) {
+function TeacherScheduleView({ teachers, catalog, placements, days, idx, onEditClass, onManageTeachers }) {
   const classOfId = (id) => catalog.find((k) => k.id === id);
 
   const entriesFor = (key, day) =>
@@ -3119,7 +2848,12 @@ function TeacherScheduleView({ teachers, catalog, placements, days, onEditClass,
   const tbdHasAny = tbdClasses.length > 0;
 
   const renderCell = (list, day) => {
-    const clash = (p) => list.some(({ p: o }) => o.id !== p.id && o.start < p.end && p.start < o.end);
+    const teacherClash = (p) => list.some(({ p: o }) => o.id !== p.id && o.start < p.end && p.start < o.end);
+    const roomClashFor = (p) => {
+      if (!idx) return false;
+      const ev = evaluatePlacement(idx, { day: p.day, start: p.start, end: p.end, rooms: p.rooms }, { excludePlacementId: p.id, teacher: classOfId(p.classId)?.teacher });
+      return ev.roomClashes.length > 0;
+    };
     return (
       <td key={day} style={{ ...tdStyle, verticalAlign: "top" }}>
         {list.length === 0 ? (
@@ -3127,18 +2861,20 @@ function TeacherScheduleView({ teachers, catalog, placements, days, onEditClass,
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             {list.map(({ p, cls }) => {
-              const isClash = clash(p);
+              const roomClash = roomClashFor(p);
+              const tClash = teacherClash(p);
+              const pill = overviewPillStyle({ start: p.start, roomClash, teacherClash: tClash, clickable: true });
               return (
                 <div
                   key={p.id}
                   onClick={() => onEditClass(cls.id)}
-                  title={isClash ? "Two classes at the same time — click to edit" : "Click to edit this class"}
-                  style={overviewPillStyle({ clash: isClash, start: p.start, clickable: true })}
+                  title={roomClash ? "Room overlap — click to edit" : tClash ? "Teacher double-booked — click to edit" : "Click to edit this class"}
+                  style={pill}
                 >
-                  <span style={{ fontSize: 12, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%", color: isClash ? "#b45309" : "#334155" }}>
-                    {cls.name}{isClash ? " ⚠" : ""}
+                  <span style={{ fontSize: 12, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%", color: pill.color }}>
+                    {cls.name}{(roomClash || tClash) ? " ⚠" : ""}
                   </span>
-                  <span style={{ fontSize: 11, color: isClash ? "#b45309" : "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%" }}>
+                  <span style={{ fontSize: 11, color: pill.color, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%" }}>
                     {fmtRange(p.start, p.end)} · {overviewRoomLabel(p.rooms)}
                   </span>
                 </div>
@@ -3200,8 +2936,10 @@ function TeacherScheduleView({ teachers, catalog, placements, days, onEditClass,
       </div>
       <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
         👤 One row per teacher — classes they teach across the week. Click any class card to edit.
-        <span style={{ color: "#b45309", fontWeight: 700 }}> Amber </span>
-        cards mark double-booked times (same teacher in two rooms at once).
+        <span style={{ color: "#b91c1c", fontWeight: 700 }}> Red </span>
+        = room overlap ·
+        <span style={{ color: "#b45309", fontWeight: 700 }}> amber </span>
+        = teacher double-booked.
         <b> Manage teachers</b> renames (cascades to classes) or removes teachers (sets their classes to TBD).
       </p>
     </>
