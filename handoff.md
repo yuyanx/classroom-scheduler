@@ -44,7 +44,7 @@ classroom-scheduler/
 ├── package.json          # Dependencies: react, react-dom, esbuild
 ├── src/
 │   ├── main.jsx          # Entry point — ReactDOM.createRoot → <ClassroomScheduler />
-│   └── App.jsx           # Entire application (single file, ~1000 lines)
+│   └── App.jsx           # Entire application (single file, ~2400 lines)
 ├── .claude/launch.json   # Local preview server config (python3 http.server on :4173)
 └── handoff.md            # This file
 ```
@@ -53,7 +53,8 @@ Components inside `App.jsx` (top to bottom): time helpers + default data + migra
 (`migrateOld()` → `migrateV1toV2()` → `normalizeV2()`, entry point `upgrade()`) →
 `ClassroomScheduler` (main: left library sidebar, day tabs, day calendar with drag/resize, all state ops) →
 `ClassModal` (class fields + schedule-rows editor) → `ClassScheduleView` (By Class tab) →
-`TeacherScheduleView` (By Teacher tab) → `TeacherModal` → `RoomModal` → `Overlay` / `Field` → style objects.
+`TeacherScheduleView` (By Teacher tab) → `TeacherModal` → `RoomModal` → `RoomCapModal` →
+`HoursModal` → overview pill helpers → `Overlay` / `Field` → style objects.
 
 ---
 
@@ -71,6 +72,9 @@ npx serve .
 ```
 
 After rebuilding, commit `app.js` along with your `src/` changes so Vercel serves the latest build.
+
+**Every commit must update this file** — add a changelog entry (and adjust architecture sections when
+behavior or UI changes). Keep `handoff.md` in sync with the code you ship.
 
 ---
 
@@ -172,10 +176,15 @@ tray drop handlers, so dragging a scheduled card onto it still unschedules.
 `rooms` is one ordered array of `{ id, cap }` for the whole week. `RoomModal` edits names,
 ordering, and capacity (renames cascade into placement `rooms` arrays; deleting a room removes it
 from placements, and a placement left with no rooms is unscheduled); clicking a room header on the
-calendar (`editRoomCap`) prompts for just that room's capacity (applies all week). Calendar room
-headers display `Cap N`, and scheduled cards compare the class `reg` count against the total
-capacity of the rooms they occupy. The Class Library only manages how many students are signed up
-for a class.
+calendar (`openRoomCapEditor`) opens `RoomCapModal` — a styled overlay (room badge, numeric
+capacity field, Cancel / Save capacity) that applies that room's capacity for the whole week.
+Calendar room headers display `Cap N ✎`, and scheduled cards compare the class `reg` count against
+the total capacity of the rooms they occupy. The Class Library only manages how many students are
+signed up for a class.
+
+Per-day scheduling windows live in `hours` (default + optional per-day overrides). The footer
+under the day grid shows the active day's range and an **✎ Edit hours** button that opens
+`HoursModal` (day badge, Start / End `<input type="time">`, Cancel / Save hours).
 
 ### Three ways to schedule a class
 
@@ -205,11 +214,23 @@ for a class.
 case-insensitively via `teacherKey()`. The class dialog's Teacher field is a dropdown over the roster
 plus "(Teacher TBD)" and "＋ Add new teacher…" (prompt; the name joins the roster when the class is
 saved). The **👤 By Teacher** tab (`tab === "byTeacher"`, not a real day) replaces the calendar with a
-teachers × days table — each cell lists that teacher's classes with time range + room, amber ⚠ when
-two of their classes overlap in time, click-to-edit. Its "Manage teachers" button opens
+teachers × days table — each cell lists that teacher's classes as stacked **pill cards** (rounded,
+bordered, `minHeight: 42`): **class name on the first line** (bold), time + room on the second line
+(subtitle); amber border/background + ⚠ when two of their classes overlap in time; click-to-edit.
+Its "Manage teachers" button opens
 `TeacherModal`: rename cascades to all classes (matched via `teacherKey`), removal sets classes to
 TBD, a "(Teacher TBD)" row in the view collects unassigned classes. When `tab === "byTeacher"` the
 class dialog's `defaultDay` falls back to the first day.
+
+### By Class overview
+
+The **📋 By Class** tab (`tab === "byClass"`) is a classes × days table. The sticky left column
+shows class name, teacher, signed-up count, note, and **schedule summary lines** (e.g.
+`Mon to Fri 9:00–10:30 AM`) derived from placements via `classScheduleLines()` — not a
+"meets N×/week" count. Day columns use the same pill style as main: time on line 1, room on line 2;
+morning placements (`start < 720`) use teal `#f0fdfa`, afternoon use gray `#f8fafc`. Unscheduled
+classes sort first (amber row). Overview tables use `width: 100%`, large `minWidth`, and horizontal
+scroll inside the white container; stacked pills use `flex flex-col gap: 4`.
 
 ### Conflicts: room (red, blocking) vs teacher (amber, soft)
 
@@ -300,6 +321,16 @@ app runs exactly as the old browser-only version.
   `occupies` blocking) with multi-room placements — `placement.rooms` is an array, the class
   renders in every combined room's column, capacity is the rooms' total, and rooms are picked via
   chips in the class dialog (click several to combine). Conflicts = time overlap + shared room.
+- 2026-06-12 — **grid card containment**: split each calendar card into a clipping text area and a
+  fixed counter footer so signed-up counts and capacity bars never overflow the card at narrow
+  widths; secondary lines ellipsis; combined-room label shortened to "Rm 2+3"; hide +/- steppers in
+  side-by-side conflict lanes; first/last hour labels no longer clip at the grid edge.
+- 2026-06-12 — **overview UI polish + modals** (`ebe7c38`): By Class / By Teacher overview tabs
+  aligned with main-branch pill design (uniform blocks, resize hardening, horizontal scroll); By
+  Teacher pills show **class name first**, time + room as subtitle; By Class left column shows
+  actual schedule lines (`Mon to Fri 9:00–10:30 AM`, etc.) via `classScheduleLines()` instead of
+  meets-N×/week; room capacity and per-day hours use `RoomCapModal` / `HoursModal` instead of
+  browser `prompt`/`alert`.
 
 ---
 
@@ -307,7 +338,7 @@ app runs exactly as the old browser-only version.
 
 - **Backend / multi-user sync** — replace `loadData` / `saveData` with Supabase or Firebase realtime calls. The rest of the app is unaffected.
 - **TypeScript** — the data model is well-defined; adding types to `App.jsx` is a self-contained change.
-- **Split into components** — `App.jsx` is a single ~1000-line file. `ClassModal`, `RoomModal`, and `Overlay` are already split into functions at the bottom; moving them to separate files under `src/components/` is straightforward.
+- **Split into components** — `App.jsx` is a single ~2400-line file. `ClassModal`, `RoomModal`, and `Overlay` are already split into functions at the bottom; moving them to separate files under `src/components/` is straightforward.
 - **Build pipeline** — currently `app.js` is committed. Adding a `vercel.json` with a `buildCommand` would let Vercel run esbuild on deploy instead, removing the committed bundle.
 - **Mobile layout** — the grid uses a `<table>` with `overflowX: auto`. A card-based layout for small screens would improve mobile usability.
 - **Export / print view** — a read-only printable summary of the week's schedule.
