@@ -1,4 +1,12 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import {
+  STORAGE_KEY,
+  createSyncRef,
+  bumpLocalRevision,
+  markRevisionSaved,
+  canApplyRemotePoll,
+  saveToLocalStorage,
+} from "./scheduleService.js";
 
 // ───────────────────────── Week / time constants ─────────────────────────
 const ALL_DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
@@ -946,8 +954,6 @@ function upgrade(raw) {
 
 const defaultData = () => migrateV1toV2(JSON.parse(JSON.stringify(LIVE_V1_SEED)));
 
-const STORAGE_KEY = "premier-classroom-schedule";
-
 // ───────────────────────── Shared storage (Supabase) ─────────────────────────
 // One shared schedule for everyone. The anon key is designed to be public; what
 // it can do is limited by the table's RLS policies. Empty key = browser-only mode.
@@ -1029,18 +1035,7 @@ const loadData = () => {
   return defaultData();
 };
 
-const saveData = (data) => {
-  try {
-    const payload = JSON.stringify(data);
-    window.localStorage.setItem(STORAGE_KEY, payload);
-    if (window.localStorage.getItem(STORAGE_KEY) !== payload) {
-      return { ok: false, error: "Browser storage did not keep the saved data." };
-    }
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: e?.message || "Browser storage is unavailable." };
-  }
-};
+const saveData = (data) => saveToLocalStorage(data);
 
 // ───────────────────────── Interval helpers ─────────────────────────
 const overlaps = (a, b) => a.day === b.day && a.start < b.end && b.start < a.end;
@@ -1303,8 +1298,11 @@ export default function ClassroomScheduler() {
     });
   const [libQuery, setLibQuery] = useState("");
   const [conflictPanelOpen, setConflictPanelOpen] = useState(false);
+  const [undoToast, setUndoToast] = useState(null);
+  const undoSnapshot = useRef(null);
+  const undoTimer = useRef(null);
 
-  const remoteRef = useRef({ timer: null, retryTimer: null, lastSyncedAt: null, pendingSave: false, lastSaveFailed: false });
+  const remoteRef = useRef(createSyncRef());
   const dataRef = useRef(data);
   dataRef.current = data; // latest data for retries and the tab-close flush
 
@@ -1364,6 +1362,7 @@ export default function ClassroomScheduler() {
       remoteRef.current.lastSyncedAt = ts || new Date().toISOString();
       remoteRef.current.pendingSave = false;
       remoteRef.current.lastSaveFailed = false;
+      markRevisionSaved(remoteRef.current);
       clearTimeout(remoteRef.current.retryTimer);
       setStatus(true, `Saved for everyone at ${timeLabel()}`);
     } catch (e) {
@@ -1378,22 +1377,48 @@ export default function ClassroomScheduler() {
     }
   };
 
-  const persist = useCallback((nextOrMutator) => {
+  const scheduleUndo = useCallback((prev) => {
+    clearTimeout(undoTimer.current);
+    undoSnapshot.current = prev;
+    setUndoToast({ label: "Change saved" });
+    undoTimer.current = setTimeout(() => {
+      undoSnapshot.current = null;
+      setUndoToast(null);
+    }, 8000);
+  }, []);
+
+  const applyData = useCallback((next, { skipUndo = false, skipRevision = false } = {}) => {
     const prev = dataRef.current;
-    const next = typeof nextOrMutator === "function" ? nextOrMutator(prev) : nextOrMutator;
     if (!next || next === prev) return;
+    if (!skipUndo) scheduleUndo(prev);
+    if (!skipRevision) bumpLocalRevision(remoteRef.current);
     setData(next);
     dataRef.current = next;
     if (!REMOTE_ENABLED) {
       queueLocalSave(next);
       return;
     }
-    queueLocalSave(next); // debounced local cache as offline fallback
+    queueLocalSave(next);
     setSaveStatus((s) => ({ ...s, ok: true, error: "", label: "Saving…" }));
     remoteRef.current.pendingSave = true;
     clearTimeout(remoteRef.current.timer);
     remoteRef.current.timer = setTimeout(() => flushRemoteSave(next), 600);
-  }, [queueLocalSave]);
+  }, [queueLocalSave, scheduleUndo]);
+
+  const persist = useCallback((nextOrMutator, opts = {}) => {
+    const prev = dataRef.current;
+    const next = typeof nextOrMutator === "function" ? nextOrMutator(prev) : nextOrMutator;
+    applyData(next, opts);
+  }, [applyData]);
+
+  const undoLast = useCallback(() => {
+    const snap = undoSnapshot.current;
+    if (!snap) return;
+    clearTimeout(undoTimer.current);
+    undoSnapshot.current = null;
+    setUndoToast(null);
+    applyData(snap, { skipUndo: true });
+  }, [applyData]);
 
   useEffect(() => {
     if (!REMOTE_ENABLED) {
@@ -1423,6 +1448,7 @@ export default function ClassroomScheduler() {
           const next = upgrade(row.data);
           dataRef.current = next;
           setData(next);
+          markRevisionSaved(remoteRef.current);
           flushLocalSave(next);
           setStatus(true, `Shared schedule loaded at ${timeLabel()}`);
         } else {
@@ -1435,21 +1461,23 @@ export default function ClassroomScheduler() {
     })();
     // Light polling keeps other open computers in sync (last write wins)
     const iv = setInterval(async () => {
-      if (remoteRef.current.pendingSave || document.hidden) return;
+      if (document.hidden || !canApplyRemotePoll(remoteRef.current)) return;
       try {
         const ts = await remoteUpdatedAt();
         if (ts && remoteRef.current.lastSyncedAt && ts > remoteRef.current.lastSyncedAt) {
           const row = await remoteLoad();
-          if (row && !remoteRef.current.pendingSave) {
+          if (row && canApplyRemotePoll(remoteRef.current)) {
             const next = upgrade(row.data);
             if (dataSignature(next) !== dataSignature(dataRef.current)) {
               remoteRef.current.lastSyncedAt = row.updated_at;
               dataRef.current = next;
               setData(next);
+              markRevisionSaved(remoteRef.current);
               flushLocalSave(next);
               setStatus(true, `Updated from another computer at ${timeLabel()}`);
             } else {
               remoteRef.current.lastSyncedAt = row.updated_at;
+              markRevisionSaved(remoteRef.current);
             }
           }
         }
@@ -1748,9 +1776,20 @@ export default function ClassroomScheduler() {
         scheduleResizePreview(p.id, end);
       }
     };
+    const cancel = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("keydown", onKey);
+      setResize(null);
+      cur = p.end;
+    };
+    const onKey = (ev) => {
+      if (ev.key === "Escape") cancel();
+    };
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      window.removeEventListener("keydown", onKey);
       setResize(null);
       if (cur === p.end) return;
       const freshIdx = buildScheduleIndexes(dataRef.current);
@@ -1768,6 +1807,7 @@ export default function ClassroomScheduler() {
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
+    window.addEventListener("keydown", onKey);
     setResize({ plId: p.id, end: p.end });
   };
 
@@ -1901,7 +1941,7 @@ export default function ClassroomScheduler() {
   };
 
   const resetAll = () => {
-    persist(() => defaultData());
+    persist(() => defaultData(), { skipUndo: true });
     setConfirmReset(false);
   };
 
@@ -2052,7 +2092,7 @@ export default function ClassroomScheduler() {
             onPointerDown={(e) => startResize(e, p)}
             onClick={(e) => e.stopPropagation()}
             title="Drag to change the end time"
-            style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 8, cursor: "ns-resize", display: "flex", alignItems: "flex-end", justifyContent: "center" }}
+            style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 12, cursor: "ns-resize", display: "flex", alignItems: "flex-end", justifyContent: "center" }}
           >
             <div style={{ width: 22, height: 3, borderRadius: 2, background: "rgba(15,23,42,.18)", marginBottom: 2 }} />
           </div>
@@ -2359,6 +2399,14 @@ export default function ClassroomScheduler() {
           {flash && (
             <div style={{ marginTop: 6, background: "#fef2f2", border: "1px solid #fecaca", color: "#b91c1c", borderRadius: 8, padding: "7px 12px", fontSize: 13, fontWeight: 600 }}>
               {flash}
+            </div>
+          )}
+          {undoToast && (
+            <div style={{ marginTop: 6, background: "#ecfdf5", border: "1px solid #a7f3d0", color: "#065f46", borderRadius: 8, padding: "7px 12px", fontSize: 13, display: "flex", alignItems: "center", gap: 10 }}>
+              <span>{undoToast.label}</span>
+              <button onClick={undoLast} style={{ ...btnSecondary, padding: "4px 10px", fontSize: 12, color: "#065f46", borderColor: "#6ee7b7" }}>
+                Undo
+              </button>
             </div>
           )}
 
