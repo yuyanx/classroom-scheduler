@@ -3855,25 +3855,33 @@ const BY_TEACHER_LABEL_W = 180;
 
 function TeacherScheduleView({ teachers, catalog, placements, rooms, idx, onEditClass, onManageTeachers }) {
   const roomOrder = rooms.map((r) => r.id);
-  const classOfId = (id) => catalog.find((k) => k.id === id);
+
+  const earliestStart = (classId) => {
+    let best = null;
+    placements.forEach((p) => {
+      if (p.classId !== classId) return;
+      if (best == null || p.start < best) best = p.start;
+    });
+    return best;
+  };
+
+  const sortByTimeThenName = (list) =>
+    list.slice().sort((a, b) => {
+      const sa = earliestStart(a.id);
+      const sb = earliestStart(b.id);
+      if (sa == null && sb == null) return a.name.localeCompare(b.name);
+      if (sa == null) return 1;
+      if (sb == null) return -1;
+      return sa - sb || a.name.localeCompare(b.name);
+    });
 
   const classesFor = (key) =>
-    catalog
-      .filter((k) => teacherKey(k.teacher) === key)
-      .sort((a, b) => a.name.localeCompare(b.name));
-  const tbdClasses = catalog.filter((k) => !teacherKey(k.teacher)).sort((a, b) => a.name.localeCompare(b.name));
+    sortByTimeThenName(catalog.filter((k) => teacherKey(k.teacher) === key));
+  const scheduledFor = (key) =>
+    classesFor(key).filter((k) => placements.some((p) => p.classId === k.id));
+  const tbdClasses = sortByTimeThenName(catalog.filter((k) => !teacherKey(k.teacher)));
+  const tbdScheduled = tbdClasses.filter((k) => placements.some((p) => p.classId === k.id));
   const tbdHasAny = tbdClasses.length > 0;
-
-  const classIdsForRoom = (tKey, roomId) => {
-    const ids = new Set();
-    placements.forEach((p) => {
-      const cls = classOfId(p.classId);
-      if (!cls || teacherKey(cls.teacher) !== tKey) return;
-      if (primaryRoomForPlacement(p.rooms, roomOrder) !== roomId) return;
-      ids.add(p.classId);
-    });
-    return [...ids].sort((a, b) => classOfId(a).name.localeCompare(classOfId(b).name));
-  };
 
   const classClash = (cls) => {
     let roomClash = false;
@@ -3901,23 +3909,24 @@ function TeacherScheduleView({ teachers, catalog, placements, rooms, idx, onEdit
     minWidth: 0,
   };
 
-  const renderCard = (cls, roomId) => {
-    const plsInRoom = placements.filter(
-      (p) => p.classId === cls.id && primaryRoomForPlacement(p.rooms, roomOrder) === roomId
-    );
-    const groups = classScheduleGroups(plsInRoom, cls.id);
+  const renderCard = (cls) => {
+    const pls = placements.filter((p) => p.classId === cls.id);
+    const groups = classScheduleGroups(pls, cls.id);
     if (!groups.length) return null;
+    const allRooms = [...new Set(pls.flatMap((p) => p.rooms))];
+    const roomId = primaryRoomForPlacement(allRooms, roomOrder);
     const rc = roomOverviewColor(roomId, roomOrder);
     const { roomClash, teacherClash } = classClash(cls);
-    const teacherLabel = cls.teacher || <i style={{ color: "#b45309" }}>TBD</i>;
     const singleGroup = groups.length === 1;
-    const rmNote = plsInRoom.some((p) => p.rooms.length > 1) ? overviewRoomLabel(plsInRoom[0].rooms) : "";
+    const rmLabel = overviewRoomLabel(allRooms);
     return (
       <div
-        key={`${cls.id}-${roomId}`}
+        key={cls.id}
         onClick={() => onEditClass(cls.id)}
-        title={`${cls.name} · ${groups.map((g) => `${g.dayLabel} ${g.timeLabel}`).join(" · ")} · ${cls.teacher || "TBD"}${rmNote ? ` · ${rmNote}` : ""} — click to edit`}
+        title={`${cls.name} · ${groups.map((g) => `${g.dayLabel} ${g.timeLabel}`).join(" · ")} · ${rmLabel} — click to edit`}
         style={{
+          flex: "0 0 auto",
+          width: 148,
           minHeight: 42,
           boxSizing: "border-box",
           background: roomClash ? "#fee2e2" : teacherClash ? "#fffbeb" : rc.bg,
@@ -3952,14 +3961,14 @@ function TeacherScheduleView({ teachers, catalog, placements, rooms, idx, onEdit
             </div>
           ))
         )}
-        <div style={{ ...metaLine, flexShrink: 0, color: "#334155", fontWeight: 600 }}>
-          {teacherLabel}
+        <div style={{ ...metaLine, flexShrink: 0, color: rc.text, fontWeight: 700 }}>
+          {rmLabel}
         </div>
       </div>
     );
   };
 
-  const renderTeacherRow = (label, tKey, classList, highlight) => (
+  const renderTeacherRow = (label, classList, scheduledList, highlight) => (
     <div key={label} style={{ display: "flex", borderTop: "1px solid #eceeea" }}>
       <div
         style={{
@@ -3986,33 +3995,25 @@ function TeacherScheduleView({ teachers, catalog, placements, rooms, idx, onEdit
           ))
         )}
       </div>
-      <div style={{ flex: 1, display: "flex", minWidth: rooms.length * BY_CLASS_ROOM_MIN_W }}>
-        {rooms.map((room) => {
-          const classIds = classIdsForRoom(tKey, room.id);
-          return (
-            <div
-              key={room.id}
-              style={{
-                flex: 1,
-                minWidth: BY_CLASS_ROOM_MIN_W,
-                boxSizing: "border-box",
-                padding: "8px 6px",
-                borderLeft: "1px solid #eceeea",
-                background: "#fcfcfb",
-                verticalAlign: "top",
-                display: "flex",
-                flexDirection: "column",
-                gap: 6,
-              }}
-            >
-              {classIds.length === 0 ? (
-                <span style={{ color: "#cbd5d1", fontSize: 12, padding: "4px 2px" }}>—</span>
-              ) : (
-                classIds.map((classId) => renderCard(classOfId(classId), room.id))
-              )}
-            </div>
-          );
-        })}
+      <div
+        style={{
+          flex: 1,
+          boxSizing: "border-box",
+          padding: "8px 10px",
+          background: "#fcfcfb",
+          display: "flex",
+          flexDirection: "row",
+          flexWrap: "wrap",
+          alignItems: "flex-start",
+          gap: 8,
+          minHeight: 48,
+        }}
+      >
+        {scheduledList.length === 0 ? (
+          <span style={{ color: "#cbd5d1", fontSize: 12, padding: "4px 2px" }}>—</span>
+        ) : (
+          scheduledList.map((k) => renderCard(k))
+        )}
       </div>
     </div>
   );
@@ -4020,7 +4021,7 @@ function TeacherScheduleView({ teachers, catalog, placements, rooms, idx, onEdit
   return (
     <>
       <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto", width: "100%" }}>
-        <div style={{ minWidth: BY_TEACHER_LABEL_W + rooms.length * BY_CLASS_ROOM_MIN_W, position: "relative" }}>
+        <div style={{ minWidth: BY_TEACHER_LABEL_W + 320, position: "relative" }}>
           <div style={{ display: "flex", borderBottom: "2px solid #d6dad4", background: "#fafaf8" }}>
             <div style={{ flex: `0 0 ${BY_TEACHER_LABEL_W}px`, width: BY_TEACHER_LABEL_W, position: "sticky", left: 0, zIndex: 3, background: "#fafaf8", boxSizing: "border-box", padding: "10px 10px", borderRight: "1px solid #eceeea" }}>
               <button
@@ -4040,17 +4041,25 @@ function TeacherScheduleView({ teachers, catalog, placements, rooms, idx, onEdit
                 Manage teachers
               </button>
             </div>
-            {rooms.map((r) => (
-              <div key={r.id} style={{ flex: 1, minWidth: BY_CLASS_ROOM_MIN_W, boxSizing: "border-box", padding: "8px 4px 9px", textAlign: "center", borderLeft: "1px solid #eceeea" }}>
-                <div style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
-                  <RoomHeaderBadge roomId={r.id} roomOrder={roomOrder} />
-                  <span style={{ fontSize: 11, color: "#64748b", fontWeight: 700 }}>Cap {r.cap}</span>
-                </div>
-              </div>
-            ))}
+            <div style={{ flex: 1, boxSizing: "border-box", padding: "10px 12px", display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Room colors:</span>
+              {rooms.map((r) => {
+                const c = roomOverviewColor(r.id, roomOrder);
+                return (
+                  <span key={r.id} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: c.text, fontWeight: 600 }}>
+                    <RoomColorSwatch color={c} />
+                    Room {r.id}
+                    <span style={{ color: "#94a3b8", fontWeight: 500 }}>Cap {r.cap}</span>
+                  </span>
+                );
+              })}
+            </div>
           </div>
-          {teachers.map((t) => renderTeacherRow(t, teacherKey(t), classesFor(teacherKey(t)), false))}
-          {tbdHasAny && renderTeacherRow("(Teacher TBD)", "", tbdClasses, true)}
+          {teachers.map((t) => {
+            const key = teacherKey(t);
+            return renderTeacherRow(t, classesFor(key), scheduledFor(key), false);
+          })}
+          {tbdHasAny && renderTeacherRow("(Teacher TBD)", tbdClasses, tbdScheduled, true)}
           {teachers.length === 0 && !tbdHasAny && (
             <div style={{ padding: "16px 20px", color: "#94a3b8", fontSize: 13 }}>
               No teachers yet — assign teachers to classes, or add them here.
@@ -4059,8 +4068,8 @@ function TeacherScheduleView({ teachers, catalog, placements, rooms, idx, onEdit
         </div>
       </div>
       <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
-        👤 One row per teacher × room columns. Each card shows class, time, days, and teacher — click to edit.
-        Card colors match room columns.
+        👤 One row per teacher — cards left to right by earliest meeting time, then class name. Each card shows class, time, days, and room — click to edit.
+        Card colors match the room legend above.
         <span style={{ color: "#b91c1c", fontWeight: 700 }}> Red </span>
         = room overlap ·
         <span style={{ color: "#b45309", fontWeight: 700 }}> amber </span>
