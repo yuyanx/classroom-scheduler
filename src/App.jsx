@@ -3693,14 +3693,15 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
                   style={{
                     position: "absolute",
                     top: (t - gridStart) * BY_CLASS_PX_PER_MIN,
-                    right: 6,
+                    right: 4,
                     transform: t === gridStart ? "translateY(2px)" : t === gridEnd ? "translateY(calc(-100% - 2px))" : "translateY(-50%)",
-                    fontSize: 11,
+                    fontSize: 10,
                     fontWeight: 700,
                     color: "#94a3b8",
+                    whiteSpace: "nowrap",
                   }}
                 >
-                  {fmtTime(t)}
+                  {fmtAmPm(t)}
                 </div>
               ))}
             </div>
