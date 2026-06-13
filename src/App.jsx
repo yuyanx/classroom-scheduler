@@ -998,6 +998,17 @@ function upgrade(raw) {
 
 const defaultData = () => migrateV1toV2(JSON.parse(JSON.stringify(LIVE_V1_SEED)));
 
+/** Non-default plans: wipe placements and zero enrollment; keep catalog names/teachers/rooms. */
+function clearScheduleAndCounts(data) {
+  return {
+    ...data,
+    catalog: (data.catalog || []).map((k) => ({ ...k, reg: 0 })),
+    placements: [],
+  };
+}
+
+const isDefaultLivePlan = (meta) => meta?.kind === PLAN_KIND.LIVE;
+
 // ───────────────────────── Shared storage (Supabase) ─────────────────────────
 // One shared schedule for everyone. The anon key is designed to be public; what
 // it can do is limited by the table's RLS policies. Empty key = browser-only mode.
@@ -2091,8 +2102,14 @@ export default function ClassroomScheduler() {
     setTeacherMgrOpen(false);
   };
 
+  const resettingDefaultPlan = isDefaultLivePlan(planMeta);
+
   const resetAll = () => {
-    persist(() => defaultData(), { skipUndo: true });
+    if (resettingDefaultPlan) {
+      persist(() => defaultData(), { skipUndo: true });
+    } else {
+      persist((d) => clearScheduleAndCounts(d), { skipUndo: true });
+    }
     setConfirmReset(false);
   };
 
@@ -2400,7 +2417,16 @@ export default function ClassroomScheduler() {
               {saveStatus.label}
             </span>
             <button onClick={() => setRoomMgrOpen(true)} style={btnGhost} disabled={planReadOnly}>Manage Rooms</button>
-            <button onClick={() => setConfirmReset(true)} style={{ ...btnGhost, opacity: planReadOnly ? 0.35 : 0.7 }} disabled={planReadOnly}>Reset Data</button>
+            <button
+              onClick={() => setConfirmReset(true)}
+              style={{ ...btnGhost, opacity: planReadOnly ? 0.35 : 0.7 }}
+              disabled={planReadOnly}
+              title={resettingDefaultPlan
+                ? "Restore the default schedule from the registration sheet"
+                : "Clear all scheduled times and set enrollment counts to 0"}
+            >
+              {resettingDefaultPlan ? "Reset Data" : "Clear schedule"}
+            </button>
           </div>
         </div>
       </header>
@@ -2969,14 +2995,19 @@ export default function ClassroomScheduler() {
 
       {confirmReset && (
         <Overlay onClose={() => setConfirmReset(false)}>
-          <h3 style={{ marginTop: 0 }}>Reset all data?</h3>
-          <p style={{ fontSize: 14, color: "#475569" }}>
-            This restores the original schedule from the registration sheet. All changes will be lost
-            {REMOTE_ENABLED ? " — for everyone using this site" : ""}.
+          <h3 style={{ marginTop: 0 }}>
+            {resettingDefaultPlan ? "Reset all data?" : "Clear schedule & counts?"}
+          </h3>
+          <p style={{ fontSize: 14, color: "#475569", lineHeight: 1.5 }}>
+            {resettingDefaultPlan
+              ? `This restores the original schedule from the registration sheet. All changes will be lost${REMOTE_ENABLED ? " — for everyone viewing this default plan" : ""}.`
+              : `This removes every scheduled time and sets all class enrollment to 0. Class names, teachers, rooms, and hours are kept${REMOTE_ENABLED ? " — colleagues see this if they switch to “" + planMeta.name + "”" : ""}.`}
           </p>
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
             <button style={btnSecondary} onClick={() => setConfirmReset(false)}>Cancel</button>
-            <button style={{ ...btnPrimary, background: "#dc2626" }} onClick={resetAll}>Reset</button>
+            <button style={{ ...btnPrimary, background: "#dc2626" }} onClick={resetAll}>
+              {resettingDefaultPlan ? "Reset" : "Clear"}
+            </button>
           </div>
         </Overlay>
       )}
