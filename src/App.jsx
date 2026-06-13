@@ -3329,6 +3329,23 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
   );
 }
 
+// ───────────────────────── Room color swatch (shared palette) ─────────────────────────
+function RoomColorSwatch({ color, size = 14 }) {
+  return (
+    <span
+      style={{
+        width: size,
+        height: size,
+        borderRadius: 4,
+        background: color.bg,
+        border: `1px solid ${color.border}`,
+        flexShrink: 0,
+        display: "inline-block",
+      }}
+    />
+  );
+}
+
 // ───────────────────────── Room header badge (palette bg + paired dark text) ─────────────────────────
 function RoomHeaderBadge({ roomId, roomOrder }) {
   const c = roomOverviewColor(roomId, roomOrder);
@@ -4146,66 +4163,68 @@ function RoomModal({ rooms, placements, onSave, onClose }) {
     onSave({ list: out, renames });
   };
 
-  const rowInput = { ...inputStyle, padding: "6px 8px", background: "#fff" };
-
   return (
     <Overlay onClose={onClose} wide>
       <h3 style={{ marginTop: 0 }}>Manage rooms</h3>
-      <p style={{ fontSize: 13, color: "#64748b", margin: "0 0 14px", lineHeight: 1.45 }}>
-        One room list for the whole week. Combine rooms per class via room chips in the class editor.
-        Row tint is the schedule color — ↑↓ reorders; new rooms pick the next color.
+      <p style={{ fontSize: 13, color: "#64748b", margin: "0 0 12px" }}>
+        One room list for the whole week. To combine classrooms for a class (e.g. SAT across Rooms 2+3),
+        open the class and select several room chips — no special room entry is needed here. Capacity is
+        room capacity; a combined class gets the rooms' total.
       </p>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 68px 44px 78px", gap: 8, alignItems: "center", marginBottom: 6, padding: "0 10px", fontSize: 11, color: "#64748b", fontWeight: 700 }}>
-        <span>Room</span>
-        <span>Capacity</span>
-        <span>Used</span>
-        <span style={{ textAlign: "right" }}>Order</span>
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 360, overflowY: "auto" }}>
+      <div style={{ padding: "10px 12px", marginBottom: 12, borderRadius: 8, background: "#fafaf8", border: "1px solid #eceeea", display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Room colors:</span>
         {list.map((r, i) => {
           const c = colorForIndex(i);
+          const label = r.name.trim() || "(new)";
           return (
-            <div
-              key={i}
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 68px 44px 78px",
-                gap: 8,
-                alignItems: "center",
-                padding: "8px 10px",
-                borderRadius: 8,
-                background: c.bg,
-                border: `1px solid ${c.border}`,
-              }}
-            >
-              <input
-                style={{ ...rowInput, color: c.text, fontWeight: 600 }}
-                value={r.name}
-                placeholder="Room name"
-                onChange={(e) => patch(i, { name: e.target.value })}
-              />
-              <input
-                style={rowInput}
-                type="number"
-                min="0"
-                value={r.cap}
-                onChange={(e) => patch(i, { cap: e.target.value })}
-              />
-              {r.orig ? (
-                <span style={{ fontSize: 11, color: c.text, fontWeight: 600, whiteSpace: "nowrap" }}>
-                  {countFor(r.orig)} cls
-                </span>
-              ) : <span style={{ fontSize: 11, color: c.text, opacity: 0.55 }}>—</span>}
-              <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
-                <button style={miniBtn} onClick={() => move(i, -1)} title="Move up">↑</button>
-                <button style={miniBtn} onClick={() => move(i, 1)} title="Move down">↓</button>
-                <button style={{ ...miniBtn, color: "#b91c1c" }} onClick={() => remove(i)} title="Delete">✕</button>
-              </div>
-            </div>
+            <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: c.text, fontWeight: 600 }}>
+              <RoomColorSwatch color={c} />
+              {label}
+            </span>
           );
         })}
       </div>
-      <button style={{ ...btnSecondary, marginTop: 12, fontSize: 13, padding: "6px 12px" }} onClick={add}>
+      <p style={{ fontSize: 11, color: "#94a3b8", margin: "0 0 10px" }}>
+        Colors follow list order — use ↑↓ to reorder. New rooms get the next color automatically.
+      </p>
+      <div style={{ display: "grid", gridTemplateColumns: "22px 1fr 76px 44px 26px 26px 26px", gap: 5, alignItems: "center", marginBottom: 5, fontSize: 11, color: "#64748b", fontWeight: 700 }}>
+        <span />
+        <span>Room</span>
+        <span>Capacity</span>
+        <span>Used</span>
+        <span />
+        <span />
+        <span />
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 320, overflowY: "auto" }}>
+        {list.map((r, i) => (
+          <div key={i} style={{ display: "grid", gridTemplateColumns: "22px 1fr 76px 44px 26px 26px 26px", gap: 5, alignItems: "center" }}>
+            <RoomColorSwatch color={colorForIndex(i)} size={16} />
+            <input
+              style={{ ...inputStyle, padding: "6px 8px" }}
+              value={r.name}
+              placeholder="Room name"
+              onChange={(e) => patch(i, { name: e.target.value })}
+            />
+            <input
+              style={{ ...inputStyle, padding: "6px 8px" }}
+              type="number"
+              min="0"
+              value={r.cap}
+              onChange={(e) => patch(i, { cap: e.target.value })}
+            />
+            {r.orig ? (
+              <span style={{ fontSize: 11, color: "#94a3b8", whiteSpace: "nowrap" }}>
+                {countFor(r.orig)} cls
+              </span>
+            ) : <span />}
+            <button style={miniBtn} onClick={() => move(i, -1)} title="Move up">↑</button>
+            <button style={miniBtn} onClick={() => move(i, 1)} title="Move down">↓</button>
+            <button style={{ ...miniBtn, color: "#b91c1c" }} onClick={() => remove(i)} title="Delete">✕</button>
+          </div>
+        ))}
+      </div>
+      <button style={{ ...btnSecondary, marginTop: 10, fontSize: 13, padding: "6px 12px" }} onClick={add}>
         ＋ Add room
       </button>
       <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20 }}>
