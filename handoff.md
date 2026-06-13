@@ -44,7 +44,11 @@ classroom-scheduler/
 ├── package.json          # Dependencies: react, react-dom, esbuild
 ├── src/
 │   ├── main.jsx          # Entry point — ReactDOM.createRoot → <ClassroomScheduler />
+│   ├── test-exports.js   # Test-only re-export entry (not loaded by the app)
 │   └── App.jsx           # Entire application (single file, ~2400 lines)
+├── tests/
+│   ├── schedule.test.mjs # Pure-logic tests (migrations, indexes, overview helpers)
+│   └── smoke.test.mjs    # Regression guards (TDZ order, bundle size)
 ├── .claude/launch.json   # Local preview server config (python3 http.server on :4173)
 └── handoff.md            # This file
 ```
@@ -72,6 +76,15 @@ npx serve .
 ```
 
 After rebuilding, commit `app.js` along with your `src/` changes so Vercel serves the latest build.
+
+```bash
+npm test
+```
+
+Runs `node:test` against pure schedule helpers (esbuild bundles `src/test-exports.js` →
+`dist/test-logic.mjs`, gitignored). Covers `upgrade()` / `LIVE_V1_SEED`, conflict indexes,
+`classScheduleLines`, By Class sort, layout lanes, and smoke checks (callback declaration order,
+`app.js` present). **Run tests before every commit on this branch.**
 
 **Every commit must update this file** — add a changelog entry (and adjust architecture sections when
 behavior or UI changes). Keep `handoff.md` in sync with the code you ship.
@@ -364,6 +377,11 @@ app runs exactly as the old browser-only version.
   actual schedule lines (`Mon to Fri 9:00–10:30 AM`, etc.) via `classScheduleLines()` instead of
   meets-N×/week; room capacity and per-day hours use `RoomCapModal` / `HoursModal` instead of
   browser `prompt`/`alert`.
+- 2026-06-12 — **automated tests** (`node:test`): `npm test` bundles pure helpers from `App.jsx`
+  and covers migrations, conflict indexes, overview schedule lines, By Class sort, layout lanes,
+  and TDZ/bundle smoke guards. Extracted `sortCatalogForByClassView()` for testability.
+- 2026-06-12 — **fix By Class unscheduled sort**: comparator used `sa == null !== sb == null`
+  (wrong precedence) so unscheduled rows sorted last; now `(sa == null) !== (sb == null)`.
 
 ---
 

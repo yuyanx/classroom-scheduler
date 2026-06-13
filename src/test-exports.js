@@ -1,0 +1,21 @@
+// Test-only entry — bundles pure schedule helpers without mounting React.
+export {
+  parseTimeRange,
+  teacherKey,
+  normalizeV2,
+  migrateOld,
+  migrateV1toV2,
+  upgrade,
+  overlaps,
+  buildScheduleIndexes,
+  roomConflictsIndexed,
+  teacherBusyIndexed,
+  computeTabBlockMeta,
+  dataSignature,
+  layoutLanes,
+  formatDayRange,
+  classScheduleLines,
+  sortCatalogForByClassView,
+  LIVE_V1_SEED,
+  LIVE_SEED_TAG,
+} from "./App.jsx";

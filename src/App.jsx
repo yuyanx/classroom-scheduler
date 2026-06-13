@@ -2632,6 +2632,30 @@ const classScheduleLines = (placements, classId) => {
     .map((g) => `${formatDayRange(g.days)} ${fmtTimeRangeAmPm(g.start, g.end)}`);
 };
 
+function sortCatalogForByClassView(catalog, placements) {
+  const earliestStart = (classId) => {
+    let best = null;
+    placements.forEach((p) => {
+      if (p.classId !== classId) return;
+      if (best == null || p.start < best) best = p.start;
+    });
+    return best;
+  };
+  return catalog.slice().sort((a, b) => {
+    const sa = earliestStart(a.id);
+    const sb = earliestStart(b.id);
+    if ((sa == null) !== (sb == null)) return sa == null ? -1 : 1;
+    const letter = (name) => (name.trim()[0] || "").toLowerCase();
+    const la = letter(a.name);
+    const lb = letter(b.name);
+    if (la !== lb) return la.localeCompare(lb);
+    if (sa == null && sb == null) return a.name.localeCompare(b.name);
+    if (sa == null) return 1;
+    if (sb == null) return -1;
+    return sa - sb || a.name.localeCompare(b.name);
+  });
+}
+
 const overviewPillStyle = ({ clash, start, clickable }) => ({
   display: "inline-flex",
   flexDirection: "column",
@@ -2656,30 +2680,7 @@ function ClassScheduleView({ catalog, placements, days, onEditClass }) {
       .sort((a, b) => a.start - b.start);
 
   // Earliest start time that day (minutes since midnight) — null when unscheduled
-  const earliestStart = (classId) => {
-    let best = null;
-    placements.forEach((p) => {
-      if (p.classId !== classId) return;
-      if (best == null || p.start < best) best = p.start;
-    });
-    return best;
-  };
-
-  const rows = catalog
-    .slice()
-    .sort((a, b) => {
-      const sa = earliestStart(a.id);
-      const sb = earliestStart(b.id);
-      if (sa == null !== sb == null) return sa == null ? -1 : 1; // unscheduled first
-      const letter = (name) => (name.trim()[0] || "").toLowerCase();
-      const la = letter(a.name);
-      const lb = letter(b.name);
-      if (la !== lb) return la.localeCompare(lb);
-      if (sa == null && sb == null) return a.name.localeCompare(b.name);
-      if (sa == null) return 1;
-      if (sb == null) return -1;
-      return sa - sb || a.name.localeCompare(b.name);
-    });
+  const rows = sortCatalogForByClassView(catalog, placements);
 
   return (
     <>
@@ -3232,4 +3233,26 @@ const miniBtn = {
 const stepBtn = {
   width: 20, height: 20, flex: "0 0 20px", borderRadius: 6, border: "1px solid #cbd5d1", background: "#fff",
   cursor: "pointer", fontSize: 13, lineHeight: 1, color: "#334155", padding: 0,
+};
+
+// Pure helpers exported for node:test (see tests/ + src/test-exports.js).
+export {
+  parseTimeRange,
+  teacherKey,
+  normalizeV2,
+  migrateOld,
+  migrateV1toV2,
+  upgrade,
+  overlaps,
+  buildScheduleIndexes,
+  roomConflictsIndexed,
+  teacherBusyIndexed,
+  computeTabBlockMeta,
+  dataSignature,
+  layoutLanes,
+  formatDayRange,
+  classScheduleLines,
+  sortCatalogForByClassView,
+  LIVE_V1_SEED,
+  LIVE_SEED_TAG,
 };
