@@ -1990,8 +1990,12 @@ function TeacherScheduleView({ teachers, catalog, placements, days, onEditClass,
       .filter(({ cls }) => cls && teacherKey(cls.teacher) === key)
       .sort((a, b) => a.p.start - b.p.start);
 
-  const classCount = (key) => catalog.filter((k) => teacherKey(k.teacher) === key).length;
-  const tbdHasAny = catalog.some((k) => !teacherKey(k.teacher));
+  const classesFor = (key) =>
+    catalog
+      .filter((k) => teacherKey(k.teacher) === key)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  const tbdClasses = catalog.filter((k) => !teacherKey(k.teacher)).sort((a, b) => a.name.localeCompare(b.name));
+  const tbdHasAny = tbdClasses.length > 0;
 
   const renderCell = (list, day) => {
     const clash = (p) => list.some(({ p: o }) => o.id !== p.id && o.start < p.end && p.start < o.end);
@@ -2025,11 +2029,19 @@ function TeacherScheduleView({ teachers, catalog, placements, days, onEditClass,
     );
   };
 
-  const renderRow = (label, key, count, highlight) => (
+  const renderRow = (label, key, classList, highlight) => (
     <tr key={label}>
-      <td style={{ ...tdStyle, position: "sticky", left: 0, background: "#fafaf8", zIndex: 1, verticalAlign: "top", whiteSpace: "nowrap" }}>
-        <div style={{ fontWeight: 700, fontSize: 13, color: highlight ? "#b45309" : "#123c3a" }}>{label}</div>
-        <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>{count} class{count === 1 ? "" : "es"}</div>
+      <td style={{ ...tdStyle, position: "sticky", left: 0, background: "#fafaf8", zIndex: 1, verticalAlign: "top" }}>
+        <div style={{ fontWeight: 700, fontSize: 13, color: highlight ? "#b45309" : "#123c3a", whiteSpace: "nowrap" }}>{label}</div>
+        {classList.length === 0 ? (
+          <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>—</div>
+        ) : (
+          classList.map((k) => (
+            <div key={k.id} style={{ fontSize: 11, color: "#64748b", marginTop: 2, lineHeight: 1.35, overflowWrap: "anywhere" }}>
+              {k.name}
+            </div>
+          ))
+        )}
       </td>
       {days.map((d) => renderCell(entriesFor(key, d), d))}
     </tr>
@@ -2048,8 +2060,8 @@ function TeacherScheduleView({ teachers, catalog, placements, days, onEditClass,
             </tr>
           </thead>
           <tbody>
-            {teachers.map((t) => renderRow(t, teacherKey(t), classCount(teacherKey(t)), false))}
-            {tbdHasAny && renderRow("(Teacher TBD)", "", catalog.filter((k) => !teacherKey(k.teacher)).length, true)}
+            {teachers.map((t) => renderRow(t, teacherKey(t), classesFor(teacherKey(t)), false))}
+            {tbdHasAny && renderRow("(Teacher TBD)", "", tbdClasses, true)}
             {teachers.length === 0 && !tbdHasAny && (
               <tr>
                 <td colSpan={days.length + 1} style={{ ...tdStyle, color: "#94a3b8", fontSize: 13 }}>

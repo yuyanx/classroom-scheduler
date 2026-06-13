@@ -214,9 +214,11 @@ under the day grid shows the active day's range and an **✎ Edit hours** button
 case-insensitively via `teacherKey()`. The class dialog's Teacher field is a dropdown over the roster
 plus "(Teacher TBD)" and "＋ Add new teacher…" (prompt; the name joins the roster when the class is
 saved). The **👤 By Teacher** tab (`tab === "byTeacher"`, not a real day) replaces the calendar with a
-teachers × days table — each cell lists that teacher's classes as stacked **pill cards** (rounded,
-bordered, `minHeight: 42`): **class name on the first line** (bold), time + room on the second line
-(subtitle); amber border/background + ⚠ when two of their classes overlap in time; click-to-edit.
+teachers × days table. The sticky Teacher column lists each teacher's **class names** under their
+name (not an "N classes" count). Each day cell lists that teacher's meetings as stacked **pill cards**
+(rounded, bordered, `minHeight: 42`): **class name on the first line** (bold), time + room on the
+second line (subtitle); amber border/background + ⚠ when two of their classes overlap in time;
+click-to-edit.
 Its "Manage teachers" button opens
 `TeacherModal`: rename cascades to all classes (matched via `teacherKey`), removal sets classes to
 TBD, a "(Teacher TBD)" row in the view collects unassigned classes. When `tab === "byTeacher"` the
@@ -325,6 +327,8 @@ app runs exactly as the old browser-only version.
   fixed counter footer so signed-up counts and capacity bars never overflow the card at narrow
   widths; secondary lines ellipsis; combined-room label shortened to "Rm 2+3"; hide +/- steppers in
   side-by-side conflict lanes; first/last hour labels no longer clip at the grid edge.
+- 2026-06-12 — **By Teacher sidebar class list**: sticky Teacher column lists each teacher's class
+  names under their name instead of an "N classes" count.
 - 2026-06-12 — **overview UI polish + modals** (`ebe7c38`): By Class / By Teacher overview tabs
   aligned with main-branch pill design (uniform blocks, resize hardening, horizontal scroll); By
   Teacher pills show **class name first**, time + room as subtitle; By Class left column shows
