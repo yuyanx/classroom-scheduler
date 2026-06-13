@@ -3564,6 +3564,17 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
     const singleGroup = groups.length === 1;
     const summary = groups.map((g) => `${g.dayLabel} ${g.timeLabel}`).join(" · ");
     const teacherLabel = cls.teacher || <i style={{ color: "#b45309" }}>TBD</i>;
+    const compact = laneCount > 1;
+    const metaFs = compact ? 10 : 11;
+    const regThreshold = compact ? 56 : 64;
+    const metaLine = {
+      fontSize: metaFs,
+      lineHeight: 1.2,
+      whiteSpace: "nowrap",
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      minWidth: 0,
+    };
     const pos = geom || {
       left: `calc(${(lane / laneCount) * 100}% + 4px)`,
       width: `calc(${100 / laneCount}% - 8px)`,
@@ -3589,7 +3600,7 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
               ? "0 0 0 3px rgba(217,119,6,.12)"
               : "none",
           borderRadius: 8,
-          padding: "4px 7px 9px",
+          padding: compact ? "3px 5px 6px" : "4px 7px 9px",
           overflow: "hidden",
           cursor: "pointer",
           pointerEvents: geom ? "auto" : undefined,
@@ -3598,40 +3609,63 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
           flexDirection: "column",
         }}
       >
-        <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column", gap: 2 }}>
-          <div style={{ fontWeight: 700, fontSize: 12.5, lineHeight: 1.2, overflowWrap: "anywhere", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+        <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column", gap: compact ? 1 : 2 }}>
+          <div style={{ fontWeight: 700, fontSize: compact ? 11 : 12.5, lineHeight: 1.2, overflowWrap: "anywhere", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: compact ? 1 : 2, WebkitBoxOrient: "vertical" }}>
             {cls.name}{(roomClash || teacherClash) ? " ⚠" : ""}
           </div>
           {singleGroup ? (
             <>
-              {h >= 44 && (
-                <div style={{ fontSize: 11, color: "#475569", lineHeight: 1.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              {h >= 32 && (
+                <div style={{ ...metaLine, color: "#475569" }}>
                   {groups[0].timeLabel}
-                  {h >= 52 && <> · {teacherLabel}</>}
                 </div>
               )}
-              {h >= 56 && (
-                <div style={{ fontSize: 11, color: "#0f766e", lineHeight: 1.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {groups[0].dayLabel}
-                </div>
+              {compact ? (
+                <>
+                  {h >= 34 && (
+                    <div style={{ ...metaLine, color: "#334155", fontWeight: 600 }}>
+                      {teacherLabel}
+                    </div>
+                  )}
+                  {h >= 46 && (
+                    <div style={{ ...metaLine, color: "#0f766e" }}>
+                      {groups[0].dayLabel}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  {h >= 44 && (
+                    <div style={{ ...metaLine, color: "#0f766e" }}>
+                      {groups[0].dayLabel}
+                    </div>
+                  )}
+                  {h >= 48 && (
+                    <div style={{ ...metaLine, color: "#334155", fontWeight: 600 }}>
+                      {teacherLabel}
+                    </div>
+                  )}
+                </>
               )}
             </>
           ) : (
-            groups.map((g, i) => (
-              h >= 40 + i * 22 && (
-                <div key={i} style={{ fontSize: 10.5, color: "#475569", lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {g.timeLabel} · {g.dayLabel}
+            <>
+              {groups.map((g, i) => (
+                h >= 34 + i * (compact ? 18 : 20) && (
+                  <div key={i} style={{ ...metaLine, color: "#475569" }}>
+                    {g.timeLabel} · {g.dayLabel}
+                  </div>
+                )
+              ))}
+              {h >= (compact ? 40 : 48) && (
+                <div style={{ ...metaLine, color: "#334155", fontWeight: 600 }}>
+                  {teacherLabel}
                 </div>
-              )
-            ))
-          )}
-          {!singleGroup && h >= 56 && (
-            <div style={{ fontSize: 11, color: "#475569", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-              {teacherLabel}
-            </div>
+              )}
+            </>
           )}
         </div>
-        {h >= 64 && (
+        {h >= regThreshold && (
           <div style={{ flexShrink: 0, marginTop: 2, minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: laneCount > 1 ? 1 : 3, minWidth: 0 }}>
               {!planReadOnly && (
