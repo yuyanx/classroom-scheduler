@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   isLocalDevHost,
+  isVercelGitPreviewHost,
   isPreviewHost,
   isRemoteSyncEnabled,
   PRODUCTION_HOST,
@@ -23,6 +24,20 @@ test("VERCEL_ENV=production enables sync on any Vercel hostname", () => {
   const prodUrl = "classroom-scheduler-7bbylnh0d-yuyanxs-projects.vercel.app";
   assert.equal(isPreviewHost(prodUrl, "production"), false);
   assert.equal(isRemoteSyncEnabled(prodUrl, "production"), true);
+});
+
+test("isVercelGitPreviewHost detects branch preview URLs", () => {
+  assert.equal(
+    isVercelGitPreviewHost("classroom-scheduler-git-feature-calendar-yuyanxs-projects.vercel.app"),
+    true
+  );
+  assert.equal(isVercelGitPreviewHost("classroom-scheduler-7bbylnh0d-yuyanxs-projects.vercel.app"), false);
+});
+
+test("git preview URL never syncs even if bundle says production", () => {
+  const previewUrl = "classroom-scheduler-git-feature-calendar-yuyanxs-projects.vercel.app";
+  assert.equal(isPreviewHost(previewUrl, "production"), true);
+  assert.equal(isRemoteSyncEnabled(previewUrl, "production"), false);
 });
 
 test("VERCEL_ENV=preview blocks sync even on production-looking host", () => {

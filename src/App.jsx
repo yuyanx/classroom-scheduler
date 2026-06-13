@@ -1030,10 +1030,17 @@ const PRODUCTION_HOST = "classroom-scheduler-ruddy.vercel.app";
 const VERCEL_ENV = process.env.VERCEL_ENV || "";
 
 const isLocalDevHost = (hostname) => /^(localhost|127\.|0\.0\.0\.0|\[::1\])/.test(hostname || "");
+// Branch preview URLs always contain "-git-" (e.g. project-git-feature-x-team.vercel.app).
+// Runtime check — must win over a mistaken VERCEL_ENV=production in the bundle.
+const isVercelGitPreviewHost = (hostname) => {
+  const h = hostname || "";
+  return /\.vercel\.app$/i.test(h) && /-git-/i.test(h);
+};
 // Vercel preview deploys must not write to the shared Supabase row.
 const isPreviewHost = (hostname, vercelEnv = VERCEL_ENV) => {
-  if (vercelEnv === "production") return false;
+  if (isVercelGitPreviewHost(hostname)) return true;
   if (vercelEnv === "preview") return true;
+  if (vercelEnv === "production") return false;
   const h = hostname || "";
   return /\.vercel\.app$/i.test(h) && h !== PRODUCTION_HOST && !h.endsWith(`.${PRODUCTION_HOST}`);
 };
@@ -1041,8 +1048,9 @@ const isPreviewHost = (hostname, vercelEnv = VERCEL_ENV) => {
 const isRemoteSyncEnabled = (hostname, vercelEnv = VERCEL_ENV) => {
   if (!SUPABASE_URL || !SUPABASE_KEY) return false;
   if (isLocalDevHost(hostname)) return false;
-  if (vercelEnv === "production") return true;
+  if (isVercelGitPreviewHost(hostname)) return false;
   if (vercelEnv === "preview") return false;
+  if (vercelEnv === "production") return true;
   return !isPreviewHost(hostname, vercelEnv);
 };
 
@@ -4346,6 +4354,7 @@ export {
   classScheduleLines,
   sortCatalogForByClassView,
   isLocalDevHost,
+  isVercelGitPreviewHost,
   isPreviewHost,
   isRemoteSyncEnabled,
   PRODUCTION_HOST,

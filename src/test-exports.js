@@ -29,6 +29,7 @@ export {
   migrateV1toV2,
   upgrade,
   isLocalDevHost,
+  isVercelGitPreviewHost,
   isPreviewHost,
   isRemoteSyncEnabled,
   PRODUCTION_HOST,
