@@ -1,0 +1,32 @@
+// Test-only entry — bundles pure schedule helpers without mounting React.
+export {
+  teacherKey,
+  overlaps,
+  buildScheduleIndexes,
+  maxEndForPlacement,
+  roomConflictsIndexed,
+  teacherBusyIndexed,
+  evaluatePlacement,
+  freeRoomsAt,
+  buildConflictReport,
+  computeTabBlockMeta,
+  dataSignature,
+  layoutLanes,
+  formatDayRange,
+  classScheduleLines,
+  sortCatalogForByClassView,
+} from "./domain/scheduleLogic.ts";
+
+export {
+  parseTimeRange,
+  normalizeV2,
+  migrateOld,
+  migrateV1toV2,
+  upgrade,
+  isLocalDevHost,
+  isPreviewHost,
+  isRemoteSyncEnabled,
+  PRODUCTION_HOST,
+  LIVE_V1_SEED,
+  LIVE_SEED_TAG,
+} from "./App.jsx";

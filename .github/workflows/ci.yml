@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [main, grok-feature-day-calendar]
+  pull_request:
+    branches: [main, grok-feature-day-calendar]
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - name: Assert production bundle exists
+        run: test -s app.js && test $(wc -c < app.js) -gt 100000
