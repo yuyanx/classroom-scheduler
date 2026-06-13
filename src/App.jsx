@@ -3329,6 +3329,23 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
   );
 }
 
+// ───────────────────────── Room color swatch (shared palette) ─────────────────────────
+function RoomColorSwatch({ color, size = 14 }) {
+  return (
+    <span
+      style={{
+        width: size,
+        height: size,
+        borderRadius: 4,
+        background: color.bg,
+        border: `1px solid ${color.border}`,
+        flexShrink: 0,
+        display: "inline-block",
+      }}
+    />
+  );
+}
+
 // ───────────────────────── Room header badge (palette bg + paired dark text) ─────────────────────────
 function RoomHeaderBadge({ roomId, roomOrder }) {
   const c = roomOverviewColor(roomId, roomOrder);
@@ -4102,6 +4119,9 @@ function TeacherModal({ teachers, catalog, onSave, onClose }) {
 function RoomModal({ rooms, placements, onSave, onClose }) {
   const [list, setList] = useState(rooms.map((r) => ({ orig: r.id, name: r.id, cap: r.cap })));
 
+  const roomOrder = list.map((r, i) => r.name.trim() || `__draft_${i}`);
+  const colorForIndex = (i) => roomOverviewColor(roomOrder[i], roomOrder);
+
   const countFor = (origName) => placements.filter((p) => p.rooms.includes(origName)).length;
 
   const move = (i, dir) => {
@@ -4144,14 +4164,31 @@ function RoomModal({ rooms, placements, onSave, onClose }) {
   };
 
   return (
-    <Overlay onClose={onClose}>
+    <Overlay onClose={onClose} wide>
       <h3 style={{ marginTop: 0 }}>Manage rooms</h3>
-      <p style={{ fontSize: 13, color: "#64748b", margin: "0 0 14px" }}>
+      <p style={{ fontSize: 13, color: "#64748b", margin: "0 0 12px" }}>
         One room list for the whole week. To combine classrooms for a class (e.g. SAT across Rooms 2+3),
         open the class and select several room chips — no special room entry is needed here. Capacity is
         room capacity; a combined class gets the rooms' total.
       </p>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 76px 44px 26px 26px 26px", gap: 5, alignItems: "center", marginBottom: 5, fontSize: 11, color: "#64748b", fontWeight: 700 }}>
+      <div style={{ padding: "10px 12px", marginBottom: 12, borderRadius: 8, background: "#fafaf8", border: "1px solid #eceeea", display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Room colors:</span>
+        {list.map((r, i) => {
+          const c = colorForIndex(i);
+          const label = r.name.trim() || "(new)";
+          return (
+            <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: c.text, fontWeight: 600 }}>
+              <RoomColorSwatch color={c} />
+              {label}
+            </span>
+          );
+        })}
+      </div>
+      <p style={{ fontSize: 11, color: "#94a3b8", margin: "0 0 10px" }}>
+        Colors follow list order — use ↑↓ to reorder. New rooms get the next color automatically.
+      </p>
+      <div style={{ display: "grid", gridTemplateColumns: "22px 1fr 76px 44px 26px 26px 26px", gap: 5, alignItems: "center", marginBottom: 5, fontSize: 11, color: "#64748b", fontWeight: 700 }}>
+        <span />
         <span>Room</span>
         <span>Capacity</span>
         <span>Used</span>
@@ -4161,7 +4198,8 @@ function RoomModal({ rooms, placements, onSave, onClose }) {
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 320, overflowY: "auto" }}>
         {list.map((r, i) => (
-          <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 76px 44px 26px 26px 26px", gap: 5, alignItems: "center" }}>
+          <div key={i} style={{ display: "grid", gridTemplateColumns: "22px 1fr 76px 44px 26px 26px 26px", gap: 5, alignItems: "center" }}>
+            <RoomColorSwatch color={colorForIndex(i)} size={16} />
             <input
               style={{ ...inputStyle, padding: "6px 8px" }}
               value={r.name}
