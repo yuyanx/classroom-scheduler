@@ -442,6 +442,8 @@ export default function ClassroomScheduler() {
   const [tab, setTab] = useState("mon");
   const [editing, setEditing] = useState(null); // {isNew, classId?, placementId?, day?, start?, room?}
   const [roomMgrOpen, setRoomMgrOpen] = useState(false);
+  const [roomCapEditing, setRoomCapEditing] = useState(null); // { roomId, value, error }
+  const [hoursEditing, setHoursEditing] = useState(null); // { day, start, end, error }
   const [teacherMgrOpen, setTeacherMgrOpen] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [drag, setDrag] = useState(null); // {type:'lib'|'pl', id, dur, grabOffset}
@@ -872,31 +874,43 @@ export default function ClassroomScheduler() {
   };
 
   // ── Quick capacity edit from a calendar room header ──
-  const editRoomCap = (roomId) => {
-    const raw = prompt(`Capacity for Room ${roomId} (applies all week):`, roomCap(roomId));
-    if (raw == null) return;
-    const n = parseInt(raw, 10);
+  const openRoomCapEditor = (roomId) => {
+    setRoomCapEditing({ roomId, value: String(roomCap(roomId)), error: "" });
+  };
+
+  const saveRoomCap = () => {
+    if (!roomCapEditing) return;
+    const n = parseInt(roomCapEditing.value, 10);
     if (!Number.isFinite(n) || n < 0) {
-      alert("Enter a number of 0 or more.");
+      setRoomCapEditing({ ...roomCapEditing, error: "Enter a number of 0 or more." });
       return;
     }
+    const { roomId } = roomCapEditing;
     persist({ ...data, rooms: rooms.map((r) => (r.id === roomId ? { ...r, cap: n } : r)) });
+    setRoomCapEditing(null);
   };
 
   // ── Per-day scheduling window ──
-  const editHours = () => {
+  const openHoursEditor = () => {
     const cur = hours[tab] || hours.default;
-    const raw = prompt(
-      `Scheduling hours for ${DAY_LABEL[tab]} (e.g. 9:00 AM - 5:00 PM):`,
-      `${fmtAmPm(cur[0])} - ${fmtAmPm(cur[1])}`
-    );
-    if (raw == null) return;
-    const r = parseTimeRange(raw);
-    if (!r) {
-      alert("Couldn't read that — use a format like 9:00 AM - 5:00 PM.");
+    setHoursEditing({ day: tab, start: toInput(cur[0]), end: toInput(cur[1]), error: "" });
+  };
+
+  const saveHours = () => {
+    if (!hoursEditing) return;
+    const s = fromInput(hoursEditing.start);
+    const e = fromInput(hoursEditing.end);
+    if (s == null || e == null) {
+      setHoursEditing({ ...hoursEditing, error: "Enter valid start and end times." });
       return;
     }
-    persist({ ...data, hours: { ...hours, [tab]: r } });
+    if (e <= s) {
+      setHoursEditing({ ...hoursEditing, error: "End time must be after start time." });
+      return;
+    }
+    const { day } = hoursEditing;
+    persist({ ...data, hours: { ...hours, [day]: [s, e] } });
+    setHoursEditing(null);
   };
 
   // ── Teacher roster management (rename cascades to classes; removal sets them to TBD) ──
@@ -1335,7 +1349,7 @@ export default function ClassroomScheduler() {
                   {rooms.map((r) => (
                     <div key={r.id} style={{ flex: 1, minWidth: 110, boxSizing: "border-box", padding: "8px 4px 9px", textAlign: "center", borderLeft: "1px solid #eceeea" }}>
                       <div
-                        onClick={() => editRoomCap(r.id)}
+                        onClick={() => openRoomCapEditor(r.id)}
                         title={`Click to change Room ${r.id}'s capacity`}
                         style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", gap: 3, cursor: "pointer" }}
                       >
@@ -1412,7 +1426,7 @@ export default function ClassroomScheduler() {
                 <span>
                   {DAY_LABEL[tab]} hours: <b style={{ color: "#123c3a" }}>{fmtAmPm(winCfg[0])} – {fmtAmPm(winCfg[1])}</b>
                 </span>
-                <button onClick={editHours} style={{ ...miniBtn, width: "auto", padding: "0 9px" }} title="Change this day's scheduling window">
+                <button onClick={openHoursEditor} style={{ ...miniBtn, width: "auto", padding: "0 9px" }} title="Change this day's scheduling window">
                   ✎ Edit hours
                 </button>
                 <span style={{ marginLeft: "auto" }}>
@@ -1478,6 +1492,31 @@ export default function ClassroomScheduler() {
       {/* Room manager modal */}
       {roomMgrOpen && (
         <RoomModal rooms={rooms} placements={placements} onSave={saveRooms} onClose={() => setRoomMgrOpen(false)} />
+      )}
+
+      {/* Quick room capacity modal */}
+      {roomCapEditing && (
+        <RoomCapModal
+          roomId={roomCapEditing.roomId}
+          value={roomCapEditing.value}
+          error={roomCapEditing.error}
+          onChange={(value) => setRoomCapEditing({ ...roomCapEditing, value, error: "" })}
+          onSave={saveRoomCap}
+          onClose={() => setRoomCapEditing(null)}
+        />
+      )}
+
+      {/* Per-day scheduling hours modal */}
+      {hoursEditing && (
+        <HoursModal
+          day={hoursEditing.day}
+          start={hoursEditing.start}
+          end={hoursEditing.end}
+          error={hoursEditing.error}
+          onChange={(field, value) => setHoursEditing({ ...hoursEditing, [field]: value, error: "" })}
+          onSave={saveHours}
+          onClose={() => setHoursEditing(null)}
+        />
       )}
 
       {/* Teacher manager modal */}
@@ -1762,6 +1801,67 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
   );
 }
 
+// ───────────────────────── Overview pill helpers (By Class / By Teacher) ─────────────────────────
+const overviewPillBg = (startMin) => (startMin < 720 ? "#f0fdfa" : "#f8fafc");
+
+const overviewRoomLabel = (rooms) =>
+  `Rm ${[...rooms].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })).join("+")}`;
+
+// Summarize a class's placements into lines like "Mon to Fri 9:00–10:30 AM".
+const fmtTimeRangeAmPm = (start, end) => {
+  const startAm = start < 720;
+  const endAm = end <= 720 ? end < 720 : false;
+  if (startAm === endAm) return `${fmtTime(start)}–${fmtTime(end)} ${startAm ? "AM" : "PM"}`;
+  return `${fmtAmPm(start)}–${fmtAmPm(end)}`;
+};
+
+const formatDayRange = (dayList) => {
+  const sorted = [...new Set(dayList)].sort((a, b) => dayIdx(a) - dayIdx(b));
+  if (!sorted.length) return "";
+  const runs = [];
+  let run = [sorted[0]];
+  for (let i = 1; i < sorted.length; i++) {
+    if (dayIdx(sorted[i]) === dayIdx(sorted[i - 1]) + 1) run.push(sorted[i]);
+    else { runs.push(run); run = [sorted[i]]; }
+  }
+  runs.push(run);
+  return runs.map((r) => {
+    if (r.length === 1) return DAY_SHORT[r[0]];
+    if (r.length === 5 && r[0] === "mon" && r[4] === "fri") return "Mon to Fri";
+    return `${DAY_SHORT[r[0]]} to ${DAY_SHORT[r[r.length - 1]]}`;
+  }).join(", ");
+};
+
+const classScheduleLines = (placements, classId) => {
+  const pls = placements.filter((p) => p.classId === classId);
+  if (!pls.length) return [];
+  const groups = new Map();
+  pls.forEach((p) => {
+    const key = `${p.start}|${p.end}|${[...p.rooms].sort().join("+")}`;
+    if (!groups.has(key)) groups.set(key, { start: p.start, end: p.end, days: [] });
+    groups.get(key).days.push(p.day);
+  });
+  return [...groups.values()]
+    .sort((a, b) => a.start - b.start || dayIdx([...a.days].sort((x, y) => dayIdx(x) - dayIdx(y))[0]) - dayIdx([...b.days].sort((x, y) => dayIdx(x) - dayIdx(y))[0]))
+    .map((g) => `${formatDayRange(g.days)} ${fmtTimeRangeAmPm(g.start, g.end)}`);
+};
+
+const overviewPillStyle = ({ clash, start, clickable }) => ({
+  display: "inline-flex",
+  flexDirection: "column",
+  gap: 2,
+  maxWidth: "100%",
+  padding: "4px 7px",
+  borderRadius: 6,
+  border: clash ? "1px solid #fde68a" : "1px solid #d6dad4",
+  background: clash ? "#fffbeb" : overviewPillBg(start),
+  color: clash ? "#b45309" : "#334155",
+  lineHeight: 1.25,
+  overflow: "hidden",
+  minHeight: 42,
+  cursor: clickable ? "pointer" : undefined,
+});
+
 // ───────────────────────── By-class schedule view ─────────────────────────
 function ClassScheduleView({ catalog, placements, days, onEditClass }) {
   const meetingsFor = (classId, day) =>
@@ -1792,11 +1892,11 @@ function ClassScheduleView({ catalog, placements, days, onEditClass }) {
 
   return (
     <>
-      <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto" }}>
-        <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 180 + days.length * 118, tableLayout: "fixed" }}>
+      <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto", width: "100%" }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 220 + days.length * 155, tableLayout: "fixed" }}>
           <thead>
             <tr>
-              <th style={{ ...thStyle, width: 180, position: "sticky", left: 0, background: "#fafaf8", zIndex: 2 }}>Class</th>
+              <th style={{ ...thStyle, width: 220, position: "sticky", left: 0, background: "#fafaf8", zIndex: 2 }}>Class</th>
               {days.map((d) => (
                 <th key={d} style={thStyle}>{DAY_LABEL[d]}</th>
               ))}
@@ -1804,8 +1904,8 @@ function ClassScheduleView({ catalog, placements, days, onEditClass }) {
           </thead>
           <tbody>
             {rows.map((k) => {
-              const meetCount = placements.filter((p) => p.classId === k.id).length;
-              const scheduled = meetCount > 0;
+              const scheduleLines = classScheduleLines(placements, k.id);
+              const scheduled = scheduleLines.length > 0;
               return (
                 <tr
                   key={k.id}
@@ -1820,12 +1920,18 @@ function ClassScheduleView({ catalog, placements, days, onEditClass }) {
                       <b style={{ marginLeft: 6, color: "#123c3a" }}>{k.reg} signed up</b>
                     </div>
                     {k.note && (
-                      <div style={{ fontSize: 11, color: "#7c3aed", marginTop: 2 }}>✎ {k.note}</div>
+                      <div style={{ fontSize: 11, color: "#7c3aed", marginTop: 2 }}>⏱ {k.note}</div>
                     )}
-                    <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>
-                      {scheduled
-                        ? `meets ${meetCount}×/week`
-                        : <span style={{ ...chipStyle, background: "#fef3c7", color: "#b45309" }}>unscheduled</span>}
+                    <div style={{ marginTop: 2 }}>
+                      {scheduled ? (
+                        scheduleLines.map((line, i) => (
+                          <div key={i} style={{ fontSize: 11, color: "#64748b", lineHeight: 1.35, marginTop: i ? 2 : 0 }}>
+                            {line}
+                          </div>
+                        ))
+                      ) : (
+                        <span style={{ ...chipStyle, background: "#fef3c7", color: "#b45309" }}>unscheduled</span>
+                      )}
                     </div>
                   </td>
                   {days.map((d) => {
@@ -1835,11 +1941,18 @@ function ClassScheduleView({ catalog, placements, days, onEditClass }) {
                         {list.length === 0 ? (
                           <span style={{ color: "#cbd5d1", fontSize: 12 }}>—</span>
                         ) : (
-                          list.map((p) => (
-                            <div key={p.id} style={{ fontSize: 12, lineHeight: 1.3, padding: "2px 0", color: "#334155" }}>
-                              {fmtRange(p.start, p.end)} · Rm {p.rooms.join("+")}
-                            </div>
-                          ))
+                          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                            {list.map((p) => (
+                              <div key={p.id} style={overviewPillStyle({ start: p.start })}>
+                                <span style={{ fontSize: 12, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%" }}>
+                                  {fmtRange(p.start, p.end)}
+                                </span>
+                                <span style={{ fontSize: 11, color: "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%" }}>
+                                  {overviewRoomLabel(p.rooms)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
                         )}
                       </td>
                     );
@@ -1859,6 +1972,7 @@ function ClassScheduleView({ catalog, placements, days, onEditClass }) {
       </div>
       <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
         📋 One row per class — every meeting time and room across the week.
+        Teal pills are morning (before noon); gray pills are afternoon.
         Amber rows are not scheduled yet. Click a row to edit the class.
       </p>
     </>
@@ -1886,24 +2000,26 @@ function TeacherScheduleView({ teachers, catalog, placements, days, onEditClass,
         {list.length === 0 ? (
           <span style={{ color: "#cbd5d1", fontSize: 12 }}>—</span>
         ) : (
-          list.map(({ p, cls }) => {
-            const isClash = clash(p);
-            return (
-              <div
-                key={p.id}
-                onClick={() => onEditClass(cls.id)}
-                title={isClash ? "Two classes at the same time — click to edit" : "Click to edit this class"}
-                style={{
-                  fontSize: 12, lineHeight: 1.3, cursor: "pointer", padding: "2px 4px", borderRadius: 4,
-                  background: isClash ? "#fffbeb" : "transparent",
-                  color: isClash ? "#b45309" : "#334155",
-                  fontWeight: isClash ? 700 : 400,
-                }}
-              >
-                {fmtRange(p.start, p.end)} {cls.name} · Rm {p.rooms.join("+")}{isClash ? " ⚠" : ""}
-              </div>
-            );
-          })
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {list.map(({ p, cls }) => {
+              const isClash = clash(p);
+              return (
+                <div
+                  key={p.id}
+                  onClick={() => onEditClass(cls.id)}
+                  title={isClash ? "Two classes at the same time — click to edit" : "Click to edit this class"}
+                  style={overviewPillStyle({ clash: isClash, start: p.start, clickable: true })}
+                >
+                  <span style={{ fontSize: 12, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%", color: isClash ? "#b45309" : "#334155" }}>
+                    {cls.name}{isClash ? " ⚠" : ""}
+                  </span>
+                  <span style={{ fontSize: 11, color: isClash ? "#b45309" : "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%" }}>
+                    {fmtRange(p.start, p.end)} · {overviewRoomLabel(p.rooms)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
         )}
       </td>
     );
@@ -1921,11 +2037,11 @@ function TeacherScheduleView({ teachers, catalog, placements, days, onEditClass,
 
   return (
     <>
-      <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto" }}>
-        <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 130 + days.length * 130, tableLayout: "fixed" }}>
+      <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto", width: "100%" }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 180 + days.length * 155, tableLayout: "fixed" }}>
           <thead>
             <tr>
-              <th style={{ ...thStyle, width: 130, position: "sticky", left: 0, background: "#fafaf8", zIndex: 2 }}>Teacher</th>
+              <th style={{ ...thStyle, width: 180, position: "sticky", left: 0, background: "#fafaf8", zIndex: 2 }}>Teacher</th>
               {days.map((d) => (
                 <th key={d} style={thStyle}>{DAY_LABEL[d]}</th>
               ))}
@@ -1950,12 +2066,116 @@ function TeacherScheduleView({ teachers, catalog, placements, days, onEditClass,
         </div>
       </div>
       <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
-        👤 Each row is one teacher's week. Click any class to edit it.
-        <span style={{ color: "#b45309", fontWeight: 700 }}> Amber ⚠ </span>
-        marks two classes overlapping in time. <b>Manage teachers</b> renames or removes teachers —
-        renames apply to all their classes; removing a teacher sets their classes to TBD.
+        👤 One row per teacher — classes they teach across the week. Click any class card to edit.
+        <span style={{ color: "#b45309", fontWeight: 700 }}> Amber </span>
+        cards mark double-booked times (same teacher in two rooms at once).
+        <b> Manage teachers</b> renames (cascades to classes) or removes teachers (sets their classes to TBD).
       </p>
     </>
+  );
+}
+
+// ───────────────────────── Per-day scheduling hours editor ─────────────────────────
+function HoursModal({ day, start, end, error, onChange, onSave, onClose }) {
+  const timeInputStyle = { ...inputStyle, fontSize: 18, fontWeight: 700, color: "#123c3a" };
+  return (
+    <Overlay onClose={onClose}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 16 }}>
+        <div style={{
+          width: 38, height: 38, borderRadius: 8, background: "#e6f4f3", color: "#123c3a",
+          display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 800,
+          border: "1px solid #c9e4e1",
+        }}>
+          {DAY_SHORT[day]}
+        </div>
+        <div style={{ flex: 1 }}>
+          <h3 style={{ margin: "0 0 4px", color: "#123c3a" }}>Scheduling hours</h3>
+          <p style={{ margin: 0, fontSize: 13, color: "#64748b", lineHeight: 1.4 }}>
+            {DAY_LABEL[day]} · calendar visible window
+          </p>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: error ? 6 : 14 }}>
+        <Field label="Start">
+          <input
+            style={timeInputStyle}
+            type="time"
+            value={start}
+            onChange={(e) => onChange("start", e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") onSave();
+              if (e.key === "Escape") onClose();
+            }}
+            autoFocus
+          />
+        </Field>
+        <Field label="End">
+          <input
+            style={timeInputStyle}
+            type="time"
+            value={end}
+            onChange={(e) => onChange("end", e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") onSave();
+              if (e.key === "Escape") onClose();
+            }}
+          />
+        </Field>
+      </div>
+      {error && <div style={{ ...roomConflictStyle, marginBottom: 14 }}>{error}</div>}
+
+      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 18 }}>
+        <button style={btnSecondary} onClick={onClose}>Cancel</button>
+        <button style={btnPrimary} onClick={onSave}>Save hours</button>
+      </div>
+    </Overlay>
+  );
+}
+
+// ───────────────────────── Quick room capacity editor ─────────────────────────
+function RoomCapModal({ roomId, value, error, onChange, onSave, onClose }) {
+  return (
+    <Overlay onClose={onClose}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 16 }}>
+        <div style={{
+          width: 38, height: 38, borderRadius: 8, background: "#e6f4f3", color: "#123c3a",
+          display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 800,
+          border: "1px solid #c9e4e1",
+        }}>
+          {roomId}
+        </div>
+        <div style={{ flex: 1 }}>
+          <h3 style={{ margin: "0 0 4px", color: "#123c3a" }}>Room capacity</h3>
+          <p style={{ margin: 0, fontSize: 13, color: "#64748b", lineHeight: 1.4 }}>
+            Room {roomId} · All week
+          </p>
+        </div>
+      </div>
+
+      <Field label="Capacity" style={{ marginBottom: error ? 6 : 14 }}>
+        <input
+          style={{ ...inputStyle, fontSize: 18, fontWeight: 700, color: "#123c3a" }}
+          type="number"
+          min="0"
+          step="1"
+          inputMode="numeric"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") onSave();
+            if (e.key === "Escape") onClose();
+          }}
+          autoFocus
+        />
+      </Field>
+      {error && <div style={{ ...roomConflictStyle, marginBottom: 14 }}>{error}</div>}
+
+      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 18 }}>
+        <button style={btnSecondary} onClick={onClose}>Cancel</button>
+        <button style={btnPrimary} onClick={onSave}>Save capacity</button>
+      </div>
+    </Overlay>
   );
 }
 
