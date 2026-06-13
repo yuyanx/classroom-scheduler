@@ -3456,7 +3456,7 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
   const roomOrder = rooms.map((r) => r.id);
   const roomCap = (id) => idx?.roomCapById?.get(id) ?? 12;
   const capOfRooms = (list) => (list || []).reduce((s, id) => s + roomCap(id), 0);
-  const rows = sortCatalogForByClassView(catalog, placements);
+  const classOfId = (id) => catalog.find((k) => k.id === id);
 
   const layout = useMemo(
     () => computeWeekOverviewLayout(days, hours, idx.placementsByDay, PX_PER_MIN),
@@ -3464,10 +3464,21 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
   );
   const { gridStart, gridEnd, gridH, hourMarks, halfMarks } = layout;
 
-  const meetingsForClass = (classId) =>
-    placements
-      .filter((p) => p.classId === classId)
-      .sort((a, b) => a.start - b.start || dayIdx(a.day) - dayIdx(b.day));
+  const roomGrid = useMemo(() => {
+    const colByRoom = new Map();
+    const lanesByRoom = new Map();
+    rooms.forEach((r) => {
+      const colPls = placements.filter((p) => p.rooms.includes(r.id));
+      colByRoom.set(r.id, colPls);
+      lanesByRoom.set(r.id, layoutLanes(colPls));
+    });
+    return { colByRoom, lanesByRoom };
+  }, [placements, rooms]);
+
+  const unscheduled = useMemo(
+    () => sortCatalogForByClassView(catalog, placements).filter((k) => !idx.scheduledClassIds?.has(k.id)),
+    [catalog, placements, idx.scheduledClassIds]
+  );
 
   const blockClash = (p, cls) => {
     const ev = evaluatePlacement(
@@ -3478,204 +3489,166 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
     return { roomClash: ev.roomClashes.length > 0, teacherClash: ev.hasTeacherConflict };
   };
 
-  const renderTimeGutter = () => (
-    <div style={{ position: "relative", height: gridH, width: "100%" }}>
-      {halfMarks.map((t) => (
-        <div
-          key={`h-${t}`}
-          style={{ position: "absolute", left: 0, right: 0, top: (t - gridStart) * PX_PER_MIN, borderTop: "1px dashed #f0f2ee", pointerEvents: "none" }}
-        />
-      ))}
-      {hourMarks.map((t) => (
-        <div
-          key={t}
-          style={{
-            position: "absolute",
-            right: 6,
-            top: (t - gridStart) * PX_PER_MIN,
-            transform: t === gridStart ? "translateY(2px)" : t === gridEnd ? "translateY(calc(-100% - 2px))" : "translateY(-50%)",
-            fontSize: 11,
-            color: "#94a3b8",
-            fontWeight: 700,
-            whiteSpace: "nowrap",
-            zIndex: 2,
-          }}
-        >
-          {fmtTime(t)}
-        </div>
-      ))}
-    </div>
-  );
-
-  const renderRoomCell = (cls, roomId) => {
-    const list = meetingsForClass(cls.id).filter((p) => p.rooms.includes(roomId));
-    const lanes = layoutLanes(list);
+  const renderBlock = (p, roomId, laneInfo) => {
+    const cls = classOfId(p.classId);
+    if (!cls) return null;
+    const { lane, lanes: laneCount } = laneInfo || { lane: 0, lanes: 1 };
+    const top = (p.start - gridStart) * PX_PER_MIN;
+    const h = (p.end - p.start) * PX_PER_MIN;
+    const cap = capOfRooms(p.rooms);
+    const col = ratioColor(cls.reg, cap);
+    const pct = cap ? Math.min(100, Math.round((cls.reg / cap) * 100)) : 0;
     const rc = roomOverviewColor(roomId, roomOrder);
+    const { roomClash, teacherClash } = blockClash(p, cls);
+    const combined = p.rooms.length > 1;
     return (
-      <td key={roomId} style={{ ...tdStyle, padding: 0, verticalAlign: "top", borderRight: "1px solid #eceeea", minWidth: 110 }}>
-        <div style={{ position: "relative", height: gridH, background: "#fcfcfb", overflow: "hidden" }}>
-          {halfMarks.map((t) => (
-            <div
-              key={`h-${t}`}
-              style={{ position: "absolute", left: 0, right: 0, top: (t - gridStart) * PX_PER_MIN, borderTop: "1px dashed #eef0ed", pointerEvents: "none" }}
-            />
-          ))}
-          {hourMarks.map((t) => (
-            <div
-              key={`hr-${t}`}
-              style={{ position: "absolute", left: 0, right: 0, top: (t - gridStart) * PX_PER_MIN, borderTop: "1px solid #e8ebe8", pointerEvents: "none" }}
-            />
-          ))}
-          {list.map((p) => {
-            const laneInfo = lanes.get(p.id) || { lane: 0, lanes: 1 };
-            const { lane, lanes: laneCount } = laneInfo;
-            const top = (p.start - gridStart) * PX_PER_MIN;
-            const h = (p.end - p.start) * PX_PER_MIN;
-            const cap = capOfRooms(p.rooms);
-            const col = ratioColor(cls.reg, cap);
-            const pct = cap ? Math.min(100, Math.round((cls.reg / cap) * 100)) : 0;
-            const { roomClash, teacherClash } = blockClash(p, cls);
-            const combined = p.rooms.length > 1;
-            return (
-              <div
-                key={p.id}
-                onClick={(e) => { e.stopPropagation(); onEditClass(cls.id, p.id); }}
-                title={`${DAY_LABEL[p.day]} · ${cls.name} · ${fmtRange(p.start, p.end)} · ${cls.teacher || "TBD"} · ${overviewRoomLabel(p.rooms)} — click to edit`}
-                style={{
-                  position: "absolute",
-                  top: top + 1,
-                  height: Math.max(42, h - 2),
-                  left: `calc(${(lane / laneCount) * 100}% + 2px)`,
-                  width: `calc(${100 / laneCount}% - 4px)`,
-                  boxSizing: "border-box",
-                  zIndex: 1,
-                  background: roomClash ? "#fee2e2" : teacherClash ? "#fffbeb" : rc.bg,
-                  border: roomClash ? "2px solid #dc2626" : teacherClash ? "2px solid #d97706" : `1px solid ${rc.border}`,
-                  borderRadius: 8,
-                  padding: "4px 6px 6px",
-                  overflow: "hidden",
-                  cursor: "pointer",
-                  color: rc.text,
-                  display: "flex",
-                  flexDirection: "column",
-                }}
-              >
-                <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column", gap: 1 }}>
-                  <div style={{ fontWeight: 700, fontSize: 11.5, lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    <span style={{ opacity: 0.85, marginRight: 3 }}>{DAY_SHORT[p.day]}</span>
-                    {cls.name}{(roomClash || teacherClash) ? " ⚠" : ""}
-                  </div>
-                  <div style={{ fontSize: 10.5, opacity: 0.92, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {fmtRange(p.start, p.end)}
-                  </div>
-                  {h >= 48 && (
-                    <div style={{ fontSize: 10.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {cls.teacher || <i style={{ color: "#b45309" }}>TBD</i>}
-                    </div>
-                  )}
-                  {combined && h >= 56 && (
-                    <div style={{ fontSize: 10, color: "#7c3aed", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      ⇆ Rm {[...p.rooms].sort((a, b) => (roomOrder.indexOf(a) ?? 99) - (roomOrder.indexOf(b) ?? 99)).join("+")}
-                    </div>
-                  )}
-                </div>
-                {h >= 52 && (
-                  <div style={{ flexShrink: 0, marginTop: 2 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 2, minWidth: 0 }}>
-                      {!planReadOnly && h >= 68 && (
-                        <button type="button" onClick={(e) => { e.stopPropagation(); onBumpReg(cls.id, -1); }} style={stepBtn}>−</button>
-                      )}
-                      <span style={{ fontSize: 10.5, fontWeight: 700, color: col.text, flex: 1, textAlign: "center", whiteSpace: "nowrap" }}>
-                        {cls.reg}/{cap}
-                      </span>
-                      {!planReadOnly && h >= 68 && (
-                        <button type="button" onClick={(e) => { e.stopPropagation(); onBumpReg(cls.id, +1); }} style={stepBtn}>＋</button>
-                      )}
-                    </div>
-                    <div style={{ height: 4, background: "#e2e8f0", borderRadius: 2, marginTop: 2, overflow: "hidden" }}>
-                      <div style={{ width: `${pct}%`, height: "100%", background: col.bar, borderRadius: 2 }} />
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
+      <div
+        key={p.id}
+        onClick={(e) => { e.stopPropagation(); onEditClass(cls.id, p.id); }}
+        title={`${DAY_LABEL[p.day]} · ${cls.name} · ${fmtRange(p.start, p.end)} · ${cls.teacher || "TBD"} · ${overviewRoomLabel(p.rooms)} — click to edit`}
+        style={{
+          position: "absolute",
+          top: top + 1,
+          height: Math.max(42, h - 2),
+          left: `calc(${(lane / laneCount) * 100}% + 2px)`,
+          width: `calc(${100 / laneCount}% - 4px)`,
+          boxSizing: "border-box",
+          zIndex: 1,
+          background: roomClash ? "#fee2e2" : teacherClash ? "#fffbeb" : rc.bg,
+          border: roomClash ? "2px solid #dc2626" : teacherClash ? "2px solid #d97706" : `1px solid ${rc.border}`,
+          borderRadius: 8,
+          padding: "4px 6px 6px",
+          overflow: "hidden",
+          cursor: "pointer",
+          color: rc.text,
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column", gap: 1 }}>
+          <div style={{ fontWeight: 700, fontSize: 11.5, lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <span style={{ opacity: 0.85, marginRight: 3 }}>{DAY_SHORT[p.day]}</span>
+            {cls.name}{(roomClash || teacherClash) ? " ⚠" : ""}
+          </div>
+          <div style={{ fontSize: 10.5, opacity: 0.92, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {fmtRange(p.start, p.end)}
+          </div>
+          {h >= 48 && (
+            <div style={{ fontSize: 10.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              {cls.teacher || <i style={{ color: "#b45309" }}>TBD</i>}
+            </div>
+          )}
+          {combined && h >= 56 && (
+            <div style={{ fontSize: 10, color: "#7c3aed", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              ⇆ Rm {[...p.rooms].sort((a, b) => (roomOrder.indexOf(a) ?? 99) - (roomOrder.indexOf(b) ?? 99)).join("+")}
+            </div>
+          )}
         </div>
-      </td>
+        {h >= 52 && (
+          <div style={{ flexShrink: 0, marginTop: 2 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 2, minWidth: 0 }}>
+              {!planReadOnly && h >= 68 && (
+                <button type="button" onClick={(e) => { e.stopPropagation(); onBumpReg(cls.id, -1); }} style={stepBtn}>−</button>
+              )}
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: col.text, flex: 1, textAlign: "center", whiteSpace: "nowrap" }}>
+                {cls.reg}/{cap}
+              </span>
+              {!planReadOnly && h >= 68 && (
+                <button type="button" onClick={(e) => { e.stopPropagation(); onBumpReg(cls.id, +1); }} style={stepBtn}>＋</button>
+              )}
+            </div>
+            <div style={{ height: 4, background: "#e2e8f0", borderRadius: 2, marginTop: 2, overflow: "hidden" }}>
+              <div style={{ width: `${pct}%`, height: "100%", background: col.bar, borderRadius: 2 }} />
+            </div>
+          </div>
+        )}
+      </div>
     );
   };
-
-  const tableMinW = 200 + 64 + rooms.length * 110;
 
   return (
     <>
       <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto", width: "100%" }}>
         <OverviewRoomLegendBar rooms={rooms} />
-        <table style={{ borderCollapse: "collapse", width: "100%", minWidth: tableMinW, tableLayout: "fixed" }}>
-          <thead>
-            <tr>
-              <th style={{ ...thStyle, width: 200, position: "sticky", left: 0, background: "#fafaf8", zIndex: 3 }}>Class</th>
-              <th style={{ ...thStyle, width: 64, background: "#fafaf8" }}>Time</th>
-              {rooms.map((r) => {
-                const rc = roomOverviewColor(r.id, roomOrder);
-                return (
-                  <th key={r.id} style={{ ...thStyle, minWidth: 110 }}>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, justifyContent: "center" }}>
-                      <span style={{ width: 10, height: 10, borderRadius: 3, background: rc.bg, border: `1px solid ${rc.border}`, flexShrink: 0 }} />
-                      Room {r.id}
-                    </span>
-                  </th>
-                );
-              })}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((k) => {
-              const scheduled = idx.scheduledClassIds?.has(k.id) || meetingsForClass(k.id).length > 0;
+        <div style={{ minWidth: 64 + rooms.length * 110, position: "relative" }}>
+          <div style={{ display: "flex", borderBottom: "2px solid #d6dad4", background: "#fafaf8" }}>
+            <div style={{ flex: "0 0 64px", width: 64, position: "sticky", left: 0, zIndex: 4, background: "#fafaf8", boxSizing: "border-box", padding: "10px 6px", fontSize: 12, fontWeight: 600, color: "#475569", textAlign: "center" }}>
+              Time
+            </div>
+            {rooms.map((r) => {
+              const rc = roomOverviewColor(r.id, roomOrder);
               return (
-                <tr key={k.id} style={{ background: scheduled ? "transparent" : "#fffbeb" }}>
-                  <td
-                    style={{
-                      ...tdStyle,
-                      width: 200,
-                      position: "sticky",
-                      left: 0,
-                      background: scheduled ? "#fafaf8" : "#fffbeb",
-                      zIndex: 2,
-                      verticalAlign: "top",
-                      cursor: "pointer",
-                    }}
-                    onClick={() => onEditClass(k.id)}
-                    title="Click to edit this class"
-                  >
-                    <div style={{ fontWeight: 700, fontSize: 13, color: "#123c3a", overflowWrap: "anywhere" }}>{k.name}</div>
-                    <div style={{ fontSize: 11, color: "#475569", marginTop: 2 }}>
-                      {k.teacher || <i style={{ color: "#b45309" }}>Teacher TBD</i>}
-                    </div>
-                    {!scheduled && (
-                      <span style={{ ...chipStyle, background: "#fef3c7", color: "#b45309", marginTop: 6, display: "inline-block" }}>unscheduled</span>
-                    )}
-                  </td>
-                  <td style={{ ...tdStyle, width: 64, padding: "4px 2px", verticalAlign: "top", background: "#fafaf8" }}>
-                    {renderTimeGutter()}
-                  </td>
-                  {rooms.map((r) => renderRoomCell(k, r.id))}
-                </tr>
+                <div key={r.id} style={{ flex: 1, minWidth: 110, boxSizing: "border-box", padding: "8px 4px 9px", textAlign: "center", borderLeft: "1px solid #eceeea" }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6, justifyContent: "center" }}>
+                    <span style={{ width: 10, height: 10, borderRadius: 3, background: rc.bg, border: `1px solid ${rc.border}`, flexShrink: 0 }} />
+                    <span style={{ fontSize: 13, fontWeight: 700, color: "#123c3a" }}>Room {r.id}</span>
+                  </span>
+                </div>
               );
             })}
-            {rows.length === 0 && (
-              <tr>
-                <td colSpan={rooms.length + 2} style={{ ...tdStyle, color: "#94a3b8", fontSize: 13 }}>
-                  No classes yet — add one in the Class Library.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+          </div>
+          <div style={{ display: "flex", position: "relative" }}>
+            <div style={{ flex: "0 0 64px", width: 64, position: "sticky", left: 0, zIndex: 3, background: "#fafaf8", height: gridH, boxSizing: "border-box", borderRight: "1px solid #eceeea" }}>
+              {hourMarks.map((t) => (
+                <div
+                  key={t}
+                  style={{
+                    position: "absolute",
+                    top: (t - gridStart) * PX_PER_MIN,
+                    right: 6,
+                    transform: t === gridStart ? "translateY(2px)" : t === gridEnd ? "translateY(calc(-100% - 2px))" : "translateY(-50%)",
+                    fontSize: 11,
+                    fontWeight: 700,
+                    color: "#94a3b8",
+                  }}
+                >
+                  {fmtTime(t)}
+                </div>
+              ))}
+            </div>
+            <div style={{ position: "absolute", left: 64, right: 0, top: 0, height: gridH, pointerEvents: "none" }}>
+              {hourMarks.map((t) => (
+                <div key={t} style={{ position: "absolute", left: 0, right: 0, top: (t - gridStart) * PX_PER_MIN, borderTop: "1px solid #eceeea" }} />
+              ))}
+              {halfMarks.map((t) => (
+                <div key={t} style={{ position: "absolute", left: 0, right: 0, top: (t - gridStart) * PX_PER_MIN, borderTop: "1px dashed #f0f2ee" }} />
+              ))}
+            </div>
+            {rooms.map((room) => {
+              const colPls = roomGrid.colByRoom.get(room.id) || [];
+              const lanes = roomGrid.lanesByRoom.get(room.id) || new Map();
+              return (
+                <div
+                  key={room.id}
+                  style={{ flex: 1, minWidth: 110, position: "relative", height: gridH, boxSizing: "border-box", borderLeft: "1px solid #eceeea", background: "#fcfcfb" }}
+                >
+                  {colPls.map((p) => renderBlock(p, room.id, lanes.get(p.id)))}
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </div>
+      {unscheduled.length > 0 && (
+        <div style={{ marginTop: 10, padding: "10px 12px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, fontSize: 12, color: "#92400e" }}>
+          <span style={{ fontWeight: 700 }}>Unscheduled ({unscheduled.length}):</span>{" "}
+          {unscheduled.map((k, i) => (
+            <span key={k.id}>
+              {i > 0 && ", "}
+              <button
+                type="button"
+                onClick={() => onEditClass(k.id)}
+                style={{ background: "none", border: "none", padding: 0, color: "#b45309", fontWeight: 600, cursor: "pointer", textDecoration: "underline" }}
+              >
+                {k.name}
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
       <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
-        📋 One row per class — time on the left ({fmtAmPm(gridStart)}–{fmtAmPm(gridEnd)}), rooms across the top.
-        Day label on each block; colors follow the room legend. Use −/+ to adjust enrollment — no drag here.
+        📋 All classes on one grid — time ({fmtAmPm(gridStart)}–{fmtAmPm(gridEnd)}) × rooms.
+        Day + class name on each block; colors follow the room legend. Use −/+ to adjust enrollment — no drag here.
       </p>
     </>
   );
