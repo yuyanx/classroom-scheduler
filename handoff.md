@@ -76,6 +76,15 @@ After rebuilding, commit `app.js` along with your `src/` changes so Vercel serve
 **Every commit must update this file** — add a changelog entry (and adjust architecture sections when
 behavior or UI changes). Keep `handoff.md` in sync with the code you ship.
 
+### Localhost dev seed (production snapshot)
+
+`LIVE_V1_SEED` in `App.jsx` is a frozen copy of the **live** Supabase schedule (v1 shape from
+production `main`). On **localhost only**, `loadData()` auto-imports it when `premier-live-seed-tag`
+does not match `LIVE_SEED_TAG` — runs `upgrade()` to v2, writes `localStorage`, and does **not**
+touch the shared Supabase row (`IS_LOCAL_DEV` keeps remote sync off). **Reset Data** also restores
+this snapshot (not the old registration-sheet defaults). To refresh from production later: fetch
+the `schedule` row, replace `LIVE_V1_SEED`, bump `LIVE_SEED_TAG`, rebuild `app.js`.
+
 ---
 
 ## Architecture — key concepts in App.jsx
@@ -330,6 +339,9 @@ app runs exactly as the old browser-only version.
   fixed counter footer so signed-up counts and capacity bars never overflow the card at narrow
   widths; secondary lines ellipsis; combined-room label shortened to "Rm 2+3"; hide +/- steppers in
   side-by-side conflict lanes; first/last hour labels no longer clip at the grid edge.
+- 2026-06-12 — **production snapshot seed**: `LIVE_V1_SEED` from live Supabase (classes, teachers,
+  placements, room caps as of 2026-06-12); localhost auto-imports via `LIVE_SEED_TAG`; Reset Data
+  uses the same snapshot (migrated to v2 on load).
 - 2026-06-12 — **By Class row sort**: classes order by first letter A–Z, then earliest meeting
   time within the same letter (AM before PM), then full name when times still tie.
 - 2026-06-12 — **By Teacher sidebar class list**: sticky Teacher column lists each teacher's class

@@ -142,6 +142,634 @@ const DEFAULT_CLASSES = [
   mk("thu", 1, "5", "NYT", "Rebecca", 0, 12),
 ];
 
+// Production snapshot from Supabase (live site 2026-06-12). Used for localhost dev + Reset Data.
+const LIVE_V1_SEED = {
+  "rooms": {
+    "morning": [
+      "1",
+      "2+3",
+      "4",
+      "5",
+      "6",
+      "7",
+      "8"
+    ],
+    "afternoon": [
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "7",
+      "8"
+    ]
+  },
+  "slots": {
+    "fri": [
+      "12:30–2:00",
+      "2:00–3:30",
+      "3:30–5:00"
+    ],
+    "mon": [
+      "12:30–2:00",
+      "2:00–3:30",
+      "3:30–5:00"
+    ],
+    "thu": [
+      "12:30–2:00",
+      "2:00–3:30",
+      "3:30–5:00"
+    ],
+    "tue": [
+      "12:30–2:00",
+      "2:00–3:30",
+      "3:30–5:00"
+    ],
+    "wed": [
+      "12:30–2:00",
+      "2:00–3:30",
+      "3:30–5:00"
+    ],
+    "morning": [
+      "9:00–10:30",
+      "10:30–12:00"
+    ]
+  },
+  "nextId": 123,
+  "catalog": [
+    {
+      "id": "k1",
+      "reg": 22,
+      "name": "SAT ELA",
+      "note": "",
+      "teacher": "Joshua"
+    },
+    {
+      "id": "k5",
+      "reg": 10,
+      "name": "Alg2",
+      "note": "",
+      "teacher": "Linda"
+    },
+    {
+      "id": "k7",
+      "reg": 7,
+      "name": "Geo",
+      "note": "",
+      "teacher": "James"
+    },
+    {
+      "id": "k9",
+      "reg": 6,
+      "name": "5/6th Math",
+      "note": "",
+      "teacher": "Thomas"
+    },
+    {
+      "id": "k11",
+      "reg": 9,
+      "name": "G7/8 ELA",
+      "note": "",
+      "teacher": "Matthew M"
+    },
+    {
+      "id": "k13",
+      "reg": 23,
+      "name": "SAT Math",
+      "note": "",
+      "teacher": "Herrick"
+    },
+    {
+      "id": "k15",
+      "reg": 12,
+      "name": "PSAT",
+      "note": "",
+      "teacher": "Joshua"
+    },
+    {
+      "id": "k17",
+      "reg": 7,
+      "name": "PSAT",
+      "note": "",
+      "teacher": "Daniel"
+    },
+    {
+      "id": "k19",
+      "reg": 6,
+      "name": "5/6th ELA",
+      "note": "",
+      "teacher": "Rebecca"
+    },
+    {
+      "id": "k21",
+      "reg": 3,
+      "name": "G7 Math",
+      "note": "",
+      "teacher": "Thomas"
+    },
+    {
+      "id": "k23",
+      "reg": 7,
+      "name": "G8 Math",
+      "note": "",
+      "teacher": "Linda"
+    },
+    {
+      "id": "k25",
+      "reg": 9,
+      "name": "SAT ELA Afternoon",
+      "note": "",
+      "teacher": "Joshua"
+    },
+    {
+      "id": "k27",
+      "reg": 4,
+      "name": "HS English",
+      "note": "",
+      "teacher": "Matt C"
+    },
+    {
+      "id": "k29",
+      "reg": 2,
+      "name": "NYT G3-5",
+      "note": "",
+      "teacher": "Rebecca"
+    },
+    {
+      "id": "k41",
+      "reg": 3,
+      "name": "Debate",
+      "note": "",
+      "teacher": "Rebecca"
+    },
+    {
+      "id": "k47",
+      "reg": 1,
+      "name": "Earth Science",
+      "note": "",
+      "teacher": "Linda"
+    },
+    {
+      "id": "k49",
+      "reg": 2,
+      "name": "Pre-Calc",
+      "note": "",
+      "teacher": "Reuben"
+    },
+    {
+      "id": "k51",
+      "reg": 2,
+      "name": "SAT Math Afternoon",
+      "note": "",
+      "teacher": "Herrick"
+    },
+    {
+      "id": "k53",
+      "reg": 4,
+      "name": "Python",
+      "note": "",
+      "teacher": "AN"
+    },
+    {
+      "id": "k55",
+      "reg": 5,
+      "name": "Scholastic Writing",
+      "note": "",
+      "teacher": "Joshua"
+    },
+    {
+      "id": "k69",
+      "reg": 3,
+      "name": "AMC 10",
+      "note": "",
+      "teacher": "James"
+    },
+    {
+      "id": "k108",
+      "reg": 2,
+      "name": "Biology",
+      "note": "",
+      "teacher": "Linda"
+    },
+    {
+      "id": "k111",
+      "reg": 2,
+      "name": "NYT G6-8",
+      "note": "",
+      "teacher": "Rebecca"
+    },
+    {
+      "id": "k117",
+      "reg": 2,
+      "name": "Geo Afternoon",
+      "note": "",
+      "teacher": "Thomas"
+    }
+  ],
+  "roomCaps": {
+    "morning": {
+      "1": 3,
+      "4": 9,
+      "5": 9,
+      "6": 12,
+      "7": 15,
+      "8": 10,
+      "2+3": 24
+    },
+    "afternoon": {
+      "1": 3,
+      "2": 12,
+      "3": 12,
+      "4": 9,
+      "5": 9,
+      "6": 12,
+      "7": 15,
+      "8": 10
+    }
+  },
+  "teachers": [
+    "AN",
+    "Daniel",
+    "Herrick",
+    "James",
+    "Joshua",
+    "Linda",
+    "Matt C",
+    "Matthew M",
+    "Rebecca",
+    "Reuben",
+    "Thomas"
+  ],
+  "placements": [
+    {
+      "id": "p12",
+      "room": "8",
+      "classId": "k11",
+      "section": "morning",
+      "slotIdx": 0
+    },
+    {
+      "id": "p16",
+      "room": "7",
+      "classId": "k15",
+      "section": "morning",
+      "slotIdx": 1
+    },
+    {
+      "id": "p18",
+      "room": "6",
+      "classId": "k17",
+      "section": "morning",
+      "slotIdx": 1
+    },
+    {
+      "id": "p20",
+      "room": "5",
+      "classId": "k19",
+      "section": "morning",
+      "slotIdx": 1
+    },
+    {
+      "id": "p22",
+      "room": "4",
+      "classId": "k21",
+      "section": "morning",
+      "slotIdx": 1
+    },
+    {
+      "id": "p10",
+      "room": "5",
+      "classId": "k9",
+      "section": "morning",
+      "slotIdx": 0
+    },
+    {
+      "id": "p26",
+      "room": "7",
+      "classId": "k25",
+      "section": "mon",
+      "slotIdx": 0
+    },
+    {
+      "id": "p99",
+      "room": "7",
+      "classId": "k25",
+      "section": "tue",
+      "slotIdx": 0
+    },
+    {
+      "id": "p100",
+      "room": "7",
+      "classId": "k25",
+      "section": "wed",
+      "slotIdx": 0
+    },
+    {
+      "id": "p101",
+      "room": "7",
+      "classId": "k25",
+      "section": "thu",
+      "slotIdx": 0
+    },
+    {
+      "id": "p102",
+      "room": "7",
+      "classId": "k25",
+      "section": "fri",
+      "slotIdx": 0
+    },
+    {
+      "id": "p98",
+      "room": "2",
+      "classId": "k69",
+      "section": "mon",
+      "slotIdx": 0
+    },
+    {
+      "id": "p70",
+      "room": "2",
+      "classId": "k69",
+      "section": "wed",
+      "slotIdx": 0
+    },
+    {
+      "id": "p24",
+      "room": "8",
+      "classId": "k23",
+      "section": "morning",
+      "slotIdx": 1
+    },
+    {
+      "id": "p42",
+      "room": "5",
+      "classId": "k41",
+      "section": "mon",
+      "slotIdx": 1
+    },
+    {
+      "id": "p71",
+      "room": "5",
+      "classId": "k41",
+      "section": "wed",
+      "slotIdx": 1
+    },
+    {
+      "id": "p103",
+      "room": "7",
+      "classId": "k51",
+      "section": "mon",
+      "slotIdx": 1
+    },
+    {
+      "id": "p52",
+      "room": "7",
+      "classId": "k51",
+      "section": "tue",
+      "slotIdx": 1
+    },
+    {
+      "id": "p66",
+      "room": "7",
+      "classId": "k51",
+      "section": "wed",
+      "slotIdx": 1
+    },
+    {
+      "id": "p77",
+      "room": "7",
+      "classId": "k51",
+      "section": "thu",
+      "slotIdx": 1
+    },
+    {
+      "id": "p104",
+      "room": "7",
+      "classId": "k51",
+      "section": "fri",
+      "slotIdx": 1
+    },
+    {
+      "id": "p54",
+      "room": "6",
+      "classId": "k53",
+      "section": "tue",
+      "slotIdx": 0
+    },
+    {
+      "id": "p78",
+      "room": "6",
+      "classId": "k53",
+      "section": "thu",
+      "slotIdx": 0
+    },
+    {
+      "id": "p2",
+      "room": "2+3",
+      "classId": "k1",
+      "section": "morning",
+      "slotIdx": 0
+    },
+    {
+      "id": "p30",
+      "room": "6",
+      "classId": "k29",
+      "section": "mon",
+      "slotIdx": 0
+    },
+    {
+      "id": "p80",
+      "room": "6",
+      "classId": "k29",
+      "section": "wed",
+      "slotIdx": 0
+    },
+    {
+      "id": "p112",
+      "room": "1",
+      "classId": "k111",
+      "section": "tue",
+      "slotIdx": 1
+    },
+    {
+      "id": "p113",
+      "room": "1",
+      "classId": "k111",
+      "section": "thu",
+      "slotIdx": 1
+    },
+    {
+      "id": "p109",
+      "room": "2",
+      "classId": "k108",
+      "section": "mon",
+      "slotIdx": 1
+    },
+    {
+      "id": "p110",
+      "room": "2",
+      "classId": "k108",
+      "section": "wed",
+      "slotIdx": 1
+    },
+    {
+      "id": "p50",
+      "room": "1",
+      "classId": "k49",
+      "section": "mon",
+      "slotIdx": 0
+    },
+    {
+      "id": "p76",
+      "room": "1",
+      "classId": "k49",
+      "section": "tue",
+      "slotIdx": 0
+    },
+    {
+      "id": "p105",
+      "room": "1",
+      "classId": "k49",
+      "section": "wed",
+      "slotIdx": 0
+    },
+    {
+      "id": "p106",
+      "room": "1",
+      "classId": "k49",
+      "section": "thu",
+      "slotIdx": 0
+    },
+    {
+      "id": "p107",
+      "room": "1",
+      "classId": "k49",
+      "section": "fri",
+      "slotIdx": 0
+    },
+    {
+      "id": "p48",
+      "room": "5",
+      "classId": "k47",
+      "section": "tue",
+      "slotIdx": 1
+    },
+    {
+      "id": "p75",
+      "room": "5",
+      "classId": "k47",
+      "section": "thu",
+      "slotIdx": 1
+    },
+    {
+      "id": "p56",
+      "room": "4",
+      "classId": "k55",
+      "section": "tue",
+      "slotIdx": 1
+    },
+    {
+      "id": "p79",
+      "room": "4",
+      "classId": "k55",
+      "section": "thu",
+      "slotIdx": 1
+    },
+    {
+      "id": "p8",
+      "room": "6",
+      "classId": "k7",
+      "section": "morning",
+      "slotIdx": 0
+    },
+    {
+      "id": "p6",
+      "room": "7",
+      "classId": "k5",
+      "section": "morning",
+      "slotIdx": 0
+    },
+    {
+      "id": "p14",
+      "room": "2+3",
+      "classId": "k13",
+      "section": "morning",
+      "slotIdx": 1
+    },
+    {
+      "id": "p118",
+      "room": "3",
+      "classId": "k117",
+      "section": "mon",
+      "slotIdx": 1
+    },
+    {
+      "id": "p119",
+      "room": "3",
+      "classId": "k117",
+      "section": "tue",
+      "slotIdx": 1
+    },
+    {
+      "id": "p120",
+      "room": "3",
+      "classId": "k117",
+      "section": "wed",
+      "slotIdx": 1
+    },
+    {
+      "id": "p121",
+      "room": "3",
+      "classId": "k117",
+      "section": "thu",
+      "slotIdx": 1
+    },
+    {
+      "id": "p122",
+      "room": "3",
+      "classId": "k117",
+      "section": "fri",
+      "slotIdx": 1
+    },
+    {
+      "id": "p28",
+      "room": "3",
+      "classId": "k27",
+      "section": "mon",
+      "slotIdx": 0
+    },
+    {
+      "id": "p94",
+      "room": "3",
+      "classId": "k27",
+      "section": "tue",
+      "slotIdx": 0
+    },
+    {
+      "id": "p95",
+      "room": "3",
+      "classId": "k27",
+      "section": "wed",
+      "slotIdx": 0
+    },
+    {
+      "id": "p96",
+      "room": "3",
+      "classId": "k27",
+      "section": "thu",
+      "slotIdx": 0
+    },
+    {
+      "id": "p97",
+      "room": "3",
+      "classId": "k27",
+      "section": "fri",
+      "slotIdx": 0
+    }
+  ]
+};
+const LIVE_SEED_TAG = "prod-2026-06-12T21:23";
+
 // ───────────────────────── Data model (v2) ─────────────────────────
 // days:       which days the program runs — ordered subset of ALL_DAYS
 // hours:      { default: [startMin, endMin], <day>: [start, end] } scheduling window per day
@@ -316,14 +944,7 @@ function upgrade(raw) {
   return defaultData();
 }
 
-const defaultData = () =>
-  migrateV1toV2(
-    migrateOld({
-      rooms: JSON.parse(JSON.stringify(DEFAULT_ROOMS)),
-      slots: JSON.parse(JSON.stringify(DEFAULT_SLOTS)),
-      classes: DEFAULT_CLASSES,
-    })
-  );
+const defaultData = () => migrateV1toV2(JSON.parse(JSON.stringify(LIVE_V1_SEED)));
 
 const STORAGE_KEY = "premier-classroom-schedule";
 
@@ -380,6 +1001,15 @@ async function remoteSave(data, opts = {}) {
 
 const loadData = () => {
   try {
+    if (IS_LOCAL_DEV) {
+      const tag = window.localStorage.getItem("premier-live-seed-tag");
+      if (tag !== LIVE_SEED_TAG) {
+        const seeded = upgrade(JSON.parse(JSON.stringify(LIVE_V1_SEED)));
+        window.localStorage.setItem("premier-live-seed-tag", LIVE_SEED_TAG);
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(seeded));
+        return seeded;
+      }
+    }
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (raw) return upgrade(JSON.parse(raw));
   } catch (e) { /* fall through */ }
