@@ -2829,12 +2829,12 @@ export default function ClassroomScheduler() {
                       </div>
                     ))}
                   </div>
-                  <div style={{ position: "absolute", left: 64, right: 0, top: 0, height: gridH, pointerEvents: "none" }}>
+                  <div style={{ position: "absolute", left: 64, right: 0, top: 0, height: gridH, pointerEvents: "none", zIndex: 0 }}>
                     {hourMarks.map((t) => (
-                      <div key={t} style={{ position: "absolute", left: 0, right: 0, top: (t - gridStart) * PX_PER_MIN, borderTop: "1px solid #eceeea" }} />
+                      <div key={t} style={{ position: "absolute", left: 0, right: 0, top: (t - gridStart) * PX_PER_MIN, borderTop: "1px solid #d6dad4" }} />
                     ))}
                     {halfMarks.map((t) => (
-                      <div key={t} style={{ position: "absolute", left: 0, right: 0, top: (t - gridStart) * PX_PER_MIN, borderTop: "1px dashed #f0f2ee" }} />
+                      <div key={t} style={{ position: "absolute", left: 0, right: 0, top: (t - gridStart) * PX_PER_MIN, borderTop: "1px dashed #dce0db" }} />
                     ))}
                   </div>
                   {rooms.map((room) => {
@@ -2845,7 +2845,7 @@ export default function ClassroomScheduler() {
                         key={room.id}
                         {...colHandlers(room.id)}
                         title="Click an empty time to add a class here — or drag a card from the Class Library"
-                        style={{ flex: 1, minWidth: DAY_ROOM_MIN_W, position: "relative", height: gridH, boxSizing: "border-box", borderLeft: "1px solid #eceeea", background: "#fcfcfb" }}
+                        style={{ flex: 1, minWidth: DAY_ROOM_MIN_W, position: "relative", height: gridH, boxSizing: "border-box", borderLeft: "1px solid #eceeea", zIndex: 1 }}
                       >
                         {colPls.map((p) => renderBlock(p, lanes.get(p.id)))}
                         {ghost && ghost.rooms.includes(room.id) && (() => {
