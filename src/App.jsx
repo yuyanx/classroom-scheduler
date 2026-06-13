@@ -2718,6 +2718,7 @@ export default function ClassroomScheduler() {
                 catalog={catalog}
                 placements={placements}
                 days={days}
+                rooms={rooms}
                 idx={idx}
                 onEditClass={(classId) => setEditing({ isNew: false, classId })}
                 onManageTeachers={() => setTeacherMgrOpen(true)}
@@ -2727,6 +2728,7 @@ export default function ClassroomScheduler() {
                 catalog={catalog}
                 placements={placements}
                 days={days}
+                rooms={rooms}
                 idx={idx}
                 onEditClass={(classId) => setEditing({ isNew: false, classId })}
               />
@@ -3288,6 +3290,25 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
   );
 }
 
+// ───────────────────────── Room color legend (shared by overview tabs) ─────────────────────────
+function OverviewRoomLegendBar({ rooms }) {
+  const roomIds = rooms.map((r) => r.id);
+  return (
+    <div style={{ padding: "8px 12px", borderBottom: "1px solid #eceeea", display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", background: "#fafaf8" }}>
+      <span style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Room colors:</span>
+      {rooms.map((r) => {
+        const c = roomOverviewColor(r.id, roomIds);
+        return (
+          <span key={r.id} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: c.text }}>
+            <span style={{ width: 14, height: 14, borderRadius: 4, background: c.bg, border: `1px solid ${c.border}`, flexShrink: 0 }} />
+            Room {r.id}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 // ───────────────────────── Week overview (time × days, room-colored) ─────────────────────────
 function WeekOverviewView({ days, hours, rooms, idx, onEditClass }) {
   const roomIds = rooms.map((r) => r.id);
@@ -3305,18 +3326,7 @@ function WeekOverviewView({ days, hours, rooms, idx, onEditClass }) {
 
   return (
     <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto", width: "100%" }}>
-      <div style={{ padding: "8px 12px", borderBottom: "1px solid #eceeea", display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", background: "#fafaf8" }}>
-        <span style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Room colors:</span>
-        {rooms.map((r) => {
-          const c = roomOverviewColor(r.id, roomIds);
-          return (
-            <span key={r.id} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: c.text }}>
-              <span style={{ width: 14, height: 14, borderRadius: 4, background: c.bg, border: `1px solid ${c.border}`, flexShrink: 0 }} />
-              Room {r.id}
-            </span>
-          );
-        })}
-      </div>
+      <OverviewRoomLegendBar rooms={rooms} />
       <div style={{ minWidth: 64 + days.length * 132, position: "relative" }}>
         <div style={{ display: "flex", borderBottom: "2px solid #d6dad4", background: "#fafaf8" }}>
           <div style={{ flex: "0 0 64px", width: 64, position: "sticky", left: 0, zIndex: 6, background: "#fafaf8", boxSizing: "border-box", padding: "10px 4px", fontSize: 11, fontWeight: 600, color: "#475569", textAlign: "center", boxShadow: "2px 0 4px rgba(15,23,42,.06)" }}>
@@ -3429,7 +3439,8 @@ function WeekOverviewView({ days, hours, rooms, idx, onEditClass }) {
 }
 
 // ───────────────────────── By-class schedule view ─────────────────────────
-function ClassScheduleView({ catalog, placements, days, idx, onEditClass }) {
+function ClassScheduleView({ catalog, placements, days, rooms, idx, onEditClass }) {
+  const roomOrder = rooms.map((r) => r.id);
   const pillClash = (p) => {
     if (!idx) return { roomClash: false, teacherClash: false };
     const cls = idx.catalogById.get(p.classId);
@@ -3447,6 +3458,7 @@ function ClassScheduleView({ catalog, placements, days, idx, onEditClass }) {
   return (
     <>
       <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto", width: "100%" }}>
+        <OverviewRoomLegendBar rooms={rooms} />
         <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 220 + days.length * 155, tableLayout: "fixed" }}>
           <thead>
             <tr>
@@ -3498,10 +3510,12 @@ function ClassScheduleView({ catalog, placements, days, idx, onEditClass }) {
                           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                             {list.map((p) => {
                               const { roomClash, teacherClash } = pillClash(p);
-                              const pill = overviewPillStyle({ start: p.start, roomClash, teacherClash });
+                              const pill = overviewPillStyle({
+                                start: p.start, roomClash, teacherClash, rooms: p.rooms, roomOrder,
+                              });
                               return (
                                 <div key={p.id} style={pill}>
-                                  <span style={{ fontSize: 12, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%" }}>
+                                  <span style={{ fontSize: 12, fontWeight: 700, color: pill.color, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%" }}>
                                     {fmtRange(p.start, p.end)}{(roomClash || teacherClash) ? " ⚠" : ""}
                                   </span>
                                   <span style={{ fontSize: 11, color: pill.color, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%" }}>
@@ -3530,7 +3544,7 @@ function ClassScheduleView({ catalog, placements, days, idx, onEditClass }) {
       </div>
       <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
         📋 One row per class — every meeting time and room across the week.
-        Teal pills are morning (before noon); gray pills are afternoon.
+        Pill colors match the room legend above.
         Red = room overlap · amber = teacher double-booked. Amber rows are not scheduled yet.
       </p>
     </>
@@ -3538,7 +3552,8 @@ function ClassScheduleView({ catalog, placements, days, idx, onEditClass }) {
 }
 
 // ───────────────────────── By-teacher schedule view ─────────────────────────
-function TeacherScheduleView({ teachers, catalog, placements, days, idx, onEditClass, onManageTeachers }) {
+function TeacherScheduleView({ teachers, catalog, placements, days, rooms, idx, onEditClass, onManageTeachers }) {
+  const roomOrder = rooms.map((r) => r.id);
   const classOfId = (id) => catalog.find((k) => k.id === id);
 
   const entriesFor = (key, day) =>
@@ -3571,7 +3586,10 @@ function TeacherScheduleView({ teachers, catalog, placements, days, idx, onEditC
             {list.map(({ p, cls }) => {
               const roomClash = roomClashFor(p);
               const tClash = teacherClash(p);
-              const pill = overviewPillStyle({ start: p.start, roomClash, teacherClash: tClash, clickable: true });
+              const pill = overviewPillStyle({
+                start: p.start, roomClash, teacherClash: tClash, clickable: true,
+                rooms: p.rooms, roomOrder,
+              });
               return (
                 <div
                   key={p.id}
@@ -3615,6 +3633,7 @@ function TeacherScheduleView({ teachers, catalog, placements, days, idx, onEditC
   return (
     <>
       <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto", width: "100%" }}>
+        <OverviewRoomLegendBar rooms={rooms} />
         <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 180 + days.length * 155, tableLayout: "fixed" }}>
           <thead>
             <tr>
@@ -3644,6 +3663,7 @@ function TeacherScheduleView({ teachers, catalog, placements, days, idx, onEditC
       </div>
       <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
         👤 One row per teacher — classes they teach across the week. Click any class card to edit.
+        Pill colors match the room legend above.
         <span style={{ color: "#b91c1c", fontWeight: 700 }}> Red </span>
         = room overlap ·
         <span style={{ color: "#b45309", fontWeight: 700 }}> amber </span>

@@ -315,54 +315,7 @@ export function sortCatalogForByClassView(catalog: { id: string; name: string }[
   });
 }
 
-// ── Overview pill design tokens (UI-002) ──
-export const overviewPillTokens = {
-  room: { border: "#fecaca", bg: "#fee2e2", color: "#b91c1c" },
-  teacher: { border: "#fde68a", bg: "#fffbeb", color: "#b45309" },
-  normal: { border: "#d6dad4", color: "#334155" },
-};
-
-export const overviewPillBg = (startMin: number) => (startMin < 720 ? "#f0fdfa" : "#f8fafc");
-
-export const overviewPillStyle = ({
-  roomClash,
-  teacherClash,
-  clash,
-  start,
-  clickable,
-}: {
-  roomClash?: boolean;
-  teacherClash?: boolean;
-  clash?: boolean;
-  start: number;
-  clickable?: boolean;
-}) => {
-  const hasRoom = !!roomClash;
-  const hasTeacher = !!teacherClash || (!!clash && !hasRoom);
-  const tok = hasRoom ? overviewPillTokens.room : hasTeacher ? overviewPillTokens.teacher : overviewPillTokens.normal;
-  return {
-    display: "inline-flex" as const,
-    flexDirection: "column" as const,
-    gap: 2,
-    maxWidth: "100%",
-    padding: "4px 7px",
-    borderRadius: 6,
-    border: `1px solid ${tok.border}`,
-    background: hasRoom || hasTeacher ? tok.bg : overviewPillBg(start),
-    color: tok.color,
-    lineHeight: 1.25,
-    overflow: "hidden" as const,
-    minHeight: 42,
-    cursor: clickable ? "pointer" : undefined,
-  };
-};
-
-export const overviewRoomLabel = (rooms: string[]) =>
-  `Rm ${[...rooms].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })).join("+")}`;
-
-// ── Week overview calendar (time × days, room-colored blocks) ──
-export const WEEK_OVERVIEW_PX_PER_MIN = 1.0;
-
+// ── Room colors (Week Overview legend + By Class / By Teacher pills) ──
 export const ROOM_OVERVIEW_PALETTE = [
   { bg: "#dbeafe", border: "#93c5fd", text: "#1e40af" },
   { bg: "#ccfbf1", border: "#5eead4", text: "#0f766e" },
@@ -389,6 +342,82 @@ export function primaryRoomForPlacement(rooms: string[], roomOrder: string[]) {
   };
   return [...rooms].sort((a, b) => rank(a) - rank(b))[0] || rooms[0] || "";
 }
+
+// ── Overview pill design tokens (UI-002) ──
+export const overviewPillTokens = {
+  room: { border: "#fecaca", bg: "#fee2e2", color: "#b91c1c" },
+  teacher: { border: "#fde68a", bg: "#fffbeb", color: "#b45309" },
+  normal: { border: "#d6dad4", color: "#334155" },
+};
+
+export const overviewPillBg = (startMin: number) => (startMin < 720 ? "#f0fdfa" : "#f8fafc");
+
+export const overviewPillStyle = ({
+  roomClash,
+  teacherClash,
+  clash,
+  start,
+  clickable,
+  rooms,
+  roomOrder,
+}: {
+  roomClash?: boolean;
+  teacherClash?: boolean;
+  clash?: boolean;
+  start: number;
+  clickable?: boolean;
+  rooms?: string[];
+  roomOrder?: string[];
+}) => {
+  const hasRoom = !!roomClash;
+  const hasTeacher = !!teacherClash || (!!clash && !hasRoom);
+  let bg: string;
+  let border: string;
+  let color: string;
+  let borderWidth = "1px";
+  if (hasRoom) {
+    bg = overviewPillTokens.room.bg;
+    border = "#dc2626";
+    color = overviewPillTokens.room.color;
+    borderWidth = "2px";
+  } else if (hasTeacher) {
+    bg = overviewPillTokens.teacher.bg;
+    border = "#d97706";
+    color = overviewPillTokens.teacher.color;
+    borderWidth = "2px";
+  } else if (rooms?.length && roomOrder?.length) {
+    const primaryRoom = primaryRoomForPlacement(rooms, roomOrder);
+    const rc = roomOverviewColor(primaryRoom, roomOrder);
+    bg = rc.bg;
+    border = rc.border;
+    color = rc.text;
+  } else {
+    bg = overviewPillBg(start);
+    border = overviewPillTokens.normal.border;
+    color = overviewPillTokens.normal.color;
+  }
+  return {
+    display: "inline-flex" as const,
+    flexDirection: "column" as const,
+    gap: 2,
+    maxWidth: "100%",
+    padding: "4px 7px",
+    borderRadius: 6,
+    border: `${borderWidth} solid ${border}`,
+    background: bg,
+    color,
+    lineHeight: 1.25,
+    overflow: "hidden" as const,
+    minHeight: 42,
+    cursor: clickable ? "pointer" : undefined,
+  };
+};
+
+export const overviewRoomLabel = (rooms: string[]) =>
+  `Rm ${[...rooms].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })).join("+")}`;
+
+// ── Week overview calendar (time × days, room-colored blocks) ──
+export const WEEK_OVERVIEW_PX_PER_MIN = 1.0;
 
 export function computeWeekOverviewLayout(
   days: string[],
