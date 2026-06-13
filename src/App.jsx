@@ -2795,6 +2795,7 @@ export default function ClassroomScheduler() {
                 catalog={catalog}
                 placements={placements}
                 days={days}
+                hours={hours}
                 rooms={rooms}
                 idx={idx}
                 onEditClass={(classId) => setEditing({ isNew: false, classId })}
@@ -3851,16 +3852,17 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
 }
 
 // ───────────────────────── By-teacher schedule view ─────────────────────────
-function TeacherScheduleView({ teachers, catalog, placements, days, rooms, idx, onEditClass, onManageTeachers }) {
+const BY_TEACHER_LABEL_W = 180;
+
+function TeacherScheduleView({ teachers, catalog, placements, days, hours, rooms, idx, onEditClass, onManageTeachers }) {
   const roomOrder = rooms.map((r) => r.id);
   const classOfId = (id) => catalog.find((k) => k.id === id);
 
-  const entriesFor = (key, day) =>
-    placements
-      .filter((p) => p.day === day)
-      .map((p) => ({ p, cls: classOfId(p.classId) }))
-      .filter(({ cls }) => cls && teacherKey(cls.teacher) === key)
-      .sort((a, b) => a.p.start - b.p.start);
+  const layout = useMemo(
+    () => computeWeekOverviewLayout(days, hours, idx.placementsByDay, BY_CLASS_PX_PER_MIN),
+    [days, hours, idx.placementsByDay]
+  );
+  const { gridStart, gridEnd, gridH, hourMarks, halfMarks } = layout;
 
   const classesFor = (key) =>
     catalog
@@ -3869,111 +3871,277 @@ function TeacherScheduleView({ teachers, catalog, placements, days, rooms, idx, 
   const tbdClasses = catalog.filter((k) => !teacherKey(k.teacher)).sort((a, b) => a.name.localeCompare(b.name));
   const tbdHasAny = tbdClasses.length > 0;
 
-  const renderCell = (list, day) => {
-    const teacherClash = (p) => list.some(({ p: o }) => o.id !== p.id && o.start < p.end && p.start < o.end);
-    const roomClashFor = (p) => {
-      if (!idx) return false;
-      const ev = evaluatePlacement(idx, { day: p.day, start: p.start, end: p.end, rooms: p.rooms }, { excludePlacementId: p.id, teacher: classOfId(p.classId)?.teacher });
-      return ev.roomClashes.length > 0;
+  const blocksForTeacher = (tKey) =>
+    placements
+      .map((p) => ({ p, cls: classOfId(p.classId) }))
+      .filter(({ cls }) => cls && teacherKey(cls.teacher) === tKey)
+      .map(({ p, cls }) => ({
+        placementId: p.id,
+        classId: cls.id,
+        cls,
+        start: p.start,
+        end: p.end,
+        rooms: p.rooms,
+        day: p.day,
+      }));
+
+  const buildRoomGrid = (blocks) => {
+    const singleByRoom = new Map();
+    const spanBlocks = [];
+    rooms.forEach((r) => singleByRoom.set(r.id, []));
+    blocks.forEach((b) => {
+      if (b.rooms.length > 1) spanBlocks.push(b);
+      else {
+        const rid = b.rooms[0] || primaryRoomForPlacement(b.rooms, roomOrder);
+        if (singleByRoom.has(rid)) singleByRoom.get(rid).push(b);
+      }
+    });
+    const lanesByRoom = new Map();
+    rooms.forEach((r) => {
+      const list = singleByRoom.get(r.id) || [];
+      lanesByRoom.set(r.id, layoutLanes(list.map((b) => ({ id: b.placementId, start: b.start, end: b.end }))));
+    });
+    const spanLanes = layoutLanes(spanBlocks.map((b) => ({ id: b.placementId, start: b.start, end: b.end })));
+    return { singleByRoom, spanBlocks, lanesByRoom, spanLanes };
+  };
+
+  const spanBlockGeometry = (blockRooms, lane, laneCount) => {
+    const indices = blockRooms
+      .map((id) => rooms.findIndex((r) => r.id === id))
+      .filter((i) => i >= 0)
+      .sort((a, b) => a - b);
+    if (!indices.length) return null;
+    const colStart = indices[0];
+    const colEnd = indices[indices.length - 1];
+    const n = rooms.length;
+    const spanFrac = (colEnd - colStart + 1) / n;
+    const startFrac = colStart / n;
+    return {
+      left: `calc(${(startFrac + (lane / laneCount) * spanFrac) * 100}% + 4px)`,
+      width: `calc(${(spanFrac * 100) / laneCount}% - 8px)`,
+    };
+  };
+
+  const placementClash = (block, allBlocks) => {
+    let roomClash = false;
+    let teacherClash = false;
+    if (idx) {
+      const ev = evaluatePlacement(
+        idx,
+        { day: block.day, start: block.start, end: block.end, rooms: block.rooms },
+        { excludePlacementId: block.placementId, teacher: block.cls?.teacher }
+      );
+      roomClash = ev.roomClashes.length > 0;
+    }
+    teacherClash = allBlocks.some(
+      (b) => b.placementId !== block.placementId && b.start < block.end && block.start < b.end
+    );
+    return { roomClash, teacherClash };
+  };
+
+  const renderBlock = (block, colorRoomId, laneInfo, geom, allBlocks) => {
+    const { cls, classId, placementId, start, end, rooms: blockRooms, day } = block;
+    const { lane, lanes: laneCount } = laneInfo || { lane: 0, lanes: 1 };
+    const top = (start - gridStart) * BY_CLASS_PX_PER_MIN;
+    const h = Math.max(14, (end - start) * BY_CLASS_PX_PER_MIN - 6);
+    const rc = roomOverviewColor(colorRoomId, roomOrder);
+    const { roomClash, teacherClash } = placementClash(block, allBlocks);
+    const compact = laneCount > 1;
+    const metaFs = compact ? 10 : 11;
+    const metaLine = {
+      fontSize: metaFs,
+      lineHeight: 1.2,
+      whiteSpace: "nowrap",
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      minWidth: 0,
+    };
+    const pos = geom || {
+      left: `calc(${(lane / laneCount) * 100}% + 4px)`,
+      width: `calc(${100 / laneCount}% - 8px)`,
     };
     return (
-      <td key={day} style={{ ...tdStyle, verticalAlign: "top" }}>
-        {list.length === 0 ? (
-          <span style={{ color: "#cbd5d1", fontSize: 12 }}>—</span>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            {list.map(({ p, cls }) => {
-              const roomClash = roomClashFor(p);
-              const tClash = teacherClash(p);
-              const pill = overviewPillStyle({
-                start: p.start, roomClash, teacherClash: tClash, clickable: true,
-                rooms: p.rooms, roomOrder,
-              });
-              return (
-                <div
-                  key={p.id}
-                  onClick={() => onEditClass(cls.id)}
-                  title={roomClash ? "Room overlap — click to edit" : tClash ? "Teacher double-booked — click to edit" : "Click to edit this class"}
-                  style={pill}
-                >
-                  <span style={{ fontSize: 12, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%", color: pill.color }}>
-                    {cls.name}{(roomClash || tClash) ? " ⚠" : ""}
-                  </span>
-                  <span style={{ fontSize: 11, color: pill.color, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%" }}>
-                    {fmtRange(p.start, p.end)} · {overviewRoomLabel(p.rooms)}
-                  </span>
-                </div>
-              );
-            })}
+      <div
+        key={placementId || classId}
+        onClick={(e) => { e.stopPropagation(); onEditClass(cls.id); }}
+        title={`${cls.name} · ${DAY_LABEL[day]} ${fmtRangeAmPm(start, end)} · ${overviewRoomLabel(blockRooms)} — click to edit`}
+        style={{
+          position: "absolute",
+          top: top + 3,
+          height: h,
+          left: pos.left,
+          width: pos.width,
+          boxSizing: "border-box",
+          zIndex: geom ? 2 : 1,
+          background: roomClash ? "#fee2e2" : teacherClash ? "#fffbeb" : rc.bg,
+          border: roomClash ? "2px solid #dc2626" : teacherClash ? "2px solid #d97706" : `1px solid ${rc.border}`,
+          boxShadow: roomClash
+            ? "0 0 0 3px rgba(220,38,38,.12)"
+            : teacherClash
+              ? "0 0 0 3px rgba(217,119,6,.12)"
+              : "none",
+          borderRadius: 8,
+          padding: compact ? "3px 5px 6px" : "4px 7px 9px",
+          overflow: "hidden",
+          cursor: "pointer",
+          pointerEvents: geom ? "auto" : undefined,
+          color: rc.text,
+          display: "flex",
+          flexDirection: "column",
+          gap: compact ? 1 : 2,
+        }}
+      >
+        <div style={{ fontWeight: 700, fontSize: compact ? 11 : 12.5, lineHeight: 1.2, overflowWrap: "anywhere", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: compact ? 1 : 2, WebkitBoxOrient: "vertical" }}>
+          {cls.name}{(roomClash || teacherClash) ? " ⚠" : ""}
+        </div>
+        {h >= 32 && (
+          <div style={{ ...metaLine, color: "#475569" }}>
+            {fmtRangeAmPm(start, end)}
           </div>
         )}
-      </td>
+        {h >= 44 && (
+          <div style={{ ...metaLine, color: "#0f766e" }}>
+            {DAY_LABEL[day]}
+          </div>
+        )}
+      </div>
     );
   };
 
-  const renderRow = (label, key, classList, highlight) => (
-    <tr key={label}>
-      <td style={{ ...tdStyle, position: "sticky", left: 0, background: "#fafaf8", zIndex: 1, verticalAlign: "top" }}>
-        <div style={{ fontWeight: 700, fontSize: 13, color: highlight ? "#b45309" : "#123c3a", whiteSpace: "nowrap" }}>{label}</div>
-        {classList.length === 0 ? (
-          <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>—</div>
-        ) : (
-          classList.map((k) => (
-            <div key={k.id} style={{ fontSize: 11, color: "#64748b", marginTop: 2, lineHeight: 1.35, overflowWrap: "anywhere" }}>
-              {k.name}
+  const renderTeacherBand = (label, tKey, classList, highlight) => {
+    const blocks = blocksForTeacher(tKey);
+    const roomGrid = buildRoomGrid(blocks);
+    return (
+      <div key={label} style={{ display: "flex", borderTop: "1px solid #eceeea" }}>
+        <div
+          style={{
+            flex: `0 0 ${BY_TEACHER_LABEL_W}px`,
+            width: BY_TEACHER_LABEL_W,
+            position: "sticky",
+            left: 0,
+            zIndex: 3,
+            background: "#fafaf8",
+            boxSizing: "border-box",
+            padding: "10px 10px 12px",
+            borderRight: "1px solid #eceeea",
+            verticalAlign: "top",
+          }}
+        >
+          <div style={{ fontWeight: 700, fontSize: 13, color: highlight ? "#b45309" : "#123c3a", overflowWrap: "anywhere" }}>{label}</div>
+          {classList.length === 0 ? (
+            <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>—</div>
+          ) : (
+            classList.map((k) => (
+              <div key={k.id} style={{ fontSize: 11, color: "#64748b", marginTop: 4, lineHeight: 1.35, overflowWrap: "anywhere" }}>
+                {k.name}
+              </div>
+            ))
+          )}
+        </div>
+        <div style={{ flex: 1, display: "flex", position: "relative", minWidth: 64 + rooms.length * BY_CLASS_ROOM_MIN_W }}>
+          <div style={{ flex: "0 0 64px", width: 64, position: "sticky", left: BY_TEACHER_LABEL_W, zIndex: 2, background: "#fafaf8", height: gridH, boxSizing: "border-box", borderRight: "1px solid #eceeea" }}>
+            {hourMarks.map((t) => (
+              <div
+                key={t}
+                style={{
+                  position: "absolute",
+                  top: (t - gridStart) * BY_CLASS_PX_PER_MIN,
+                  right: 4,
+                  transform: t === gridStart ? "translateY(2px)" : t === gridEnd ? "translateY(calc(-100% - 2px))" : "translateY(-50%)",
+                  fontSize: 10,
+                  fontWeight: 700,
+                  color: "#94a3b8",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {fmtAmPm(t)}
+              </div>
+            ))}
+          </div>
+          <div style={{ flex: 1, display: "flex", position: "relative", minWidth: rooms.length * BY_CLASS_ROOM_MIN_W }}>
+            <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 0 }}>
+              {hourMarks.map((t) => (
+                <div key={t} style={{ position: "absolute", left: 0, right: 0, top: (t - gridStart) * BY_CLASS_PX_PER_MIN, borderTop: "1px solid #eceeea" }} />
+              ))}
+              {halfMarks.map((t) => (
+                <div key={t} style={{ position: "absolute", left: 0, right: 0, top: (t - gridStart) * BY_CLASS_PX_PER_MIN, borderTop: "1px dashed #f0f2ee" }} />
+              ))}
             </div>
-          ))
-        )}
-      </td>
-      {days.map((d) => renderCell(entriesFor(key, d), d))}
-    </tr>
-  );
+            {rooms.map((room) => {
+              const colBlocks = roomGrid.singleByRoom.get(room.id) || [];
+              const lanes = roomGrid.lanesByRoom.get(room.id) || new Map();
+              return (
+                <div
+                  key={room.id}
+                  style={{ flex: 1, minWidth: BY_CLASS_ROOM_MIN_W, position: "relative", height: gridH, boxSizing: "border-box", borderLeft: "1px solid #eceeea", background: "#fcfcfb", zIndex: 1 }}
+                >
+                  {colBlocks.map((b) => renderBlock(b, room.id, lanes.get(b.placementId), null, blocks))}
+                </div>
+              );
+            })}
+            <div style={{ position: "absolute", inset: 0, zIndex: 2, pointerEvents: "none" }}>
+              {roomGrid.spanBlocks.map((b) => {
+                const laneInfo = roomGrid.spanLanes.get(b.placementId) || { lane: 0, lanes: 1 };
+                const geom = spanBlockGeometry(b.rooms, laneInfo.lane, laneInfo.lanes);
+                if (!geom) return null;
+                return renderBlock(b, primaryRoomForPlacement(b.rooms, roomOrder), laneInfo, geom, blocks);
+              })}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <>
       <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto", width: "100%" }}>
-        <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 180 + days.length * 155, tableLayout: "fixed" }}>
-          <thead>
-            <tr>
-              <th style={{ ...thStyle, width: 180, position: "sticky", left: 0, background: "#fafaf8", zIndex: 2, verticalAlign: "middle" }}>
-                <button
-                  type="button"
-                  onClick={onManageTeachers}
-                  style={{
-                    ...btnGhost,
-                    color: "#123c3a",
-                    borderColor: "#cbd5d1",
-                    background: "#fff",
-                    fontSize: 12,
-                    fontWeight: 600,
-                    padding: "5px 12px",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  Manage teachers
-                </button>
-              </th>
-              {days.map((d) => (
-                <th key={d} style={thStyle}>{DAY_LABEL[d]}</th>
+        <div style={{ minWidth: BY_TEACHER_LABEL_W + 64 + rooms.length * BY_CLASS_ROOM_MIN_W, position: "relative" }}>
+          <div style={{ display: "flex", borderBottom: "2px solid #d6dad4", background: "#fafaf8" }}>
+            <div style={{ flex: `0 0 ${BY_TEACHER_LABEL_W}px`, width: BY_TEACHER_LABEL_W, position: "sticky", left: 0, zIndex: 4, background: "#fafaf8", boxSizing: "border-box", padding: "10px 10px", borderRight: "1px solid #eceeea" }}>
+              <button
+                type="button"
+                onClick={onManageTeachers}
+                style={{
+                  ...btnGhost,
+                  color: "#123c3a",
+                  borderColor: "#cbd5d1",
+                  background: "#fff",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  padding: "5px 12px",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Manage teachers
+              </button>
+            </div>
+            <div style={{ flex: 1, display: "flex", minWidth: 64 + rooms.length * BY_CLASS_ROOM_MIN_W }}>
+              <div style={{ flex: "0 0 64px", width: 64, position: "sticky", left: BY_TEACHER_LABEL_W, zIndex: 4, background: "#fafaf8", boxSizing: "border-box", padding: "10px 6px", fontSize: 12, fontWeight: 600, color: "#475569", textAlign: "center", borderRight: "1px solid #eceeea" }}>
+                Time
+              </div>
+              {rooms.map((r) => (
+                <div key={r.id} style={{ flex: 1, minWidth: BY_CLASS_ROOM_MIN_W, boxSizing: "border-box", padding: "8px 4px 9px", textAlign: "center", borderLeft: "1px solid #eceeea" }}>
+                  <div style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+                    <RoomHeaderBadge roomId={r.id} roomOrder={roomOrder} />
+                    <span style={{ fontSize: 11, color: "#64748b", fontWeight: 700 }}>Cap {r.cap}</span>
+                  </div>
+                </div>
               ))}
-            </tr>
-          </thead>
-          <tbody>
-            {teachers.map((t) => renderRow(t, teacherKey(t), classesFor(teacherKey(t)), false))}
-            {tbdHasAny && renderRow("(Teacher TBD)", "", tbdClasses, true)}
-            {teachers.length === 0 && !tbdHasAny && (
-              <tr>
-                <td colSpan={days.length + 1} style={{ ...tdStyle, color: "#94a3b8", fontSize: 13 }}>
-                  No teachers yet — assign teachers to classes, or add them here.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+            </div>
+          </div>
+          {teachers.map((t) => renderTeacherBand(t, teacherKey(t), classesFor(teacherKey(t)), false))}
+          {tbdHasAny && renderTeacherBand("(Teacher TBD)", "", tbdClasses, true)}
+          {teachers.length === 0 && !tbdHasAny && (
+            <div style={{ padding: "16px 20px", color: "#94a3b8", fontSize: 13 }}>
+              No teachers yet — assign teachers to classes, or add them here.
+            </div>
+          )}
+        </div>
       </div>
       <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
-        👤 One row per teacher — classes they teach across the week. Click any class card to edit.
-        Pill colors match each room.
+        👤 One row per teacher — time ({fmtAmPm(gridStart)}–{fmtAmPm(gridEnd)}) × rooms. Each block shows class, time, and day.
+        Card colors match room columns.
         <span style={{ color: "#b91c1c", fontWeight: 700 }}> Red </span>
         = room overlap ·
         <span style={{ color: "#b45309", fontWeight: 700 }}> amber </span>
