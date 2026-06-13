@@ -3838,25 +3838,23 @@ function TeacherScheduleView({ teachers, catalog, placements, days, rooms, idx, 
         <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 180 + days.length * 155, tableLayout: "fixed" }}>
           <thead>
             <tr>
-              <th style={{ ...thStyle, width: 180, position: "sticky", left: 0, background: "#fafaf8", zIndex: 2, verticalAlign: "top" }}>
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
-                  <span>Teacher</span>
-                  <button
-                    type="button"
-                    onClick={onManageTeachers}
-                    style={{
-                      ...btnGhost,
-                      color: "#123c3a",
-                      borderColor: "#cbd5d1",
-                      background: "#fff",
-                      fontSize: 11,
-                      padding: "4px 10px",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    Manage teachers
-                  </button>
-                </div>
+              <th style={{ ...thStyle, width: 180, position: "sticky", left: 0, background: "#fafaf8", zIndex: 2, verticalAlign: "middle" }}>
+                <button
+                  type="button"
+                  onClick={onManageTeachers}
+                  style={{
+                    ...btnGhost,
+                    color: "#123c3a",
+                    borderColor: "#cbd5d1",
+                    background: "#fff",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    padding: "5px 12px",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  Manage teachers
+                </button>
               </th>
               {days.map((d) => (
                 <th key={d} style={thStyle}>{DAY_LABEL[d]}</th>
