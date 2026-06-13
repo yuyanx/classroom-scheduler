@@ -3483,16 +3483,41 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
   }, [catalog, placements, idx.scheduledClassIds, roomOrder]);
 
   const roomGrid = useMemo(() => {
-    const colByRoom = new Map();
+    const singleByRoom = new Map();
+    const spanBlocks = [];
+    rooms.forEach((r) => singleByRoom.set(r.id, []));
+    classBlocks.forEach((b) => {
+      if (b.rooms.length > 1) spanBlocks.push(b);
+      else {
+        const rid = b.rooms[0] || b.roomId;
+        if (singleByRoom.has(rid)) singleByRoom.get(rid).push(b);
+      }
+    });
     const lanesByRoom = new Map();
     rooms.forEach((r) => {
-      const colBlocks = classBlocks.filter((b) => b.roomId === r.id);
-      const laneItems = colBlocks.map((b) => ({ id: b.classId, start: b.start, end: b.end }));
-      colByRoom.set(r.id, colBlocks);
-      lanesByRoom.set(r.id, layoutLanes(laneItems));
+      const list = singleByRoom.get(r.id) || [];
+      lanesByRoom.set(r.id, layoutLanes(list.map((b) => ({ id: b.classId, start: b.start, end: b.end }))));
     });
-    return { colByRoom, lanesByRoom };
+    const spanLanes = layoutLanes(spanBlocks.map((b) => ({ id: b.classId, start: b.start, end: b.end })));
+    return { singleByRoom, spanBlocks, lanesByRoom, spanLanes };
   }, [classBlocks, rooms]);
+
+  const spanBlockGeometry = (blockRooms, lane, laneCount) => {
+    const indices = blockRooms
+      .map((id) => rooms.findIndex((r) => r.id === id))
+      .filter((i) => i >= 0)
+      .sort((a, b) => a - b);
+    if (!indices.length) return null;
+    const colStart = indices[0];
+    const colEnd = indices[indices.length - 1];
+    const n = rooms.length;
+    const spanFrac = (colEnd - colStart + 1) / n;
+    const startFrac = colStart / n;
+    return {
+      left: `calc(${(startFrac + (lane / laneCount) * spanFrac) * 100}% + 4px)`,
+      width: `calc(${(spanFrac * 100) / laneCount}% - 8px)`,
+    };
+  };
 
   const unscheduled = useMemo(
     () => sortCatalogForByClassView(catalog, placements).filter((k) => !idx.scheduledClassIds?.has(k.id)),
@@ -3516,7 +3541,7 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
     return { roomClash, teacherClash };
   };
 
-  const renderBlock = (block, roomId, laneInfo) => {
+  const renderBlock = (block, colorRoomId, laneInfo, geom) => {
     const { cls, classId, start, end, rooms: blockRooms, groups } = block;
     const { lane, lanes: laneCount } = laneInfo || { lane: 0, lanes: 1 };
     const top = (start - gridStart) * BY_CLASS_PX_PER_MIN;
@@ -3524,12 +3549,15 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
     const cap = capOfRooms(blockRooms);
     const col = ratioColor(cls.reg, cap);
     const pct = cap ? Math.min(100, Math.round((cls.reg / cap) * 100)) : 0;
-    const rc = roomOverviewColor(roomId, roomOrder);
+    const rc = roomOverviewColor(colorRoomId, roomOrder);
     const { roomClash, teacherClash } = classClash(cls);
-    const combined = blockRooms.length > 1;
     const singleGroup = groups.length === 1;
     const summary = groups.map((g) => `${g.dayLabel} ${g.timeLabel}`).join(" · ");
     const teacherLabel = cls.teacher || <i style={{ color: "#b45309" }}>TBD</i>;
+    const pos = geom || {
+      left: `calc(${(lane / laneCount) * 100}% + 4px)`,
+      width: `calc(${100 / laneCount}% - 8px)`,
+    };
     return (
       <div
         key={classId}
@@ -3539,10 +3567,10 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
           position: "absolute",
           top: top + 3,
           height: h,
-          left: `calc(${(lane / laneCount) * 100}% + 4px)`,
-          width: `calc(${100 / laneCount}% - 8px)`,
+          left: pos.left,
+          width: pos.width,
           boxSizing: "border-box",
-          zIndex: 1,
+          zIndex: geom ? 2 : 1,
           background: roomClash ? "#fee2e2" : teacherClash ? "#fffbeb" : rc.bg,
           border: roomClash ? "2px solid #dc2626" : teacherClash ? "2px solid #d97706" : `1px solid ${rc.border}`,
           boxShadow: roomClash
@@ -3554,6 +3582,7 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
           padding: "4px 7px 9px",
           overflow: "hidden",
           cursor: "pointer",
+          pointerEvents: geom ? "auto" : undefined,
           color: rc.text,
           display: "flex",
           flexDirection: "column",
@@ -3589,14 +3618,6 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
           {!singleGroup && h >= 56 && (
             <div style={{ fontSize: 11, color: "#475569", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
               {teacherLabel}
-            </div>
-          )}
-          {combined && h >= 44 && (
-            <div
-              style={{ fontSize: 10.5, color: "#7c3aed", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
-              title={`Uses Rooms ${overviewRoomLabel(blockRooms)}`}
-            >
-              ⇆ Rm {overviewRoomLabel(blockRooms)} combined
             </div>
           )}
         </div>
@@ -3661,26 +3682,36 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
                 </div>
               ))}
             </div>
-            <div style={{ position: "absolute", left: 64, right: 0, top: 0, height: gridH, pointerEvents: "none" }}>
-              {hourMarks.map((t) => (
-                <div key={t} style={{ position: "absolute", left: 0, right: 0, top: (t - gridStart) * BY_CLASS_PX_PER_MIN, borderTop: "1px solid #eceeea" }} />
-              ))}
-              {halfMarks.map((t) => (
-                <div key={t} style={{ position: "absolute", left: 0, right: 0, top: (t - gridStart) * BY_CLASS_PX_PER_MIN, borderTop: "1px dashed #f0f2ee" }} />
-              ))}
+            <div style={{ flex: 1, display: "flex", position: "relative", minWidth: rooms.length * BY_CLASS_ROOM_MIN_W }}>
+              <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 0 }}>
+                {hourMarks.map((t) => (
+                  <div key={t} style={{ position: "absolute", left: 0, right: 0, top: (t - gridStart) * BY_CLASS_PX_PER_MIN, borderTop: "1px solid #eceeea" }} />
+                ))}
+                {halfMarks.map((t) => (
+                  <div key={t} style={{ position: "absolute", left: 0, right: 0, top: (t - gridStart) * BY_CLASS_PX_PER_MIN, borderTop: "1px dashed #f0f2ee" }} />
+                ))}
+              </div>
+              {rooms.map((room) => {
+                const colBlocks = roomGrid.singleByRoom.get(room.id) || [];
+                const lanes = roomGrid.lanesByRoom.get(room.id) || new Map();
+                return (
+                  <div
+                    key={room.id}
+                    style={{ flex: 1, minWidth: BY_CLASS_ROOM_MIN_W, position: "relative", height: gridH, boxSizing: "border-box", borderLeft: "1px solid #eceeea", background: "#fcfcfb", zIndex: 1 }}
+                  >
+                    {colBlocks.map((b) => renderBlock(b, room.id, lanes.get(b.classId)))}
+                  </div>
+                );
+              })}
+              <div style={{ position: "absolute", inset: 0, zIndex: 2, pointerEvents: "none" }}>
+                {roomGrid.spanBlocks.map((b) => {
+                  const laneInfo = roomGrid.spanLanes.get(b.classId) || { lane: 0, lanes: 1 };
+                  const geom = spanBlockGeometry(b.rooms, laneInfo.lane, laneInfo.lanes);
+                  if (!geom) return null;
+                  return renderBlock(b, primaryRoomForPlacement(b.rooms, roomOrder), laneInfo, geom);
+                })}
+              </div>
             </div>
-            {rooms.map((room) => {
-              const colBlocks = roomGrid.colByRoom.get(room.id) || [];
-              const lanes = roomGrid.lanesByRoom.get(room.id) || new Map();
-              return (
-                <div
-                  key={room.id}
-                  style={{ flex: 1, minWidth: BY_CLASS_ROOM_MIN_W, position: "relative", height: gridH, boxSizing: "border-box", borderLeft: "1px solid #eceeea", background: "#fcfcfb" }}
-                >
-                  {colBlocks.map((b) => renderBlock(b, room.id, lanes.get(b.classId)))}
-                </div>
-              );
-            })}
           </div>
         </div>
       </div>
