@@ -65,12 +65,20 @@ export function packRowData(schedule, { name, kind, createdAt }) {
   };
 }
 
+/** Only row id=1 is Default; legacy v2 rows elsewhere are editable Plans. */
+export function resolvePlanKind(planId, unpacked) {
+  if (planId === 1) return PLAN_KIND.LIVE;
+  if (unpacked.planVersion === 2) return PLAN_KIND.PLAN;
+  if (unpacked.kind === PLAN_KIND.LIVE) return PLAN_KIND.PLAN;
+  return unpacked.kind || PLAN_KIND.PLAN;
+}
+
 export function planRowToMeta(row) {
   const u = unpackRowData(row.data);
   return {
     id: row.id,
     name: u.name || (row.id === 1 ? "Main schedule" : `Plan ${row.id}`),
-    kind: row.id === 1 && u.planVersion === 2 ? PLAN_KIND.LIVE : u.kind,
+    kind: resolvePlanKind(row.id, u),
     updated_at: row.updated_at,
     planVersion: u.planVersion === PLAN_VERSION ? PLAN_VERSION : 2,
   };
@@ -83,7 +91,7 @@ export function isPlanReadOnly(kind) {
 /** Default / main schedule — must not be deleted. */
 export function isProtectedPlan(plan) {
   if (!plan) return false;
-  return plan.kind === PLAN_KIND.LIVE || plan.id === 1;
+  return plan.id === 1;
 }
 
 export function getActivePlanId() {
@@ -185,7 +193,7 @@ export function listPlansFromLocalStore(store) {
       return {
         id: p.id,
         name: p.name || u.name,
-        kind: p.kind || u.kind,
+        kind: resolvePlanKind(p.id, u),
         updated_at: p.updated_at || null,
         planVersion: u.planVersion === PLAN_VERSION ? PLAN_VERSION : 2,
       };

@@ -16,6 +16,7 @@ import {
   unpackRowData,
   packRowData,
   planRowToMeta,
+  resolvePlanKind,
   isPlanReadOnly,
   isProtectedPlan,
   getActivePlanId,
@@ -1008,8 +1009,6 @@ function clearScheduleAndCounts(data) {
   };
 }
 
-const isDefaultLivePlan = (meta) => meta?.kind === PLAN_KIND.LIVE;
-
 // ───────────────────────── Shared storage (Supabase) ─────────────────────────
 // One shared schedule for everyone. The anon key is designed to be public; what
 // it can do is limited by the table's RLS policies. Empty key = browser-only mode.
@@ -1055,7 +1054,7 @@ function planMetaFromRow(row) {
   const u = unpackRowData(row.data);
   return {
     name: u.name || (row.id === 1 ? "Main schedule" : `Plan ${row.id}`),
-    kind: row.id === 1 && u.planVersion === 2 ? PLAN_KIND.LIVE : u.kind,
+    kind: resolvePlanKind(row.id, u),
     createdAt: u.createdAt || null,
   };
 }
@@ -1064,7 +1063,7 @@ function planMetaFromLocalRow(row) {
   const u = unpackRowData(row.data);
   return {
     name: row.name || u.name || `Plan ${row.id}`,
-    kind: row.kind || u.kind,
+    kind: resolvePlanKind(row.id, u),
     createdAt: row.createdAt || u.createdAt || null,
   };
 }
@@ -2108,7 +2107,7 @@ export default function ClassroomScheduler() {
     setTeacherMgrOpen(false);
   };
 
-  const resettingDefaultPlan = isDefaultLivePlan(planMeta);
+  const resettingDefaultPlan = activePlanId === 1;
 
   const resetAll = () => {
     if (resettingDefaultPlan) {

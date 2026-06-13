@@ -6,6 +6,7 @@ import {
   unpackRowData,
   packRowData,
   planRowToMeta,
+  resolvePlanKind,
   isPlanReadOnly,
   isProtectedPlan,
   defaultPlanName,
@@ -57,6 +58,19 @@ test("planRowToMeta maps legacy row id=1 to live", () => {
   assert.equal(meta.planVersion, 2);
 });
 
+test("planRowToMeta maps legacy v2 row id!=1 to Plan not Default", () => {
+  const meta = planRowToMeta({ id: 999, data: sampleSchedule, updated_at: "2026-06-01" });
+  assert.equal(meta.kind, PLAN_KIND.PLAN);
+  assert.equal(kindLabel(meta.kind), "Plan");
+  assert.equal(meta.name, "Plan 999");
+});
+
+test("resolvePlanKind only id=1 is Default", () => {
+  const legacy = unpackRowData(sampleSchedule);
+  assert.equal(resolvePlanKind(1, legacy), PLAN_KIND.LIVE);
+  assert.equal(resolvePlanKind(999, legacy), PLAN_KIND.PLAN);
+});
+
 test("isPlanReadOnly only for archive", () => {
   assert.equal(isPlanReadOnly(PLAN_KIND.ARCHIVE), true);
   assert.equal(isPlanReadOnly(PLAN_KIND.LIVE), false);
@@ -69,6 +83,7 @@ test("isProtectedPlan guards default schedule", () => {
   assert.equal(isProtectedPlan({ id: 1, kind: PLAN_KIND.PLAN }), true);
   assert.equal(isProtectedPlan({ id: 2, kind: PLAN_KIND.PLAN }), false);
   assert.equal(isProtectedPlan({ id: 2, kind: PLAN_KIND.ARCHIVE }), false);
+  assert.equal(isProtectedPlan({ id: 999, kind: PLAN_KIND.LIVE }), false);
 });
 
 test("local plan store create, list, rename, delete", () => {
