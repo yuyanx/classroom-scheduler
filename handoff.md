@@ -347,6 +347,8 @@ app runs exactly as the old browser-only version.
   fixed counter footer so signed-up counts and capacity bars never overflow the card at narrow
   widths; secondary lines ellipsis; combined-room label shortened to "Rm 2+3"; hide +/- steppers in
   side-by-side conflict lanes; first/last hour labels no longer clip at the grid edge.
+- 2026-06-12 — **fix blank localhost after perf patch**: `updateSaveStatus` must be defined
+  before `queueLocalSave` (TDZ ReferenceError crashed React mount).
 - 2026-06-12 — **performance indexes + drag throttle**: schedule Maps/memos, rAF ghost/resize
   previews, debounced local saves, skip redundant remote poll updates.
 - 2026-06-12 — **production snapshot seed**: `LIVE_V1_SEED` from live Supabase (classes, teachers,

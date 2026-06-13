@@ -1197,6 +1197,18 @@ export default function ClassroomScheduler() {
     });
   }, []);
 
+  const timeLabel = () => new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+  const updateSaveStatus = useCallback((result) => {
+    const now = new Date();
+    setSaveStatus({
+      ok: result.ok,
+      lastSavedAt: result.ok ? now : null,
+      error: result.error || "",
+      label: result.ok ? `Saved to this browser at ${now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "Not saved",
+    });
+  }, []);
+
   const flushLocalSave = useCallback((payload) => {
     clearTimeout(localSaveTimer.current);
     localSaveTimer.current = null;
@@ -1210,18 +1222,6 @@ export default function ClassroomScheduler() {
       updateSaveStatus(saveData(payload));
     }, 200);
   }, [updateSaveStatus]);
-
-  const timeLabel = () => new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-
-  const updateSaveStatus = useCallback((result) => {
-    const now = new Date();
-    setSaveStatus({
-      ok: result.ok,
-      lastSavedAt: result.ok ? now : null,
-      error: result.error || "",
-      label: result.ok ? `Saved to this browser at ${now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "Not saved",
-    });
-  }, []);
 
   const setStatus = (ok, label, error = "") =>
     setSaveStatus({ ok, lastSavedAt: ok ? new Date() : null, error, label });
