@@ -15,7 +15,7 @@ import {
   roomConflictsIndexed,
   teacherBusyIndexed,
   evaluatePlacement,
-  freeRoomsAt,
+  freeRoomsAt as lookupFreeRooms,
   buildConflictReport,
   computeTabBlockMeta,
   dataSignature,
@@ -2396,7 +2396,7 @@ export default function ClassroomScheduler() {
             return ev.roomClashes[0] ? (classOfId(ev.roomClashes[0].classId)?.name || "another class") : null;
           }}
           freeRoomsAt={(cand) =>
-            freeRoomsAt(idx, cand, rooms.map((r) => r.id), { excludeClassId: editing.classId })
+            lookupFreeRooms(idx, cand, rooms.map((r) => r.id), { excludeClassId: editing.classId })
           }
           teacherConflictsAt={(cand, teacher) =>
             evaluateAt(cand, { excludeClassId: editing.classId, teacher }).teacherLabels
@@ -2531,7 +2531,7 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
     }
     // Teacher overlaps are allowed, but confirm so they never slip through unnoticed
     const teacherOverlaps = teacherKey(teacher)
-      ? [...new Set(rows.flatMap((r) => teacherConflictsAt({ day: r.day, start: r.start, end: r.end }, teacher)))]
+      ? [...new Set(rows.flatMap((r) => teacherConflictsAt({ day: r.day, start: r.start, end: r.end, rooms: r.rooms }, teacher)))]
       : [];
     if (teacherOverlaps.length > 0 && !window.confirm(
       `${teacher.trim()} is also teaching at the same time: ${teacherOverlaps.join(", ")}.\n\nSave anyway?`
@@ -2598,7 +2598,7 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
           .filter((x) => x.by && x.by !== "this class");
         const dupHere = timeDup(r, i);
         const teacherOverlaps = teacherKey(teacher)
-          ? teacherConflictsAt({ day: r.day, start: r.start, end: r.end }, teacher)
+          ? teacherConflictsAt({ day: r.day, start: r.start, end: r.end, rooms: r.rooms }, teacher)
           : [];
         const availableRooms = freeRoomsAt
           ? freeRoomsAt({ day: r.day, start: r.start, end: r.end }).filter((id) => !r.rooms.includes(id))
@@ -3465,7 +3465,7 @@ export {
   roomConflictsIndexed,
   teacherBusyIndexed,
   evaluatePlacement,
-  freeRoomsAt,
+  lookupFreeRooms as freeRoomsAt,
   buildConflictReport,
   computeTabBlockMeta,
   dataSignature,

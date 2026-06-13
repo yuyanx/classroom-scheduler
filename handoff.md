@@ -407,6 +407,8 @@ app runs exactly as the old browser-only version.
 - 2026-06-13 — **📅 Week Overview tab**: read-only week grid (time × Mon–Sat columns);
   blocks show class name, time, teacher, and `Rm #`; background color per room (legend on top);
   overlapping meetings use `layoutLanes`; click block to edit class.
+- 2026-06-13 — **Fix class modal blank crash**: `teacherConflictsAt` now passes `rooms` on
+  each schedule row; `roomConflictsIndexed` guards missing `rooms` (crashed when teacher was set).
 
 ---
 

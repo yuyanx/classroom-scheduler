@@ -76,7 +76,7 @@ export function roomConflictsIndexed(
 ) {
   const seen = new Set<string>();
   const hits: NonNullable<ReturnType<typeof buildScheduleIndexes>["placementsByDay"]> extends Map<string, infer T> ? T : never = [];
-  cand.rooms.forEach((rid) => {
+  (cand.rooms || []).forEach((rid) => {
     (idx.placementsByDayRoom.get(`${cand.day}\0${rid}`) || []).forEach((p) => {
       if (seen.has(p.id)) return;
       if (p.id === opts.excludeId) return;
