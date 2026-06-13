@@ -77,6 +77,9 @@ npx serve .
 
 After rebuilding, commit `app.js` along with your `src/` changes so Vercel serves the latest build.
 
+Vercel uses `vercel.json`: `npm run build` then serves the repo root (`outputDirectory: "."`) —
+`index.html` and `app.js` live at the top level, not in `public/`.
+
 ```bash
 npm test
 ```
@@ -382,6 +385,8 @@ app runs exactly as the old browser-only version.
   and TDZ/bundle smoke guards. Extracted `sortCatalogForByClassView()` for testability.
 - 2026-06-12 — **fix By Class unscheduled sort**: comparator used `sa == null !== sb == null`
   (wrong precedence) so unscheduled rows sorted last; now `(sa == null) !== (sb == null)`.
+- 2026-06-12 — **Vercel deploy fix**: `vercel.json` sets `outputDirectory: "."` so preview builds
+  on `grok-feature-day-calendar` serve root `index.html` + `app.js` (not `public/`).
 
 ---
 
