@@ -1,0 +1,282 @@
+// v3 — multiple schedule plans (live / draft / archive) per Supabase row or local store.
+
+export const PLAN_VERSION = 3;
+export const ACTIVE_PLAN_KEY = "premier-active-plan-id";
+export const LOCAL_PLANS_KEY = "premier-plans-v3";
+
+export const PLAN_KIND = {
+  LIVE: "live",
+  DRAFT: "draft",
+  ARCHIVE: "archive",
+};
+
+const KIND_LABEL = {
+  live: "In use",
+  draft: "Planning",
+  archive: "Archive",
+};
+
+export const kindLabel = (kind) => KIND_LABEL[kind] || kind;
+
+export function defaultPlanName(kind, date = new Date()) {
+  const stamp = date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  if (kind === PLAN_KIND.ARCHIVE) return `Archive · ${stamp}`;
+  if (kind === PLAN_KIND.DRAFT) return `New plan · ${stamp}`;
+  return "Main schedule";
+}
+
+/** Unwrap Supabase `data` jsonb — legacy v2 flat schedule or v3 envelope. */
+export function unpackRowData(data) {
+  if (data?.planVersion === PLAN_VERSION && data.schedule) {
+    return {
+      planVersion: PLAN_VERSION,
+      name: String(data.plan?.name || "").trim() || "Untitled plan",
+      kind: data.plan?.kind || PLAN_KIND.DRAFT,
+      createdAt: data.plan?.createdAt || null,
+      schedule: data.schedule,
+    };
+  }
+  return {
+    planVersion: 2,
+    name: null,
+    kind: PLAN_KIND.LIVE,
+    createdAt: null,
+    schedule: data,
+  };
+}
+
+export function packRowData(schedule, { name, kind, createdAt }) {
+  return {
+    planVersion: PLAN_VERSION,
+    plan: {
+      name: String(name || "").trim() || defaultPlanName(kind),
+      kind: kind || PLAN_KIND.DRAFT,
+      createdAt: createdAt || new Date().toISOString(),
+    },
+    schedule,
+  };
+}
+
+export function planRowToMeta(row) {
+  const u = unpackRowData(row.data);
+  return {
+    id: row.id,
+    name: u.name || (row.id === 1 ? "Main schedule" : `Plan ${row.id}`),
+    kind: row.id === 1 && u.planVersion === 2 ? PLAN_KIND.LIVE : u.kind,
+    updated_at: row.updated_at,
+    planVersion: u.planVersion === PLAN_VERSION ? PLAN_VERSION : 2,
+  };
+}
+
+export function isPlanReadOnly(kind) {
+  return kind === PLAN_KIND.ARCHIVE;
+}
+
+export function getActivePlanId() {
+  try {
+    const raw = window.localStorage.getItem(ACTIVE_PLAN_KEY);
+    const n = parseInt(raw, 10);
+    return Number.isFinite(n) && n > 0 ? n : 1;
+  } catch (e) {
+    return 1;
+  }
+}
+
+export function setActivePlanId(id) {
+  try {
+    window.localStorage.setItem(ACTIVE_PLAN_KEY, String(id));
+  } catch (e) { /* ignore */ }
+}
+
+export function scheduleCacheKey(planId) {
+  return `premier-schedule-plan-${planId}`;
+}
+
+export function readScheduleCache(planId) {
+  try {
+    const raw = window.localStorage.getItem(scheduleCacheKey(planId));
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+export function writeScheduleCache(planId, schedule) {
+  try {
+    window.localStorage.setItem(scheduleCacheKey(planId), JSON.stringify(schedule));
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e?.message || "Cache write failed" };
+  }
+}
+
+function emptyLocalStore() {
+  return { nextId: 2, plans: [] };
+}
+
+export function loadLocalPlanStore() {
+  try {
+    const raw = window.localStorage.getItem(LOCAL_PLANS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.plans)) return null;
+    return parsed;
+  } catch (e) {
+    return null;
+  }
+}
+
+export function saveLocalPlanStore(store) {
+  try {
+    window.localStorage.setItem(LOCAL_PLANS_KEY, JSON.stringify(store));
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e?.message || "Plan store write failed" };
+  }
+}
+
+export function ensureLocalPlanStore(seedSchedule, seedName = "Main schedule") {
+  let store = loadLocalPlanStore();
+  if (!store?.plans?.length) {
+    store = {
+      nextId: 2,
+      plans: [
+        {
+          id: 1,
+          name: seedName,
+          kind: PLAN_KIND.LIVE,
+          createdAt: new Date().toISOString(),
+          data: packRowData(seedSchedule, { name: seedName, kind: PLAN_KIND.LIVE, createdAt: new Date().toISOString() }),
+        },
+      ],
+    };
+    saveLocalPlanStore(store);
+  }
+  return store;
+}
+
+export function listPlansFromLocalStore(store) {
+  return (store?.plans || [])
+    .map((p) => {
+      const u = unpackRowData(p.data);
+      return {
+        id: p.id,
+        name: p.name || u.name,
+        kind: p.kind || u.kind,
+        updated_at: p.updated_at || null,
+        planVersion: u.planVersion === PLAN_VERSION ? PLAN_VERSION : 2,
+      };
+    })
+    .sort((a, b) => a.id - b.id);
+}
+
+export function getLocalPlanRow(store, planId) {
+  return (store?.plans || []).find((p) => p.id === planId) || null;
+}
+
+export function upsertLocalPlan(store, planId, packedData, meta) {
+  const next = { ...store, plans: [...(store.plans || [])] };
+  const i = next.plans.findIndex((p) => p.id === planId);
+  const row = {
+    id: planId,
+    name: meta.name,
+    kind: meta.kind,
+    createdAt: meta.createdAt || new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    data: packedData,
+  };
+  if (i >= 0) next.plans[i] = { ...next.plans[i], ...row };
+  else next.plans.push(row);
+  return next;
+}
+
+export function allocateLocalPlanId(store) {
+  const max = (store.plans || []).reduce((m, p) => Math.max(m, p.id), 0);
+  return Math.max(store.nextId || 1, max + 1);
+}
+
+export function createLocalPlanEntry(store, { name, kind, schedule, createdAt }) {
+  const id = allocateLocalPlanId(store);
+  const meta = {
+    name: name || defaultPlanName(kind),
+    kind,
+    createdAt: createdAt || new Date().toISOString(),
+  };
+  const packed = packRowData(schedule, meta);
+  const next = upsertLocalPlan(store, id, packed, meta);
+  next.nextId = id + 1;
+  return { store: next, id, meta };
+}
+
+export function renameInLocalStore(store, planId, name) {
+  const next = { ...store, plans: (store.plans || []).map((p) => {
+    if (p.id !== planId) return p;
+    const u = unpackRowData(p.data);
+    const newName = String(name || "").trim() || p.name;
+    const packed = packRowData(u.schedule, {
+      name: newName,
+      kind: p.kind || u.kind,
+      createdAt: u.createdAt || p.createdAt,
+    });
+    return { ...p, name: newName, data: packed };
+  }) };
+  return next;
+}
+
+export function createRemotePlanApi(config) {
+  const { url, key, sbHeaders } = config;
+
+  async function remoteListPlans() {
+    const res = await fetch(`${url}/rest/v1/schedule?select=id,data,updated_at&order=id.asc`, {
+      headers: sbHeaders(),
+    });
+    if (!res.ok) throw new Error(`Could not list plans (HTTP ${res.status})`);
+    const rows = await res.json();
+    return rows.map(planRowToMeta);
+  }
+
+  async function remoteLoadPlan(planId) {
+    const res = await fetch(`${url}/rest/v1/schedule?id=eq.${planId}&select=id,data,updated_at`, {
+      headers: sbHeaders(),
+    });
+    if (!res.ok) throw new Error(`Could not load plan ${planId} (HTTP ${res.status})`);
+    const rows = await res.json();
+    return rows[0] || null;
+  }
+
+  async function remoteUpdatedAtPlan(planId) {
+    const res = await fetch(`${url}/rest/v1/schedule?id=eq.${planId}&select=updated_at`, {
+      headers: sbHeaders(),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const rows = await res.json();
+    return rows[0]?.updated_at || null;
+  }
+
+  async function remoteSavePlan(planId, packedData, opts = {}) {
+    const res = await fetch(`${url}/rest/v1/schedule?on_conflict=id`, {
+      method: "POST",
+      headers: { ...sbHeaders(), Prefer: "resolution=merge-duplicates,return=representation" },
+      body: JSON.stringify({ id: planId, data: packedData, updated_at: new Date().toISOString() }),
+      keepalive: opts.keepalive || false,
+    });
+    if (!res.ok) throw new Error(`Could not save plan ${planId} (HTTP ${res.status})`);
+    const rows = await res.json();
+    return rows[0]?.updated_at || null;
+  }
+
+  async function remoteCreatePlan(packedData) {
+    const existing = await remoteListPlans();
+    const newId = existing.reduce((m, p) => Math.max(m, p.id), 0) + 1;
+    await remoteSavePlan(newId, packedData);
+    return newId;
+  }
+
+  return {
+    remoteListPlans,
+    remoteLoadPlan,
+    remoteUpdatedAtPlan,
+    remoteSavePlan,
+    remoteCreatePlan,
+  };
+}

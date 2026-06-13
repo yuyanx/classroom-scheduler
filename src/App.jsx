@@ -8,6 +8,29 @@ import {
   saveToLocalStorage,
 } from "./scheduleService.js";
 import {
+  PLAN_KIND,
+  PLAN_VERSION,
+  kindLabel,
+  defaultPlanName,
+  unpackRowData,
+  packRowData,
+  planRowToMeta,
+  isPlanReadOnly,
+  getActivePlanId,
+  setActivePlanId as storeActivePlanId,
+  readScheduleCache,
+  writeScheduleCache,
+  ensureLocalPlanStore,
+  loadLocalPlanStore,
+  saveLocalPlanStore,
+  listPlansFromLocalStore,
+  getLocalPlanRow,
+  upsertLocalPlan,
+  createLocalPlanEntry,
+  renameInLocalStore,
+  createRemotePlanApi,
+} from "./planService.js";
+import {
   teacherKey,
   overlaps,
   buildScheduleIndexes,
@@ -994,7 +1017,6 @@ const IS_LOCAL_DEV = typeof window !== "undefined" && isLocalDevHost(window.loca
 const IS_PREVIEW_DEPLOY = typeof window !== "undefined" && isPreviewHost(window.location.hostname);
 const REMOTE_ENABLED =
   typeof window !== "undefined" ? isRemoteSyncEnabled(window.location.hostname) : false;
-const REMOTE_ROW_ID = 1;
 const REMOTE_POLL_MS = 30000;
 
 const sbHeaders = () => ({
@@ -1003,36 +1025,32 @@ const sbHeaders = () => ({
   "Content-Type": "application/json",
 });
 
-async function remoteLoad() {
-  const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/schedule?id=eq.${REMOTE_ROW_ID}&select=data,updated_at`,
-    { headers: sbHeaders() }
-  );
-  if (!res.ok) throw new Error(`Could not load shared schedule (HTTP ${res.status})`);
-  const rows = await res.json();
-  return rows[0] || null; // { data, updated_at } | null (no row yet)
+const planApi = createRemotePlanApi({
+  url: SUPABASE_URL,
+  key: SUPABASE_KEY,
+  sbHeaders,
+});
+
+function scheduleFromRowData(data) {
+  return upgrade(unpackRowData(data).schedule);
 }
 
-async function remoteUpdatedAt() {
-  const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/schedule?id=eq.${REMOTE_ROW_ID}&select=updated_at`,
-    { headers: sbHeaders() }
-  );
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const rows = await res.json();
-  return rows[0]?.updated_at || null;
+function planMetaFromRow(row) {
+  const u = unpackRowData(row.data);
+  return {
+    name: u.name || (row.id === 1 ? "Main schedule" : `Plan ${row.id}`),
+    kind: row.id === 1 && u.planVersion === 2 ? PLAN_KIND.LIVE : u.kind,
+    createdAt: u.createdAt || null,
+  };
 }
 
-async function remoteSave(data, opts = {}) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/schedule?on_conflict=id`, {
-    method: "POST",
-    headers: { ...sbHeaders(), Prefer: "resolution=merge-duplicates,return=representation" },
-    body: JSON.stringify({ id: REMOTE_ROW_ID, data, updated_at: new Date().toISOString() }),
-    keepalive: opts.keepalive || false, // lets the save finish while the tab is closing
-  });
-  if (!res.ok) throw new Error(`Could not save shared schedule (HTTP ${res.status})`);
-  const rows = await res.json();
-  return rows[0]?.updated_at || null;
+function planMetaFromLocalRow(row) {
+  const u = unpackRowData(row.data);
+  return {
+    name: row.name || u.name || `Plan ${row.id}`,
+    kind: row.kind || u.kind,
+    createdAt: row.createdAt || u.createdAt || null,
+  };
 }
 
 const loadData = () => {
@@ -1066,7 +1084,15 @@ function emptyDragImage() {
 
 // ───────────────────────── Main component ─────────────────────────
 export default function ClassroomScheduler() {
-  const [data, setData] = useState(loadData);
+  const initialPlanId = typeof window !== "undefined" ? getActivePlanId() : 1;
+  const initialCached = typeof window !== "undefined" ? readScheduleCache(initialPlanId) : null;
+  const [activePlanId, setActivePlanId] = useState(initialPlanId);
+  const [plans, setPlans] = useState([]);
+  const [planMeta, setPlanMeta] = useState({ name: "Main schedule", kind: PLAN_KIND.LIVE, createdAt: null });
+  const [planMenuOpen, setPlanMenuOpen] = useState(false);
+  const [planDialog, setPlanDialog] = useState(null); // { mode, name, copyFromCurrent? }
+  const [plansReady, setPlansReady] = useState(false);
+  const [data, setData] = useState(() => (initialCached ? upgrade(initialCached) : loadData()));
   const [saveStatus, setSaveStatus] = useState({
     ok: true,
     lastSavedAt: null,
@@ -1110,6 +1136,13 @@ export default function ClassroomScheduler() {
   const remoteRef = useRef(createSyncRef());
   const dataRef = useRef(data);
   dataRef.current = data; // latest data for retries and the tab-close flush
+  const activePlanIdRef = useRef(activePlanId);
+  activePlanIdRef.current = activePlanId;
+  const planMetaRef = useRef(planMeta);
+  planMetaRef.current = planMeta;
+  const plansRef = useRef(plans);
+  plansRef.current = plans;
+  const planReadOnly = isPlanReadOnly(planMeta.kind);
 
   const scheduleGhost = useCallback((next) => {
     ghostPendingRef.current = next;
@@ -1160,27 +1193,44 @@ export default function ClassroomScheduler() {
   const setStatus = (ok, label, error = "") =>
     setSaveStatus({ ok, lastSavedAt: ok ? new Date() : null, error, label });
 
-  const flushRemoteSave = async (payload) => {
+  const writeActivePlanCache = useCallback((planId, payload, meta) => {
+    writeScheduleCache(planId, payload);
+    if (!REMOTE_ENABLED) {
+      let store = loadLocalPlanStore();
+      if (store) {
+        const packed = packRowData(payload, meta);
+        store = upsertLocalPlan(store, planId, packed, meta);
+        saveLocalPlanStore(store);
+        setPlans(listPlansFromLocalStore(store));
+      }
+    }
+    return saveData(payload);
+  }, []);
+
+  const flushRemoteSave = useCallback(async (payload) => {
+    if (!REMOTE_ENABLED || isPlanReadOnly(planMetaRef.current.kind)) return;
+    const planId = activePlanIdRef.current;
+    const packed = packRowData(payload, planMetaRef.current);
     remoteRef.current.pendingSave = true;
     try {
-      const ts = await remoteSave(payload);
+      const ts = await planApi.remoteSavePlan(planId, packed);
       remoteRef.current.lastSyncedAt = ts || new Date().toISOString();
       remoteRef.current.pendingSave = false;
       remoteRef.current.lastSaveFailed = false;
       markRevisionSaved(remoteRef.current);
       clearTimeout(remoteRef.current.retryTimer);
-      setStatus(true, `Saved for everyone at ${timeLabel()}`);
+      writeScheduleCache(planId, payload);
+      setStatus(true, `Saved “${planMetaRef.current.name}” for everyone at ${timeLabel()}`);
     } catch (e) {
       remoteRef.current.pendingSave = false;
       remoteRef.current.lastSaveFailed = true;
       setStatus(false, "Not saved", e?.message || "Network error");
-      // Keep retrying with the latest data until a save lands
       clearTimeout(remoteRef.current.retryTimer);
       remoteRef.current.retryTimer = setTimeout(() => {
         if (!remoteRef.current.pendingSave) flushRemoteSave(dataRef.current);
       }, 5000);
     }
-  };
+  }, []);
 
   const scheduleUndo = useCallback((prev) => {
     clearTimeout(undoTimer.current);
@@ -1199,18 +1249,27 @@ export default function ClassroomScheduler() {
     if (!skipRevision) bumpLocalRevision(remoteRef.current);
     setData(next);
     dataRef.current = next;
+    const planId = activePlanIdRef.current;
+    const meta = planMetaRef.current;
     if (!REMOTE_ENABLED) {
-      queueLocalSave(next);
+      clearTimeout(localSaveTimer.current);
+      localSaveTimer.current = setTimeout(() => {
+        localSaveTimer.current = null;
+        updateSaveStatus(writeActivePlanCache(planId, next, meta));
+      }, 200);
       return;
     }
+    writeScheduleCache(planId, next);
     queueLocalSave(next);
+    if (isPlanReadOnly(meta.kind)) return;
     setSaveStatus((s) => ({ ...s, ok: true, error: "", label: "Saving…" }));
     remoteRef.current.pendingSave = true;
     clearTimeout(remoteRef.current.timer);
     remoteRef.current.timer = setTimeout(() => flushRemoteSave(next), 600);
-  }, [queueLocalSave, scheduleUndo]);
+  }, [queueLocalSave, scheduleUndo, updateSaveStatus, writeActivePlanCache, flushRemoteSave]);
 
   const persist = useCallback((nextOrMutator, opts = {}) => {
+    if (isPlanReadOnly(planMetaRef.current.kind) && !opts.force) return;
     const prev = dataRef.current;
     const next = typeof nextOrMutator === "function" ? nextOrMutator(prev) : nextOrMutator;
     applyData(next, opts);
@@ -1225,61 +1284,271 @@ export default function ClassroomScheduler() {
     applyData(snap, { skipUndo: true });
   }, [applyData]);
 
-  useEffect(() => {
+  const offlineSaveLabel = () => {
+    const now = new Date();
+    if (IS_PREVIEW_DEPLOY) return "Preview — not syncing to shared schedule";
+    if (IS_LOCAL_DEV) return "Local dev — not syncing to shared schedule";
+    return `Saved to this browser at ${now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+  };
+
+  const loadPlanIntoState = useCallback((planId, next, meta, updatedAt) => {
+    storeActivePlanId(planId);
+    setActivePlanId(planId);
+    setPlanMeta(meta);
+    dataRef.current = next;
+    setData(next);
+    writeScheduleCache(planId, next);
+    flushLocalSave(next);
+    if (updatedAt) remoteRef.current.lastSyncedAt = updatedAt;
+    markRevisionSaved(remoteRef.current);
+  }, [flushLocalSave]);
+
+  const saveCurrentPlanSnapshot = useCallback(async () => {
+    const planId = activePlanIdRef.current;
+    const payload = dataRef.current;
+    const meta = planMetaRef.current;
+    if (isPlanReadOnly(meta.kind)) return;
+    writeScheduleCache(planId, payload);
     if (!REMOTE_ENABLED) {
-      const result = saveData(data);
-      const now = new Date();
-      const offlineLabel = IS_PREVIEW_DEPLOY
-        ? "Preview — not syncing to shared schedule"
-        : IS_LOCAL_DEV
-          ? "Local dev — not syncing to shared schedule"
-          : `Saved to this browser at ${now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
-      setSaveStatus({
-        ok: result.ok,
-        lastSavedAt: result.ok ? now : null,
-        error: result.error || "",
-        label: result.ok ? offlineLabel : "Not saved",
-      });
+      writeActivePlanCache(planId, payload, meta);
       return;
     }
+    clearTimeout(remoteRef.current.timer);
+    remoteRef.current.timer = null;
+    await flushRemoteSave(payload);
+  }, [flushRemoteSave, writeActivePlanCache]);
+
+  const switchPlan = useCallback(async (planId) => {
+    if (planId === activePlanIdRef.current) {
+      setPlanMenuOpen(false);
+      return;
+    }
+    setPlanMenuOpen(false);
+    setSaveStatus((s) => ({ ...s, label: "Switching plan…" }));
+    try {
+      await saveCurrentPlanSnapshot();
+      let next;
+      let meta;
+      let updatedAt = null;
+      if (REMOTE_ENABLED) {
+        const row = await planApi.remoteLoadPlan(planId);
+        if (!row) throw new Error(`Plan ${planId} not found`);
+        next = scheduleFromRowData(row.data);
+        meta = planMetaFromRow(row);
+        updatedAt = row.updated_at;
+      } else {
+        const store = loadLocalPlanStore();
+        const row = getLocalPlanRow(store, planId);
+        if (!row) throw new Error(`Plan ${planId} not found`);
+        const cached = readScheduleCache(planId);
+        next = cached ? upgrade(cached) : scheduleFromRowData(row.data);
+        meta = planMetaFromLocalRow(row);
+      }
+      loadPlanIntoState(planId, next, meta, updatedAt);
+      const readOnly = isPlanReadOnly(meta.kind);
+      setStatus(
+        true,
+        readOnly
+          ? `Viewing archive “${meta.name}” (read-only)`
+          : REMOTE_ENABLED
+            ? `Switched to “${meta.name}”`
+            : offlineSaveLabel()
+      );
+    } catch (e) {
+      setStatus(false, "Could not switch plan", e?.message || "");
+    }
+  }, [loadPlanIntoState, saveCurrentPlanSnapshot]);
+
+  const createDraftPlan = useCallback(async ({ name, copyFromCurrent }) => {
+    const schedule = copyFromCurrent
+      ? JSON.parse(JSON.stringify(dataRef.current))
+      : defaultData();
+    const meta = {
+      name: String(name || "").trim() || defaultPlanName(PLAN_KIND.DRAFT),
+      kind: PLAN_KIND.DRAFT,
+      createdAt: new Date().toISOString(),
+    };
+    const packed = packRowData(schedule, meta);
+    try {
+      if (REMOTE_ENABLED) {
+        const id = await planApi.remoteCreatePlan(packed);
+        const list = await planApi.remoteListPlans();
+        setPlans(list);
+        setPlanDialog(null);
+        await switchPlan(id);
+        return;
+      }
+      let store = loadLocalPlanStore() || ensureLocalPlanStore(dataRef.current, planMetaRef.current.name);
+      const created = createLocalPlanEntry(store, {
+        name: meta.name,
+        kind: meta.kind,
+        schedule,
+        createdAt: meta.createdAt,
+      });
+      saveLocalPlanStore(created.store);
+      setPlans(listPlansFromLocalStore(created.store));
+      setPlanDialog(null);
+      await switchPlan(created.id);
+    } catch (e) {
+      setStatus(false, "Could not create plan", e?.message || "");
+    }
+  }, [switchPlan]);
+
+  const saveArchiveCopy = useCallback(async (name) => {
+    const schedule = JSON.parse(JSON.stringify(dataRef.current));
+    const meta = {
+      name: String(name || "").trim() || defaultPlanName(PLAN_KIND.ARCHIVE),
+      kind: PLAN_KIND.ARCHIVE,
+      createdAt: new Date().toISOString(),
+    };
+    const packed = packRowData(schedule, meta);
+    try {
+      if (REMOTE_ENABLED) {
+        const id = await planApi.remoteCreatePlan(packed);
+        const list = await planApi.remoteListPlans();
+        setPlans(list);
+        setPlanDialog(null);
+        setStatus(true, `Archive “${meta.name}” saved — switch to it from the plan menu`);
+        return id;
+      }
+      let store = loadLocalPlanStore() || ensureLocalPlanStore(dataRef.current, planMetaRef.current.name);
+      const created = createLocalPlanEntry(store, {
+        name: meta.name,
+        kind: meta.kind,
+        schedule,
+        createdAt: meta.createdAt,
+      });
+      saveLocalPlanStore(created.store);
+      setPlans(listPlansFromLocalStore(created.store));
+      setPlanDialog(null);
+      setStatus(true, `Archive “${meta.name}” saved locally`);
+      return created.id;
+    } catch (e) {
+      setStatus(false, "Could not save archive", e?.message || "");
+      return null;
+    }
+  }, []);
+
+  const renameActivePlan = useCallback(async (name) => {
+    const trimmed = String(name || "").trim();
+    if (!trimmed) return;
+    const planId = activePlanIdRef.current;
+    const meta = { ...planMetaRef.current, name: trimmed };
+    const packed = packRowData(dataRef.current, meta);
+    try {
+      if (REMOTE_ENABLED) {
+        await planApi.remoteSavePlan(planId, packed);
+        const list = await planApi.remoteListPlans();
+        setPlans(list.map((p) => (p.id === planId ? { ...p, name: trimmed } : p)));
+      } else {
+        let store = loadLocalPlanStore();
+        if (store) {
+          store = renameInLocalStore(store, planId, trimmed);
+          saveLocalPlanStore(store);
+          setPlans(listPlansFromLocalStore(store));
+        }
+      }
+      setPlanMeta(meta);
+      setPlanDialog(null);
+      setStatus(true, `Renamed to “${trimmed}”`);
+    } catch (e) {
+      setStatus(false, "Could not rename plan", e?.message || "");
+    }
+  }, []);
+
+  const submitPlanDialog = () => {
+    if (!planDialog) return;
+    if (planDialog.mode === "new") {
+      createDraftPlan({ name: planDialog.name, copyFromCurrent: planDialog.copyFromCurrent !== false });
+      return;
+    }
+    if (planDialog.mode === "archive") {
+      saveArchiveCopy(planDialog.name);
+      return;
+    }
+    if (planDialog.mode === "rename") {
+      renameActivePlan(planDialog.name);
+    }
+  };
+
+  useEffect(() => {
     let cancelled = false;
     (async () => {
-      setSaveStatus((s) => ({ ...s, label: "Loading shared schedule…" }));
       try {
-        const row = await remoteLoad();
-        if (cancelled) return;
-        if (row) {
-          remoteRef.current.lastSyncedAt = row.updated_at;
-          const next = upgrade(row.data);
-          dataRef.current = next;
-          setData(next);
-          markRevisionSaved(remoteRef.current);
-          flushLocalSave(next);
-          setStatus(true, `Shared schedule loaded at ${timeLabel()}`);
+        if (REMOTE_ENABLED) {
+          setSaveStatus((s) => ({ ...s, label: "Loading plans…" }));
+          const list = await planApi.remoteListPlans();
+          if (cancelled) return;
+          setPlans(list.length ? list : [{ id: 1, name: "Main schedule", kind: PLAN_KIND.LIVE, updated_at: null, planVersion: 2 }]);
+          let planId = getActivePlanId();
+          if (list.length && !list.some((p) => p.id === planId)) planId = list[0].id;
+          const row = await planApi.remoteLoadPlan(planId);
+          if (cancelled) return;
+          if (row) {
+            const meta = planMetaFromRow(row);
+            const next = scheduleFromRowData(row.data);
+            loadPlanIntoState(planId, next, meta, row.updated_at);
+            setStatus(true, `Loaded “${meta.name}” at ${timeLabel()}`);
+          } else if (planId === 1) {
+            const meta = { name: "Main schedule", kind: PLAN_KIND.LIVE, createdAt: new Date().toISOString() };
+            const packed = packRowData(dataRef.current, meta);
+            const ts = await planApi.remoteSavePlan(1, packed);
+            if (cancelled) return;
+            setPlanMeta(meta);
+            setPlans([{ id: 1, name: meta.name, kind: meta.kind, updated_at: ts, planVersion: PLAN_VERSION }]);
+            setStatus(true, `Published main schedule at ${timeLabel()}`);
+          }
         } else {
-          // First run ever: publish this browser's copy as the shared schedule
-          await flushRemoteSave(data);
+          const seed = dataRef.current;
+          const store = ensureLocalPlanStore(seed, "Main schedule");
+          const list = listPlansFromLocalStore(store);
+          let planId = getActivePlanId();
+          if (!list.some((p) => p.id === planId)) planId = list[0]?.id || 1;
+          const row = getLocalPlanRow(store, planId);
+          const cached = readScheduleCache(planId);
+          const next = cached ? upgrade(cached) : (row ? scheduleFromRowData(row.data) : seed);
+          const meta = row ? planMetaFromLocalRow(row) : { name: "Main schedule", kind: PLAN_KIND.LIVE, createdAt: null };
+          loadPlanIntoState(planId, next, meta, null);
+          setPlans(list);
+          const result = writeActivePlanCache(planId, next, meta);
+          setSaveStatus({
+            ok: result.ok,
+            lastSavedAt: result.ok ? new Date() : null,
+            error: result.error || "",
+            label: result.ok ? offlineSaveLabel() : "Not saved",
+          });
         }
       } catch (e) {
         if (!cancelled) setStatus(false, "Offline — using this browser's copy", e?.message || "");
+      } finally {
+        if (!cancelled) setPlansReady(true);
       }
     })();
-    // Light polling keeps other open computers in sync (last write wins)
+    return () => { cancelled = true; };
+  }, [loadPlanIntoState, writeActivePlanCache]);
+
+  useEffect(() => {
+    if (!REMOTE_ENABLED || !plansReady) return;
+    const planId = activePlanId;
     const iv = setInterval(async () => {
       if (document.hidden || !canApplyRemotePoll(remoteRef.current)) return;
+      if (activePlanIdRef.current !== planId) return;
       try {
-        const ts = await remoteUpdatedAt();
+        const ts = await planApi.remoteUpdatedAtPlan(planId);
         if (ts && remoteRef.current.lastSyncedAt && ts > remoteRef.current.lastSyncedAt) {
-          const row = await remoteLoad();
-          if (row && canApplyRemotePoll(remoteRef.current)) {
-            const next = upgrade(row.data);
+          const row = await planApi.remoteLoadPlan(planId);
+          if (row && canApplyRemotePoll(remoteRef.current) && activePlanIdRef.current === planId) {
+            const next = scheduleFromRowData(row.data);
             if (dataSignature(next) !== dataSignature(dataRef.current)) {
-              remoteRef.current.lastSyncedAt = row.updated_at;
+              const meta = planMetaFromRow(row);
               dataRef.current = next;
               setData(next);
+              setPlanMeta(meta);
+              remoteRef.current.lastSyncedAt = row.updated_at;
               markRevisionSaved(remoteRef.current);
+              writeScheduleCache(planId, next);
               flushLocalSave(next);
-              setStatus(true, `Updated from another computer at ${timeLabel()}`);
+              setStatus(true, `“${meta.name}” updated from another computer at ${timeLabel()}`);
             } else {
               remoteRef.current.lastSyncedAt = row.updated_at;
               markRevisionSaved(remoteRef.current);
@@ -1288,37 +1557,53 @@ export default function ClassroomScheduler() {
         }
       } catch (e) { /* ignore transient poll errors */ }
     }, REMOTE_POLL_MS);
-    // Retry as soon as the connection returns (only when a save actually failed)
     const onOnline = () => {
-      if (remoteRef.current.lastSaveFailed && !remoteRef.current.pendingSave) flushRemoteSave(dataRef.current);
+      if (remoteRef.current.lastSaveFailed && !remoteRef.current.pendingSave && !isPlanReadOnly(planMetaRef.current.kind)) {
+        flushRemoteSave(dataRef.current);
+      }
     };
-    window.addEventListener("online", onOnline);
-    // Flush a still-debouncing save when the tab closes, so the last edit isn't lost
     const onPageHide = () => {
       clearTimeout(localSaveTimer.current);
       localSaveTimer.current = null;
-      saveData(dataRef.current);
+      const planId = activePlanIdRef.current;
+      const payload = dataRef.current;
+      const meta = planMetaRef.current;
+      writeScheduleCache(planId, payload);
+      saveData(payload);
       if (remoteRef.current.timer) {
         clearTimeout(remoteRef.current.timer);
         remoteRef.current.timer = null;
-        remoteSave(dataRef.current, { keepalive: true }).catch(() => {});
+      }
+      if (REMOTE_ENABLED && !isPlanReadOnly(meta.kind)) {
+        const packed = packRowData(payload, meta);
+        planApi.remoteSavePlan(planId, packed, { keepalive: true }).catch(() => {});
       }
     };
+    window.addEventListener("online", onOnline);
     window.addEventListener("pagehide", onPageHide);
     return () => {
-      cancelled = true;
       clearInterval(iv);
       clearTimeout(remoteRef.current.retryTimer);
       window.removeEventListener("online", onOnline);
       window.removeEventListener("pagehide", onPageHide);
     };
-  }, []);
+  }, [activePlanId, plansReady, flushRemoteSave, flushLocalSave]);
+
+  useEffect(() => {
+    if (!planMenuOpen) return;
+    const close = () => setPlanMenuOpen(false);
+    window.addEventListener("click", close);
+    return () => window.removeEventListener("click", close);
+  }, [planMenuOpen]);
 
   const saveNow = () => {
+    if (planReadOnly) return;
     clearTimeout(localSaveTimer.current);
     localSaveTimer.current = null;
+    const planId = activePlanIdRef.current;
+    const meta = planMetaRef.current;
     if (!REMOTE_ENABLED) {
-      updateSaveStatus(flushLocalSave(data));
+      updateSaveStatus(writeActivePlanCache(planId, data, meta));
       return;
     }
     flushLocalSave(data);
@@ -1791,7 +2076,7 @@ export default function ClassroomScheduler() {
     return (
       <div
         key={p.id}
-        draggable={!resize}
+        draggable={!resize && !planReadOnly}
         onDragStart={(e) => {
           e.dataTransfer.setData("text/plain", "pl:" + p.id);
           e.dataTransfer.effectAllowed = "move";
@@ -1913,7 +2198,77 @@ export default function ClassroomScheduler() {
           <span style={{ fontSize: 13, opacity: 0.75 }}>
             2026 Summer · Jericho · {rooms.length} rooms · {DAY_SHORT[days[0]]}–{DAY_SHORT[days[days.length - 1]]}
           </span>
-          <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center" }}>
+          <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ position: "relative" }} onClick={(e) => e.stopPropagation()}>
+              <button
+                type="button"
+                onClick={() => setPlanMenuOpen((o) => !o)}
+                title="Switch between live, draft, and archive schedules"
+                style={{ ...btnGhost, display: "flex", alignItems: "center", gap: 6, maxWidth: 280 }}
+              >
+                <span style={{ fontWeight: 700 }}>📁 {planMeta.name}</span>
+                <span style={{ fontSize: 11, opacity: 0.85, background: "rgba(255,255,255,.12)", borderRadius: 4, padding: "1px 6px" }}>
+                  {kindLabel(planMeta.kind)}
+                </span>
+                <span style={{ opacity: 0.7 }}>▾</span>
+              </button>
+              {planMenuOpen && (
+                <div
+                  style={{
+                    position: "absolute", top: "calc(100% + 6px)", right: 0, minWidth: 280,
+                    background: "#fff", color: "#1e293b", borderRadius: 10, border: "1px solid #d6dad4",
+                    boxShadow: "0 12px 32px rgba(15,23,42,.18)", zIndex: 40, padding: 6, maxHeight: 320, overflowY: "auto",
+                  }}
+                >
+                  {(plans.length ? plans : [{ id: activePlanId, name: planMeta.name, kind: planMeta.kind }]).map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => switchPlan(p.id)}
+                      style={{
+                        display: "flex", width: "100%", alignItems: "center", gap: 8, textAlign: "left",
+                        border: "none", background: p.id === activePlanId ? "#f0fdfa" : "transparent",
+                        borderRadius: 8, padding: "8px 10px", cursor: "pointer", fontSize: 13, color: "#1e293b",
+                      }}
+                    >
+                      <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: p.id === activePlanId ? 700 : 500 }}>
+                        {p.name}
+                      </span>
+                      <span style={{ fontSize: 11, color: "#64748b" }}>{kindLabel(p.kind)}</span>
+                      {p.id === activePlanId && <span style={{ color: "#0f766e", fontWeight: 700 }}>✓</span>}
+                    </button>
+                  ))}
+                  <div style={{ borderTop: "1px solid #eceeea", margin: "6px 0" }} />
+                  {!planReadOnly && (
+                    <button
+                      type="button"
+                      onClick={() => setPlanDialog({ mode: "new", name: defaultPlanName(PLAN_KIND.DRAFT), copyFromCurrent: true })}
+                      style={{ display: "block", width: "100%", textAlign: "left", border: "none", background: "transparent", borderRadius: 8, padding: "8px 10px", cursor: "pointer", fontSize: 13, color: "#123c3a", fontWeight: 600 }}
+                    >
+                      + New draft plan
+                    </button>
+                  )}
+                  {!planReadOnly && (
+                    <button
+                      type="button"
+                      onClick={() => setPlanDialog({ mode: "archive", name: defaultPlanName(PLAN_KIND.ARCHIVE) })}
+                      style={{ display: "block", width: "100%", textAlign: "left", border: "none", background: "transparent", borderRadius: 8, padding: "8px 10px", cursor: "pointer", fontSize: 13, color: "#475569" }}
+                    >
+                      Save archive copy
+                    </button>
+                  )}
+                  {!planReadOnly && (
+                    <button
+                      type="button"
+                      onClick={() => setPlanDialog({ mode: "rename", name: planMeta.name })}
+                      style={{ display: "block", width: "100%", textAlign: "left", border: "none", background: "transparent", borderRadius: 8, padding: "8px 10px", cursor: "pointer", fontSize: 13, color: "#475569" }}
+                    >
+                      Rename current plan
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
             <span style={{ fontSize: 13, opacity: 0.85 }}>
               Total enrolled <b style={{ fontSize: 16 }}>{totalReg}</b>
             </span>
@@ -1936,7 +2291,7 @@ export default function ClassroomScheduler() {
             <span
               title={saveStatus.ok
                 ? (REMOTE_ENABLED
-                  ? "Everyone opening this site sees this shared schedule."
+                  ? `Shared plan “${planMeta.name}” (${kindLabel(planMeta.kind)}). Only this active plan syncs.`
                   : IS_PREVIEW_DEPLOY
                     ? "Preview deploy — changes stay in this browser only."
                     : "Changes are stored in this browser.")
@@ -1949,11 +2304,23 @@ export default function ClassroomScheduler() {
             >
               {saveStatus.label}
             </span>
-            <button onClick={() => setRoomMgrOpen(true)} style={btnGhost}>Manage Rooms</button>
-            <button onClick={() => setConfirmReset(true)} style={{ ...btnGhost, opacity: 0.7 }}>Reset Data</button>
+            <button onClick={() => setRoomMgrOpen(true)} style={btnGhost} disabled={planReadOnly}>Manage Rooms</button>
+            <button onClick={() => setConfirmReset(true)} style={{ ...btnGhost, opacity: planReadOnly ? 0.35 : 0.7 }} disabled={planReadOnly}>Reset Data</button>
           </div>
         </div>
       </header>
+
+      {planMeta.kind === PLAN_KIND.DRAFT && (
+        <div style={{ background: "#eff6ff", borderBottom: "1px solid #bfdbfe", padding: "8px 24px", fontSize: 13, color: "#1d4ed8" }}>
+          <b>Planning mode</b> — this draft does not replace the live schedule. Colleagues see updates only while this draft is the active plan.
+        </div>
+      )}
+
+      {planReadOnly && (
+        <div style={{ background: "#f8fafc", borderBottom: "1px solid #e2e8f0", padding: "8px 24px", fontSize: 13, color: "#475569" }}>
+          <b>Archive (read-only)</b> — switch to the live or a draft plan to make changes.
+        </div>
+      )}
 
       {conflictPanelOpen && conflictCounts.total > 0 && (
         <div style={{ background: "#fffbeb", borderBottom: "1px solid #fde68a", padding: "10px 24px", maxHeight: 220, overflowY: "auto" }}>
@@ -2448,6 +2815,45 @@ export default function ClassroomScheduler() {
       )}
 
       {/* Reset confirmation */}
+      {planDialog && (
+        <Overlay onClose={() => setPlanDialog(null)}>
+          <h2 style={{ margin: "0 0 12px", fontSize: 18 }}>
+            {planDialog.mode === "new" ? "New draft plan" : planDialog.mode === "archive" ? "Save archive copy" : "Rename plan"}
+          </h2>
+          <p style={{ margin: "0 0 14px", fontSize: 13, color: "#64748b", lineHeight: 1.45 }}>
+            {planDialog.mode === "new"
+              ? "Creates a separate draft from the current schedule. The live schedule stays unchanged."
+              : planDialog.mode === "archive"
+                ? "Saves a read-only snapshot colleagues can open later. You stay on the current plan."
+                : "This name is visible to everyone with access to the shared plans."}
+          </p>
+          <Field label="Plan name">
+            <input
+              style={inputStyle}
+              value={planDialog.name}
+              onChange={(e) => setPlanDialog((d) => ({ ...d, name: e.target.value }))}
+              autoFocus
+            />
+          </Field>
+          {planDialog.mode === "new" && (
+            <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, fontSize: 13, color: "#475569" }}>
+              <input
+                type="checkbox"
+                checked={planDialog.copyFromCurrent !== false}
+                onChange={(e) => setPlanDialog((d) => ({ ...d, copyFromCurrent: e.target.checked }))}
+              />
+              Copy current schedule into the draft
+            </label>
+          )}
+          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+            <button style={btnSecondary} onClick={() => setPlanDialog(null)}>Cancel</button>
+            <button style={btnPrimary} onClick={submitPlanDialog} disabled={!String(planDialog.name || "").trim()}>
+              {planDialog.mode === "rename" ? "Save name" : planDialog.mode === "archive" ? "Save archive" : "Create draft"}
+            </button>
+          </div>
+        </Overlay>
+      )}
+
       {confirmReset && (
         <Overlay onClose={() => setConfirmReset(false)}>
           <h3 style={{ marginTop: 0 }}>Reset all data?</h3>
