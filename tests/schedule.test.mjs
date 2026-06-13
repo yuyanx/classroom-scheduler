@@ -17,6 +17,10 @@ import {
   dataSignature,
   LIVE_V1_SEED,
   LIVE_SEED_TAG,
+  roomOverviewColor,
+  primaryRoomForPlacement,
+  computeWeekOverviewLayout,
+  ROOM_OVERVIEW_PALETTE,
 } from "../dist/test-logic.mjs";
 
 const tinyV1 = {
@@ -175,6 +179,28 @@ test("sortCatalogForByClassView: same numeric prefix sorts by earliest time", ()
   ];
   const sorted = sortCatalogForByClassView(catalog, placements);
   assert.deepEqual(sorted.map((k) => k.id), ["math", "ela"]);
+});
+
+test("roomOverviewColor maps rooms to distinct palette entries", () => {
+  const order = ["1", "2", "3"];
+  assert.notDeepEqual(roomOverviewColor("1", order), roomOverviewColor("2", order));
+  assert.equal(roomOverviewColor("1", order).bg, ROOM_OVERVIEW_PALETTE[0].bg);
+});
+
+test("primaryRoomForPlacement picks lowest-ordered room", () => {
+  assert.equal(primaryRoomForPlacement(["3", "1"], ["1", "2", "3"]), "1");
+});
+
+test("computeWeekOverviewLayout builds lanes per day", () => {
+  const placements = [
+    { id: "p1", classId: "a", day: "mon", start: 540, end: 630, rooms: ["1"] },
+    { id: "p2", classId: "b", day: "mon", start: 600, end: 690, rooms: ["2"] },
+    { id: "p3", classId: "c", day: "tue", start: 540, end: 630, rooms: ["1"] },
+  ];
+  const idx = buildScheduleIndexes({ catalog: [], placements, rooms: [] });
+  const layout = computeWeekOverviewLayout(["mon", "tue"], { default: [540, 1020] }, idx.placementsByDay);
+  assert.ok(layout.gridH > 0);
+  assert.equal(layout.lanesByDay.get("mon")?.get("p1")?.lanes, 2);
 });
 
 test("layoutLanes assigns columns for overlaps", () => {

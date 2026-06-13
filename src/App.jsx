@@ -25,6 +25,9 @@ import {
   sortCatalogForByClassView,
   overviewPillStyle,
   overviewRoomLabel,
+  roomOverviewColor,
+  primaryRoomForPlacement,
+  computeWeekOverviewLayout,
 } from "./domain/scheduleLogic.ts";
 
 // ───────────────────────── Week / time constants ─────────────────────────
@@ -1328,7 +1331,7 @@ export default function ClassroomScheduler() {
 
   // Make sure the active tab still exists (e.g. after remote data changes the day list)
   useEffect(() => {
-    if (!days.includes(tab) && tab !== "byClass" && tab !== "byTeacher") setTab(days[0]);
+    if (!days.includes(tab) && tab !== "byClass" && tab !== "byTeacher" && tab !== "weekOverview") setTab(days[0]);
   }, [days, tab]);
 
   // ── Rooms: a placement may span several rooms (combined classroom) ──
@@ -2165,7 +2168,11 @@ export default function ClassroomScheduler() {
                 {DAY_SHORT[d]}
               </button>
             ))}
-            {[{ id: "byClass", label: "📋 By Class" }, { id: "byTeacher", label: "👤 By Teacher" }].map((v) => (
+            {[
+              { id: "weekOverview", label: "📅 Week Overview" },
+              { id: "byClass", label: "📋 By Class" },
+              { id: "byTeacher", label: "👤 By Teacher" },
+            ].map((v) => (
               <button
                 key={v.id}
                 onClick={() => setTab(v.id)}
@@ -2189,7 +2196,9 @@ export default function ClassroomScheduler() {
                 ? `${(teachers || []).length} teachers · ${noTeacherCount} classes need a teacher`
                 : tab === "byClass"
                   ? `${catalog.length} classes · ${unscheduledCount} unscheduled`
-                  : `${tabPls.length} classes · ${tabReg} students on ${DAY_LABEL[tab] || "this day"}`}
+                  : tab === "weekOverview"
+                    ? `${placements.length} meetings · ${days.length} days`
+                    : `${tabPls.length} classes · ${tabReg} students on ${DAY_LABEL[tab] || "this day"}`}
             </span>
           </nav>
 
@@ -2226,6 +2235,14 @@ export default function ClassroomScheduler() {
                 days={days}
                 idx={idx}
                 onEditClass={(classId) => setEditing({ isNew: false, classId })}
+              />
+            ) : tab === "weekOverview" ? (
+              <WeekOverviewView
+                days={days}
+                hours={hours}
+                rooms={rooms}
+                idx={idx}
+                onEditClass={(classId, placementId) => setEditing({ isNew: false, classId, placementId })}
               />
             ) : (
             <>
@@ -2712,6 +2729,143 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
         </div>
       </div>
     </Overlay>
+  );
+}
+
+// ───────────────────────── Week overview (time × days, room-colored) ─────────────────────────
+function WeekOverviewView({ days, hours, rooms, idx, onEditClass }) {
+  const roomIds = rooms.map((r) => r.id);
+  const layout = useMemo(
+    () => computeWeekOverviewLayout(days, hours, idx.placementsByDay),
+    [days, hours, idx.placementsByDay]
+  );
+  const { gridStart, gridEnd, gridH, hourMarks, halfMarks, lanesByDay, pxPerMin } = layout;
+
+  const blockClash = (p) => {
+    const cls = idx.catalogById.get(p.classId);
+    const ev = evaluatePlacement(idx, { day: p.day, start: p.start, end: p.end, rooms: p.rooms }, { excludePlacementId: p.id, teacher: cls?.teacher });
+    return { roomClash: ev.roomClashes.length > 0, teacherClash: ev.hasTeacherConflict };
+  };
+
+  return (
+    <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto", width: "100%" }}>
+      <div style={{ padding: "8px 12px", borderBottom: "1px solid #eceeea", display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", background: "#fafaf8" }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Room colors:</span>
+        {rooms.map((r) => {
+          const c = roomOverviewColor(r.id, roomIds);
+          return (
+            <span key={r.id} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: c.text }}>
+              <span style={{ width: 14, height: 14, borderRadius: 4, background: c.bg, border: `1px solid ${c.border}`, flexShrink: 0 }} />
+              Room {r.id}
+            </span>
+          );
+        })}
+      </div>
+      <div style={{ minWidth: 56 + days.length * 132, position: "relative" }}>
+        <div style={{ display: "flex", borderBottom: "2px solid #d6dad4", background: "#fafaf8" }}>
+          <div style={{ flex: "0 0 56px", width: 56, position: "sticky", left: 0, zIndex: 4, background: "#fafaf8", boxSizing: "border-box", padding: "10px 4px", fontSize: 11, fontWeight: 600, color: "#475569", textAlign: "center" }}>
+            Time
+          </div>
+          {days.map((d) => (
+            <div key={d} style={{ flex: 1, minWidth: 132, boxSizing: "border-box", padding: "10px 6px", textAlign: "center", borderLeft: "1px solid #eceeea", fontSize: 13, fontWeight: 700, color: "#123c3a" }}>
+              {DAY_LABEL[d]}
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "flex", position: "relative" }}>
+          <div style={{ flex: "0 0 56px", width: 56, position: "sticky", left: 0, zIndex: 3, background: "#fafaf8", height: gridH, boxSizing: "border-box", borderRight: "1px solid #eceeea" }}>
+            {hourMarks.map((t) => (
+              <div
+                key={t}
+                style={{
+                  position: "absolute",
+                  top: (t - gridStart) * pxPerMin - 7,
+                  right: 4,
+                  fontSize: 10,
+                  color: "#64748b",
+                  fontWeight: 600,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {fmtAmPm(t)}
+              </div>
+            ))}
+          </div>
+          {days.map((d) => {
+            const dayPls = idx.placementsByDay.get(d) || [];
+            return (
+              <div
+                key={d}
+                style={{ flex: 1, minWidth: 132, position: "relative", height: gridH, borderLeft: "1px solid #eceeea", background: "#fcfcfb" }}
+              >
+                {halfMarks.map((t) => (
+                  <div key={`h-${t}`} style={{ position: "absolute", top: (t - gridStart) * pxPerMin, left: 0, right: 0, borderTop: "1px dashed #eef0ed", pointerEvents: "none" }} />
+                ))}
+                {hourMarks.map((t) => (
+                  <div key={`hr-${t}`} style={{ position: "absolute", top: (t - gridStart) * pxPerMin, left: 0, right: 0, borderTop: "1px solid #e8ebe8", pointerEvents: "none" }} />
+                ))}
+                {dayPls.map((p) => {
+                  const cls = idx.catalogById.get(p.classId);
+                  if (!cls) return null;
+                  const laneInfo = lanesByDay.get(d)?.get(p.id) || { lane: 0, lanes: 1 };
+                  const { lane, lanes } = laneInfo;
+                  const top = (p.start - gridStart) * pxPerMin;
+                  const h = (p.end - p.start) * pxPerMin;
+                  const primaryRoom = primaryRoomForPlacement(p.rooms, roomIds);
+                  const rc = roomOverviewColor(primaryRoom, roomIds);
+                  const { roomClash, teacherClash } = blockClash(p);
+                  const rmLabel = overviewRoomLabel(p.rooms);
+                  return (
+                    <div
+                      key={p.id}
+                      onClick={() => onEditClass(p.classId, p.id)}
+                      title={`${cls.name} · ${fmtRange(p.start, p.end)} · ${cls.teacher || "TBD"} · ${rmLabel} — click to edit`}
+                      style={{
+                        position: "absolute",
+                        top: top + 1,
+                        height: Math.max(34, h - 2),
+                        left: `calc(${(lane / lanes) * 100}% + 2px)`,
+                        width: `calc(${100 / lanes}% - 4px)`,
+                        boxSizing: "border-box",
+                        zIndex: 1,
+                        background: roomClash ? "#fee2e2" : teacherClash ? "#fffbeb" : rc.bg,
+                        border: roomClash ? "2px solid #dc2626" : teacherClash ? "2px solid #d97706" : `1px solid ${rc.border}`,
+                        borderRadius: 6,
+                        padding: "3px 5px",
+                        overflow: "hidden",
+                        cursor: "pointer",
+                        color: rc.text,
+                        lineHeight: 1.2,
+                      }}
+                    >
+                      <div style={{ fontWeight: 700, fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {cls.name}{(roomClash || teacherClash) ? " ⚠" : ""}
+                      </div>
+                      <div style={{ fontSize: 10, opacity: 0.9, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {fmtRange(p.start, p.end)}
+                      </div>
+                      {h >= 40 && (
+                        <div style={{ fontSize: 10, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {cls.teacher || <span style={{ color: "#b45309" }}>TBD</span>}
+                        </div>
+                      )}
+                      {h >= 52 && (
+                        <div style={{ fontSize: 10, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {rmLabel}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div style={{ padding: "8px 12px", fontSize: 11, color: "#64748b", borderTop: "1px solid #eceeea" }}>
+        {fmtAmPm(gridStart)} – {fmtAmPm(gridEnd)} · click a block to edit · overlapping times split side-by-side
+      </div>
+    </div>
   );
 }
 

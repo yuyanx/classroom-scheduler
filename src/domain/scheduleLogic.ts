@@ -359,3 +359,65 @@ export const overviewPillStyle = ({
 
 export const overviewRoomLabel = (rooms: string[]) =>
   `Rm ${[...rooms].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })).join("+")}`;
+
+// ── Week overview calendar (time × days, room-colored blocks) ──
+export const WEEK_OVERVIEW_PX_PER_MIN = 1.0;
+
+export const ROOM_OVERVIEW_PALETTE = [
+  { bg: "#dbeafe", border: "#93c5fd", text: "#1e40af" },
+  { bg: "#ccfbf1", border: "#5eead4", text: "#0f766e" },
+  { bg: "#fce7f3", border: "#f9a8d4", text: "#9d174d" },
+  { bg: "#fef3c7", border: "#fcd34d", text: "#92400e" },
+  { bg: "#e0e7ff", border: "#a5b4fc", text: "#3730a3" },
+  { bg: "#ffedd5", border: "#fdba74", text: "#9a3412" },
+  { bg: "#ecfccb", border: "#bef264", text: "#365314" },
+  { bg: "#f3e8ff", border: "#d8b4fe", text: "#6b21a8" },
+  { bg: "#fee2e2", border: "#fca5a5", text: "#991b1b" },
+  { bg: "#e0f2fe", border: "#7dd3fc", text: "#0c4a6e" },
+];
+
+export function roomOverviewColor(roomId: string, roomOrder: string[]) {
+  const pos = roomOrder.indexOf(roomId);
+  const i = pos >= 0 ? pos : 0;
+  return ROOM_OVERVIEW_PALETTE[i % ROOM_OVERVIEW_PALETTE.length];
+}
+
+export function primaryRoomForPlacement(rooms: string[], roomOrder: string[]) {
+  const rank = (id: string) => {
+    const p = roomOrder.indexOf(id);
+    return p < 0 ? 999 : p;
+  };
+  return [...rooms].sort((a, b) => rank(a) - rank(b))[0] || rooms[0] || "";
+}
+
+export function computeWeekOverviewLayout(
+  days: string[],
+  hours: { default: [number, number]; [k: string]: [number, number] | undefined },
+  placementsByDay: Map<string, { id: string; start: number; end: number }[]>,
+  pxPerMin = WEEK_OVERVIEW_PX_PER_MIN,
+) {
+  let winStart = hours.default[0];
+  let winEnd = hours.default[1];
+  days.forEach((d) => {
+    const h = hours[d];
+    if (h) {
+      winStart = Math.min(winStart, h[0]);
+      winEnd = Math.max(winEnd, h[1]);
+    }
+  });
+  const allPls = days.flatMap((d) => placementsByDay.get(d) || []);
+  const starts = allPls.map((p) => p.start);
+  const ends = allPls.map((p) => p.end);
+  const gridStart = Math.floor(Math.min(winStart, ...(starts.length ? starts : [winStart])) / 60) * 60;
+  const gridEnd = Math.ceil(Math.max(winEnd, ...(ends.length ? ends : [winEnd])) / 60) * 60;
+  const gridH = (gridEnd - gridStart) * pxPerMin;
+  const hourMarks: number[] = [];
+  for (let t = gridStart; t <= gridEnd; t += 60) hourMarks.push(t);
+  const halfMarks: number[] = [];
+  for (let t = gridStart + 30; t < gridEnd; t += 60) halfMarks.push(t);
+  const lanesByDay = new Map<string, ReturnType<typeof layoutLanes>>();
+  days.forEach((d) => {
+    lanesByDay.set(d, layoutLanes(placementsByDay.get(d) || []));
+  });
+  return { gridStart, gridEnd, gridH, hourMarks, halfMarks, lanesByDay, pxPerMin };
+}

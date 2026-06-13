@@ -15,6 +15,10 @@ export {
   formatDayRange,
   classScheduleLines,
   sortCatalogForByClassView,
+  roomOverviewColor,
+  primaryRoomForPlacement,
+  computeWeekOverviewLayout,
+  ROOM_OVERVIEW_PALETTE,
 } from "./domain/scheduleLogic.ts";
 
 export {

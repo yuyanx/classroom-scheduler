@@ -60,8 +60,8 @@ classroom-scheduler/
 Components inside `App.jsx` (top to bottom): time helpers + default data + migrations
 (`migrateOld()` → `migrateV1toV2()` → `normalizeV2()`, entry point `upgrade()`) →
 `ClassroomScheduler` (main: left library sidebar, day tabs, day calendar with drag/resize, all state ops) →
-`ClassModal` (class fields + schedule-rows editor) → `ClassScheduleView` (By Class tab) →
-`TeacherScheduleView` (By Teacher tab) → `TeacherModal` → `RoomModal` → `RoomCapModal` →
+`ClassModal` (class fields + schedule-rows editor) → `WeekOverviewView` (Week Overview tab) →
+`ClassScheduleView` (By Class tab) → `TeacherScheduleView` (By Teacher tab) → `TeacherModal` → `RoomModal` → `RoomCapModal` →
 `HoursModal` → overview pill helpers → `Overlay` / `Field` → style objects.
 
 ---
@@ -179,10 +179,9 @@ survive). After deploying, ask everyone to refresh open tabs.
 
 ### Days / tabs
 
-One tab per entry in `days` (Mon–Sat by default), plus two pseudo-tabs (`tab === "byClass"` /
-`"byTeacher"`) that swap the calendar for read-only overview tables — one row per class / per
-teacher, columns = days, click-to-edit. Code that uses `tab` as a day must guard for the
-pseudo-tabs (see `isDayTab` / `defaultDay`). There is no "Morning (Daily)" section anymore — a
+One tab per entry in `days` (Mon–Sat by default), plus pseudo-tabs: **`weekOverview`** (📅 Week
+Overview — time × days grid, room-colored blocks), **`byClass`**, **`byTeacher`**. Code that uses
+`tab` as a day must guard for pseudo-tabs (see `isDayTab` / `defaultDay`). There is no "Morning (Daily)" section anymore — a
 daily class is simply five placements (the class dialog's **⇄ Mon–Fri** button creates them in
 one click, and hovering a day tab mid-drag switches days so a card can be dropped on another day).
 
@@ -405,6 +404,9 @@ app runs exactly as the old browser-only version.
   A–Z, then earliest meeting time, then name (`sortCatalogForByClassView`).
 - 2026-06-13 — **Catalog sort buckets for numeric names**: classes like `5/6th ELA` /
   `5/6th Math` share a `5/6th` bucket and order by earliest meeting (Math 9:00 before ELA 10:30).
+- 2026-06-13 — **📅 Week Overview tab**: read-only week grid (time × Mon–Sat columns);
+  blocks show class name, time, teacher, and `Rm #`; background color per room (legend on top);
+  overlapping meetings use `layoutLanes`; click block to edit class.
 
 ---
 
