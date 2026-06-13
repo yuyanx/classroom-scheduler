@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="Premier Plus">
+  <rect width="120" height="120" rx="24" fill="#123c3a"/>
+  <rect x="24" y="28" width="72" height="64" rx="6" fill="#fff" opacity=".96"/>
+  <rect x="24" y="28" width="72" height="20" rx="6" fill="#0d7a72"/>
+  <circle cx="38" cy="38" r="3" fill="#fff"/>
+  <circle cx="50" cy="38" r="3" fill="#fff"/>
+  <circle cx="62" cy="38" r="3" fill="#fff"/>
+  <circle cx="74" cy="38" r="3" fill="#fff"/>
+  <rect x="32" y="56" width="20" height="12" rx="3" fill="#ccfbf1"/>
+  <rect x="56" y="56" width="20" height="12" rx="3" fill="#dbeafe"/>
+  <rect x="32" y="72" width="20" height="12" rx="3" fill="#fef3c7"/>
+  <rect x="56" y="72" width="20" height="12" rx="3" fill="#fce7f3"/>
+  <text x="60" y="108" text-anchor="middle" fill="#d1fae5" font-family="Inter,Helvetica Neue,Arial,sans-serif" font-size="14" font-weight="700">Premier Plus</text>
+</svg>

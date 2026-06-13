@@ -2274,13 +2274,24 @@ export default function ClassroomScheduler() {
     <div style={{ minHeight: "100vh", background: "#f4f5f3", fontFamily: "'Inter','Helvetica Neue',Arial,sans-serif", color: "#1e293b" }}>
       {/* Header */}
       <header style={{ background: "#123c3a", color: "#fff", padding: "18px 24px" }}>
-        <div style={{ width: "100%", boxSizing: "border-box", display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 16 }}>
-          <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, letterSpacing: "0.02em" }}>
-            Premier Plus · Classroom Scheduler
-          </h1>
-          <span style={{ fontSize: 13, opacity: 0.75 }}>
-            2026 Summer · Jericho · {rooms.length} rooms · {DAY_SHORT[days[0]]}–{DAY_SHORT[days[days.length - 1]]}
-          </span>
+        <div style={{ width: "100%", boxSizing: "border-box", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
+            <img
+              src="./logo.svg"
+              alt="Premier Plus"
+              width={40}
+              height={40}
+              style={{ display: "block", flexShrink: 0, borderRadius: 8 }}
+            />
+            <div style={{ minWidth: 0 }}>
+              <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, letterSpacing: "0.02em", lineHeight: 1.2 }}>
+                Premier Plus · Classroom Scheduler
+              </h1>
+              <span style={{ fontSize: 13, opacity: 0.75 }}>
+                2026 Summer · Jericho · {rooms.length} rooms · {DAY_SHORT[days[0]]}–{DAY_SHORT[days[days.length - 1]]}
+              </span>
+            </div>
+          </div>
           <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <div style={{ position: "relative" }} onClick={(e) => e.stopPropagation()}>
               <button
