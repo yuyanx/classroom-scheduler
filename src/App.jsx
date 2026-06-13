@@ -4163,8 +4163,10 @@ function RoomModal({ rooms, placements, onSave, onClose }) {
     onSave({ list: out, renames });
   };
 
+  const roomMgrGrid = "22px 80px 76px 44px 26px 26px 26px";
+
   return (
-    <Overlay onClose={onClose} wide>
+    <Overlay onClose={onClose}>
       <h3 style={{ marginTop: 0 }}>Manage rooms</h3>
       <p style={{ fontSize: 13, color: "#64748b", margin: "0 0 12px" }}>
         One room list for the whole week. To combine classrooms for a class (e.g. SAT across Rooms 2+3),
@@ -4187,7 +4189,7 @@ function RoomModal({ rooms, placements, onSave, onClose }) {
       <p style={{ fontSize: 11, color: "#94a3b8", margin: "0 0 10px" }}>
         Colors follow list order — use ↑↓ to reorder. New rooms get the next color automatically.
       </p>
-      <div style={{ display: "grid", gridTemplateColumns: "22px 1fr 76px 44px 26px 26px 26px", gap: 5, alignItems: "center", marginBottom: 5, fontSize: 11, color: "#64748b", fontWeight: 700 }}>
+      <div style={{ display: "grid", gridTemplateColumns: roomMgrGrid, gap: 5, alignItems: "center", marginBottom: 5, fontSize: 11, color: "#64748b", fontWeight: 700, width: "fit-content" }}>
         <span />
         <span>Room</span>
         <span>Capacity</span>
@@ -4196,14 +4198,14 @@ function RoomModal({ rooms, placements, onSave, onClose }) {
         <span />
         <span />
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 320, overflowY: "auto" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 320, overflowY: "auto", width: "fit-content" }}>
         {list.map((r, i) => (
-          <div key={i} style={{ display: "grid", gridTemplateColumns: "22px 1fr 76px 44px 26px 26px 26px", gap: 5, alignItems: "center" }}>
+          <div key={i} style={{ display: "grid", gridTemplateColumns: roomMgrGrid, gap: 5, alignItems: "center" }}>
             <RoomColorSwatch color={colorForIndex(i)} size={16} />
             <input
-              style={{ ...inputStyle, padding: "6px 8px" }}
+              style={{ ...inputStyle, padding: "6px 8px", width: 80, boxSizing: "border-box" }}
               value={r.name}
-              placeholder="Room name"
+              placeholder="#"
               onChange={(e) => patch(i, { name: e.target.value })}
             />
             <input
