@@ -401,6 +401,10 @@ app runs exactly as the old browser-only version.
   mutator functions using `dataRef` (fixes stale-closure overwrites on resize and other edits).
 - 2026-06-13 — **Wave 1 — TEST-P0 + CI**: `migration.test.mjs`, `conflicts.test.mjs`,
   `sync.test.mjs`, GitHub Actions CI; **35 tests** green.
+- 2026-06-13 — **Library sort aligned with By Class**: unscheduled first, then first letter
+  A–Z, then earliest meeting time, then name (`sortCatalogForByClassView`).
+- 2026-06-13 — **Catalog sort buckets for numeric names**: classes like `5/6th ELA` /
+  `5/6th Math` share a `5/6th` bucket and order by earliest meeting (Math 9:00 before ELA 10:30).
 
 ---
 

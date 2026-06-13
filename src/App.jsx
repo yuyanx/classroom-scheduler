@@ -1747,19 +1747,14 @@ export default function ClassroomScheduler() {
     setConfirmReset(false);
   };
 
-  // ── Library list (filtered, unscheduled first) ──
+  // ── Library list (filtered; same sort as By Class: unscheduled first, letter, earliest time) ──
   const q = libQuery.trim().toLowerCase();
-  const libList = useMemo(() =>
-    catalog
-      .filter((k) => !q || k.name.toLowerCase().includes(q) || (k.teacher || "").toLowerCase().includes(q))
-      .sort((a, b) => {
-        const ap = idx.scheduledClassIds.has(a.id);
-        const bp = idx.scheduledClassIds.has(b.id);
-        if (ap !== bp) return ap ? 1 : -1;
-        return a.name.localeCompare(b.name);
-      }),
-    [catalog, q, idx.scheduledClassIds]
-  );
+  const libList = useMemo(() => {
+    const filtered = catalog.filter(
+      (k) => !q || k.name.toLowerCase().includes(q) || (k.teacher || "").toLowerCase().includes(q)
+    );
+    return sortCatalogForByClassView(filtered, placements);
+  }, [catalog, q, placements]);
   const unscheduledCount = useMemo(
     () => catalog.filter((k) => !idx.scheduledClassIds.has(k.id)).length,
     [catalog, idx.scheduledClassIds]

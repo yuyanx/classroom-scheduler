@@ -164,6 +164,19 @@ test("sortCatalogForByClassView: unscheduled first, then letter, then time", () 
   assert.deepEqual(sorted.map((k) => k.id), ["z", "a", "b"]);
 });
 
+test("sortCatalogForByClassView: same numeric prefix sorts by earliest time", () => {
+  const catalog = [
+    { id: "ela", name: "5/6th ELA", teacher: "", reg: 0, note: "" },
+    { id: "math", name: "5/6th Math", teacher: "", reg: 0, note: "" },
+  ];
+  const placements = [
+    { id: "p1", classId: "ela", day: "mon", start: 630, end: 720, rooms: ["4"] },
+    { id: "p2", classId: "math", day: "mon", start: 540, end: 630, rooms: ["5"] },
+  ];
+  const sorted = sortCatalogForByClassView(catalog, placements);
+  assert.deepEqual(sorted.map((k) => k.id), ["math", "ela"]);
+});
+
 test("layoutLanes assigns columns for overlaps", () => {
   const list = [
     { id: "p1", start: 540, end: 630 },

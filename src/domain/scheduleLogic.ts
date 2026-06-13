@@ -280,6 +280,14 @@ export const classScheduleLines = (placements: { classId: string; day: string; s
     .map((g) => `${formatDayRange(g.days)} ${fmtTimeRangeAmPm(g.start, g.end)}`);
 };
 
+/** Group key for catalog sort — "5/6th ELA" and "5/6th Math" share bucket "5/6th". */
+export const catalogSortBucket = (name: string) => {
+  const t = name.trim();
+  const num = t.match(/^(\d[\d/]*(?:th)?)/i);
+  if (num) return num[1].toLowerCase();
+  return (t[0] || "").toLowerCase();
+};
+
 export function sortCatalogForByClassView(catalog: { id: string; name: string }[], placements: { classId: string; start: number }[]) {
   const earliestStart = (classId: string) => {
     let best: number | null = null;
@@ -289,18 +297,21 @@ export function sortCatalogForByClassView(catalog: { id: string; name: string }[
     });
     return best;
   };
+  const byTimeThenName = (sa: number | null, sb: number | null, aName: string, bName: string) => {
+    if (sa == null && sb == null) return aName.localeCompare(bName);
+    if (sa == null) return 1;
+    if (sb == null) return -1;
+    return sa - sb || aName.localeCompare(bName);
+  };
   return catalog.slice().sort((a, b) => {
     const sa = earliestStart(a.id);
     const sb = earliestStart(b.id);
     if ((sa == null) !== (sb == null)) return sa == null ? -1 : 1;
-    const letter = (name: string) => (name.trim()[0] || "").toLowerCase();
-    const la = letter(a.name);
-    const lb = letter(b.name);
-    if (la !== lb) return la.localeCompare(lb);
-    if (sa == null && sb == null) return a.name.localeCompare(b.name);
-    if (sa == null) return 1;
-    if (sb == null) return -1;
-    return sa - sb || a.name.localeCompare(b.name);
+    const ba = catalogSortBucket(a.name);
+    const bb = catalogSortBucket(b.name);
+    if (ba !== bb) return ba.localeCompare(bb, undefined, { numeric: true });
+    // Same bucket (letter or numeric prefix) — earliest meeting, then full name.
+    return byTimeThenName(sa, sb, a.name, b.name);
   });
 }
 
