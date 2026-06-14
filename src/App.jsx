@@ -2862,6 +2862,7 @@ export default function ClassroomScheduler() {
                 hours={hours}
                 rooms={rooms}
                 idx={idx}
+                onGoToDay={setTab}
                 onEditClass={(classId, placementId) => setEditing({ isNew: false, classId, placementId })}
               />
             ) : (
@@ -3466,7 +3467,7 @@ function RoomHeaderBadge({ roomId, roomOrder }) {
 }
 
 // ───────────────────────── Week overview (time × days, room-colored) ─────────────────────────
-function WeekOverviewView({ days, hours, rooms, idx, onEditClass }) {
+function WeekOverviewView({ days, hours, rooms, idx, onGoToDay, onEditClass }) {
   const roomIds = rooms.map((r) => r.id);
   const layout = useMemo(
     () => computeWeekOverviewLayout(days, hours, idx.placementsByDay),
@@ -3488,9 +3489,31 @@ function WeekOverviewView({ days, hours, rooms, idx, onEditClass }) {
             Time
           </div>
           {days.map((d) => (
-            <div key={d} style={{ flex: 1, minWidth: 132, boxSizing: "border-box", padding: "10px 6px", textAlign: "center", borderLeft: "1px solid #eceeea", fontSize: 13, fontWeight: 700, color: "#123c3a" }}>
+            <button
+              key={d}
+              type="button"
+              onClick={() => onGoToDay(d)}
+              title={`Open ${DAY_LABEL[d]} day view`}
+              style={{
+                flex: 1,
+                minWidth: 132,
+                boxSizing: "border-box",
+                padding: "10px 6px",
+                textAlign: "center",
+                border: "none",
+                borderLeft: "1px solid #eceeea",
+                fontSize: 13,
+                fontWeight: 700,
+                color: "#123c3a",
+                background: "transparent",
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "#f0fdfa"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+            >
               {DAY_LABEL[d]}
-            </div>
+            </button>
           ))}
         </div>
         <div style={{ display: "flex", position: "relative", isolation: "isolate" }}>
@@ -3587,7 +3610,7 @@ function WeekOverviewView({ days, hours, rooms, idx, onEditClass }) {
         </div>
       </div>
       <div style={{ padding: "8px 12px", fontSize: 11, color: "#64748b", borderTop: "1px solid #eceeea" }}>
-        {fmtAmPm(gridStart)} – {fmtAmPm(gridEnd)} · click a block to edit · overlapping times split side-by-side
+        {fmtAmPm(gridStart)} – {fmtAmPm(gridEnd)} · click a day name to open that day · click a block to edit · overlapping times split side-by-side
       </div>
     </div>
   );
