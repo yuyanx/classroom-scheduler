@@ -9,6 +9,8 @@ export {
   evaluatePlacement,
   freeRoomsAt,
   buildConflictReport,
+  buildStudentConflictClassIds,
+  studentConflictLabelsAt,
   computeTabBlockMeta,
   dataSignature,
   layoutLanes,

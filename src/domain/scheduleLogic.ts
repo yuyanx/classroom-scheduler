@@ -34,8 +34,8 @@ export const normalizeStudentList = (raw: unknown): string[] => {
 export const overlaps = (a: { day: string; start: number; end: number }, b: { day: string; start: number; end: number }) =>
   a.day === b.day && a.start < b.end && b.start < a.end;
 
-export function buildScheduleIndexes(data: { catalog?: { id: string; teacher?: string }[]; placements?: { id: string; classId: string; day: string; rooms: string[] }[]; rooms?: { id: string; cap: number }[] }) {
-  const catalogById = new Map<string, { id: string; name?: string; teacher?: string; reg?: number; note?: string }>();
+export function buildScheduleIndexes(data: { catalog?: { id: string; teacher?: string; students?: string[] }[]; placements?: { id: string; classId: string; day: string; rooms: string[] }[]; rooms?: { id: string; cap: number }[] }) {
+  const catalogById = new Map<string, { id: string; name?: string; teacher?: string; reg?: number; note?: string; students?: string[] }>();
   (data.catalog || []).forEach((k) => catalogById.set(k.id, k));
 
   const placementsByClassId = new Map<string, typeof data.placements>();
@@ -164,10 +164,100 @@ export function freeRoomsAt(
   });
 }
 
+const sharedRosterStudents = (
+  a: { students?: string[] } | undefined,
+  b: { students?: string[] } | undefined,
+) => {
+  const keysA = new Set((a?.students || []).map(studentKey).filter(Boolean));
+  return (b?.students || []).filter((s) => keysA.has(studentKey(s)));
+};
+
+export function buildStudentConflictClassIds(
+  catalog: { id: string; students?: string[] }[],
+  placements: { classId: string; day: string; start: number; end: number }[],
+) {
+  const classIdsByStudent = new Map<string, Set<string>>();
+  catalog.forEach((k) => {
+    (k.students || []).forEach((s) => {
+      const key = studentKey(s);
+      if (!key) return;
+      if (!classIdsByStudent.has(key)) classIdsByStudent.set(key, new Set());
+      classIdsByStudent.get(key)!.add(k.id);
+    });
+  });
+
+  const conflictClassIdsByStudent = new Map<string, Set<string>>();
+  const mark = (student: string, classId: string) => {
+    const key = studentKey(student);
+    if (!conflictClassIdsByStudent.has(key)) conflictClassIdsByStudent.set(key, new Set());
+    conflictClassIdsByStudent.get(key)!.add(classId);
+  };
+
+  const plsByClass = new Map<string, typeof placements>();
+  placements.forEach((p) => {
+    if (!plsByClass.has(p.classId)) plsByClass.set(p.classId, []);
+    plsByClass.get(p.classId)!.push(p);
+  });
+
+  classIdsByStudent.forEach((classIds) => {
+    const ids = [...classIds];
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        const plsA = plsByClass.get(ids[i]) || [];
+        const plsB = plsByClass.get(ids[j]) || [];
+        for (const pa of plsA) {
+          for (const pb of plsB) {
+            if (!overlaps(pa, pb)) continue;
+            const clsA = catalog.find((k) => k.id === ids[i]);
+            const clsB = catalog.find((k) => k.id === ids[j]);
+            sharedRosterStudents(clsA, clsB).forEach((s) => {
+              mark(s, ids[i]);
+              mark(s, ids[j]);
+            });
+          }
+        }
+      }
+    }
+  });
+
+  return conflictClassIdsByStudent;
+}
+
+export function studentConflictLabelsAt(
+  catalog: { id: string; name?: string; students?: string[] }[],
+  placements: { classId: string; day: string; start: number; end: number }[],
+  opts: {
+    excludeClassId?: string;
+    rosterStudents: string[];
+    cand: { day: string; start: number; end: number };
+  },
+) {
+  const rosterKeys = new Set(opts.rosterStudents.map(studentKey).filter(Boolean));
+  if (!rosterKeys.size) return [];
+  const labels: string[] = [];
+  const seen = new Set<string>();
+  catalog.forEach((k) => {
+    if (k.id === opts.excludeClassId) return;
+    const shared = (k.students || []).filter((s) => rosterKeys.has(studentKey(s)));
+    if (!shared.length) return;
+    placements
+      .filter((p) => p.classId === k.id)
+      .forEach((p) => {
+        if (!overlaps(p, opts.cand)) return;
+        const label = `${k.name || "Class"} (${DAY_SHORT[p.day]} ${fmtRange(p.start, p.end)})`;
+        if (seen.has(label)) return;
+        seen.add(label);
+        labels.push(label);
+      });
+  });
+  return labels;
+}
+
 export function buildConflictReport(idx: ReturnType<typeof buildScheduleIndexes>, data: { placements?: { id: string; classId: string; day: string; start: number; end: number; rooms: string[] }[] }) {
   const items: { type: string; placementId: string; otherPlacementId: string; day: string; classId: string; className: string; start: number; end: number; label: string }[] = [];
   const seen = new Set<string>();
-  (data.placements || []).forEach((p) => {
+  const allPls = data.placements || [];
+  allPls.forEach((p) => {
     const cls = idx.catalogById.get(p.classId);
     const cand = { day: p.day, start: p.start, end: p.end, rooms: p.rooms };
     const ev = evaluatePlacement(idx, cand, { excludePlacementId: p.id, teacher: cls?.teacher });
@@ -203,6 +293,31 @@ export function buildConflictReport(idx: ReturnType<typeof buildScheduleIndexes>
         start: p.start,
         end: p.end,
         label: `${cls?.teacher || "Teacher"} · ${cls?.name || "Class"} ↔ ${otherCls?.name || "Class"} · ${DAY_SHORT[p.day]} ${fmtRange(p.start, p.end)}`,
+      });
+    });
+    allPls.forEach((other) => {
+      if (other.id === p.id || other.classId === p.classId) return;
+      if (!overlaps(p, other)) return;
+      const pairKey = [p.id, other.id].sort().join("|") + ":student";
+      if (seen.has(pairKey)) return;
+      const otherCls = idx.catalogById.get(other.classId);
+      const shared = sharedRosterStudents(cls, otherCls);
+      if (!shared.length) return;
+      seen.add(pairKey);
+      const studentLabel =
+        shared.length === 1
+          ? shared[0]
+          : `${shared.length} students (${shared.slice(0, 2).join(", ")}${shared.length > 2 ? "…" : ""})`;
+      items.push({
+        type: "student",
+        placementId: p.id,
+        otherPlacementId: other.id,
+        day: p.day,
+        classId: p.classId,
+        className: cls?.name || "Class",
+        start: p.start,
+        end: p.end,
+        label: `${studentLabel} · ${cls?.name || "Class"} ↔ ${otherCls?.name || "Class"} · ${DAY_SHORT[p.day]} ${fmtRange(p.start, p.end)}`,
       });
     });
   });

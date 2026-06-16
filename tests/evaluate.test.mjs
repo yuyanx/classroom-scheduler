@@ -5,6 +5,8 @@ import {
   evaluatePlacement,
   freeRoomsAt,
   buildConflictReport,
+  buildStudentConflictClassIds,
+  studentConflictLabelsAt,
 } from "../dist/test-logic.mjs";
 
 const baseV2 = {
@@ -61,4 +63,40 @@ test("placementsByDayTeacher speeds teacher lookup", () => {
   const idx = buildScheduleIndexes(baseV2);
   assert.ok(idx.placementsByDayTeacher.has("mon\0amy"));
   assert.equal(idx.placementsByDayTeacher.get("mon\0amy").length, 2);
+});
+
+test("buildConflictReport detects student schedule conflicts", () => {
+  const data = {
+    ...baseV2,
+    catalog: [
+      { id: "a", name: "ELA", teacher: "Amy", reg: 1, note: "", students: ["Alex Chen"] },
+      { id: "b", name: "Math", teacher: "Bob", reg: 1, note: "", students: ["Alex Chen"] },
+      { id: "c", name: "Art", teacher: "Cara", reg: 1, note: "", students: ["Jordan Lee"] },
+    ],
+    placements: [
+      { id: "p1", classId: "a", day: "mon", start: 540, end: 630, rooms: ["1"] },
+      { id: "p2", classId: "b", day: "mon", start: 600, end: 690, rooms: ["2"] },
+      { id: "p3", classId: "c", day: "mon", start: 540, end: 630, rooms: ["3"] },
+    ],
+  };
+  const idx = buildScheduleIndexes(data);
+  const report = buildConflictReport(idx, data);
+  const studentItems = report.filter((x) => x.type === "student");
+  assert.equal(studentItems.length, 1);
+  assert.match(studentItems[0].label, /Alex Chen/);
+  assert.match(studentItems[0].label, /ELA/);
+  assert.match(studentItems[0].label, /Math/);
+
+  const byStudent = buildStudentConflictClassIds(data.catalog, data.placements);
+  assert.ok(byStudent.get("alex chen")?.has("a"));
+  assert.ok(byStudent.get("alex chen")?.has("b"));
+  assert.equal(byStudent.get("jordan lee"), undefined);
+
+  const labels = studentConflictLabelsAt(data.catalog, data.placements, {
+    excludeClassId: "a",
+    rosterStudents: ["Alex Chen"],
+    cand: { day: "mon", start: 540, end: 630 },
+  });
+  assert.equal(labels.length, 1);
+  assert.match(labels[0], /Math/);
 });

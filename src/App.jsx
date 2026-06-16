@@ -47,6 +47,8 @@ import {
   evaluatePlacement,
   freeRoomsAt as lookupFreeRooms,
   buildConflictReport,
+  buildStudentConflictClassIds,
+  studentConflictLabelsAt,
   computeTabBlockMeta,
   dataSignature,
   layoutLanes,
@@ -1801,7 +1803,8 @@ export default function ClassroomScheduler() {
   const conflictCounts = useMemo(() => {
     const room = conflictReport.filter((x) => x.type === "room").length;
     const teacher = conflictReport.filter((x) => x.type === "teacher").length;
-    return { room, teacher, total: room + teacher };
+    const student = conflictReport.filter((x) => x.type === "student").length;
+    return { room, teacher, student, total: room + teacher + student };
   }, [conflictReport]);
 
   const teacherBusy = (cand, teacher, opts = {}) => teacherBusyIndexed(idx, cand, teacher, opts);
@@ -2566,7 +2569,7 @@ export default function ClassroomScheduler() {
                   fontSize: 12,
                 }}
               >
-                ⚠ {conflictCounts.room} room · {conflictCounts.teacher} teacher
+                ⚠ {conflictCounts.room} room · {conflictCounts.teacher} teacher · {conflictCounts.student} student
               </button>
             )}
             <span
@@ -2635,10 +2638,11 @@ export default function ClassroomScheduler() {
                 onClick={() => goToConflict(item)}
                 style={{
                   textAlign: "left", border: "1px solid #fde68a", background: "#fff",
-                  borderRadius: 8, padding: "6px 10px", fontSize: 12, cursor: "pointer", color: item.type === "room" ? "#b91c1c" : "#b45309",
+                  borderRadius: 8, padding: "6px 10px", fontSize: 12, cursor: "pointer",
+                  color: item.type === "room" ? "#b91c1c" : item.type === "teacher" ? "#b45309" : "#6d28d9",
                 }}
               >
-                {item.type === "room" ? "🔴" : "🟠"} {item.label}
+                {item.type === "room" ? "🔴" : item.type === "teacher" ? "🟠" : "🟣"} {item.label}
               </button>
             ))}
           </div>
@@ -3090,6 +3094,13 @@ export default function ClassroomScheduler() {
           teacherConflictsAt={(cand, teacher) =>
             evaluateAt(cand, { excludeClassId: editing.classId, teacher }).teacherLabels
           }
+          studentConflictsAt={(cand, rosterStudents) =>
+            studentConflictLabelsAt(catalog, placements, {
+              excludeClassId: editing.classId,
+              rosterStudents,
+              cand,
+            })
+          }
           contextLabel={
             editing.room != null
               ? `${DAY_LABEL[editing.day]} · ${fmtAmPm(editing.start)} · Room ${editing.room}`
@@ -3230,7 +3241,7 @@ export default function ClassroomScheduler() {
 }
 
 // ───────────────────────── Class edit modal ─────────────────────────
-function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultDay, occupiedBy, freeRoomsAt, teacherConflictsAt, contextLabel, onSave, onDelete, onClose }) {
+function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultDay, occupiedBy, freeRoomsAt, teacherConflictsAt, studentConflictsAt, contextLabel, onSave, onDelete, onClose }) {
   const c = cls || {};
   const [name, setName] = useState(c.name || "");
   const [teacher, setTeacher] = useState(c.teacher || "");
@@ -3301,13 +3312,20 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
     if (teacherOverlaps.length > 0 && !window.confirm(
       `${teacher.trim()} is also teaching at the same time: ${teacherOverlaps.join(", ")}.\n\nSave anyway?`
     )) return;
+    const roster = normalizeStudentList(studentsText.split("\n"));
+    const studentOverlaps = studentConflictsAt
+      ? [...new Set(rows.flatMap((r) => studentConflictsAt({ day: r.day, start: r.start, end: r.end, rooms: r.rooms }, roster)))]
+      : [];
+    if (studentOverlaps.length > 0 && !window.confirm(
+      `A student on this roster is also scheduled at the same time: ${studentOverlaps.join(", ")}.\n\nSave anyway?`
+    )) return;
     onSave(
       {
         name: name.trim(),
         teacher: teacher.trim(),
         reg: Math.max(0, parseInt(reg, 10) || 0),
         note: note.trim(),
-        students: normalizeStudentList(studentsText.split("\n")),
+        students: roster,
       },
       rows
     );
@@ -3376,6 +3394,12 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
         const dupHere = timeDup(r, i);
         const teacherOverlaps = teacherKey(teacher)
           ? teacherConflictsAt({ day: r.day, start: r.start, end: r.end, rooms: r.rooms }, teacher)
+          : [];
+        const studentOverlaps = studentConflictsAt
+          ? studentConflictsAt(
+              { day: r.day, start: r.start, end: r.end, rooms: r.rooms },
+              normalizeStudentList(studentsText.split("\n"))
+            )
           : [];
         const availableRooms = freeRoomsAt
           ? freeRoomsAt({ day: r.day, start: r.start, end: r.end }).filter((id) => !r.rooms.includes(id))
@@ -3484,6 +3508,14 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
                 title="Same teacher in two rooms at once — allowed, but double-check before saving"
               >
                 ⚠ Teacher overlap: {teacher.trim()} also has {teacherOverlaps.join(", ")}
+              </div>
+            )}
+            {studentOverlaps.length > 0 && (
+              <div
+                style={{ ...studentWarningStyle, marginTop: 5 }}
+                title="A roster student is in another class at the same time — allowed, but double-check before saving"
+              >
+                ⚠ Student overlap: roster also has {studentOverlaps.join(", ")}
               </div>
             )}
           </div>
@@ -4652,6 +4684,10 @@ const BY_STUDENT_LABEL_W = BY_TEACHER_LABEL_W;
 
 function StudentScheduleView({ students, catalog, placements, rooms, idx, onEditClass, onManageStudents }) {
   const roomOrder = rooms.map((r) => r.id);
+  const studentConflictClassIds = useMemo(
+    () => buildStudentConflictClassIds(catalog, placements),
+    [catalog, placements]
+  );
 
   const earliestStart = (classId) => {
     let best = null;
@@ -4680,7 +4716,7 @@ function StudentScheduleView({ students, catalog, placements, rooms, idx, onEdit
   const scheduledFor = (studentName) =>
     classesFor(studentName).filter((k) => placements.some((p) => p.classId === k.id));
 
-  const classClash = (cls) => {
+  const classClash = (cls, studentName) => {
     let roomClash = false;
     let teacherClash = false;
     placements
@@ -4694,8 +4730,12 @@ function StudentScheduleView({ students, catalog, placements, rooms, idx, onEdit
         if (ev.roomClashes.length) roomClash = true;
         if (ev.hasTeacherConflict) teacherClash = true;
       });
-    return { roomClash, teacherClash };
+    const studentClash = (studentConflictClassIds.get(studentKey(studentName)) || new Set()).has(cls.id);
+    return { roomClash, teacherClash, studentClash };
   };
+
+  const studentHasConflict = (studentName) =>
+    (studentConflictClassIds.get(studentKey(studentName)) || new Set()).size > 0;
 
   const metaLine = {
     fontSize: 11,
@@ -4706,14 +4746,14 @@ function StudentScheduleView({ students, catalog, placements, rooms, idx, onEdit
     minWidth: 0,
   };
 
-  const renderCard = (cls) => {
+  const renderCard = (cls, studentName) => {
     const pls = placements.filter((p) => p.classId === cls.id);
     const groups = classScheduleGroups(pls, cls.id);
     if (!groups.length) return null;
     const allRooms = [...new Set(pls.flatMap((p) => p.rooms))];
     const roomId = primaryRoomForPlacement(allRooms, roomOrder);
     const rc = roomOverviewColor(roomId, roomOrder);
-    const { roomClash, teacherClash } = classClash(cls);
+    const { roomClash, teacherClash, studentClash } = classClash(cls, studentName);
     const singleGroup = groups.length === 1;
     const teacherLabel = cls.teacher || <span style={{ color: "#b45309" }}>TBD</span>;
     return (
@@ -4726,25 +4766,27 @@ function StudentScheduleView({ students, catalog, placements, rooms, idx, onEdit
           width: 148,
           minHeight: 42,
           boxSizing: "border-box",
-          background: roomClash ? "#fee2e2" : teacherClash ? "#fffbeb" : rc.bg,
-          border: roomClash ? "2px solid #dc2626" : teacherClash ? "2px solid #d97706" : `1px solid ${rc.border}`,
+          background: roomClash ? "#fee2e2" : teacherClash ? "#fffbeb" : studentClash ? "#ede9fe" : rc.bg,
+          border: roomClash ? "2px solid #dc2626" : teacherClash ? "2px solid #d97706" : studentClash ? "2px solid #7c3aed" : `1px solid ${rc.border}`,
           boxShadow: roomClash
             ? "0 0 0 3px rgba(220,38,38,.12)"
             : teacherClash
               ? "0 0 0 3px rgba(217,119,6,.12)"
-              : "none",
+              : studentClash
+                ? "0 0 0 3px rgba(124,58,237,.12)"
+                : "none",
           borderRadius: 8,
           padding: "4px 7px 8px",
           overflow: "hidden",
           cursor: "pointer",
-          color: rc.text,
+          color: studentClash && !roomClash && !teacherClash ? "#5b21b6" : rc.text,
           display: "flex",
           flexDirection: "column",
           gap: 2,
         }}
       >
         <div style={{ fontWeight: 700, fontSize: 12.5, lineHeight: 1.2, overflowWrap: "anywhere", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
-          {cls.name}{(roomClash || teacherClash) ? " ⚠" : ""}
+          {cls.name}{(roomClash || teacherClash || studentClash) ? " ⚠" : ""}
         </div>
         {singleGroup ? (
           <>
@@ -4781,7 +4823,9 @@ function StudentScheduleView({ students, catalog, placements, rooms, idx, onEdit
           verticalAlign: "top",
         }}
       >
-        <div style={{ fontWeight: 700, fontSize: 13, color: "#123c3a", overflowWrap: "anywhere" }}>{label}</div>
+        <div style={{ fontWeight: 700, fontSize: 13, color: studentHasConflict(label) ? "#6d28d9" : "#123c3a", overflowWrap: "anywhere" }}>
+          {label}{studentHasConflict(label) ? " ⚠" : ""}
+        </div>
         {classList.length === 0 ? (
           <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>—</div>
         ) : (
@@ -4809,7 +4853,7 @@ function StudentScheduleView({ students, catalog, placements, rooms, idx, onEdit
         {scheduledList.length === 0 ? (
           <span style={{ color: "#cbd5d1", fontSize: 12, padding: "4px 2px" }}>—</span>
         ) : (
-          scheduledList.map((k) => renderCard(k))
+          scheduledList.map((k) => renderCard(k, label))
         )}
       </div>
     </div>
@@ -4866,7 +4910,9 @@ function StudentScheduleView({ students, catalog, placements, rooms, idx, onEdit
         <span style={{ color: "#b91c1c", fontWeight: 700 }}> Red </span>
         = room overlap ·
         <span style={{ color: "#b45309", fontWeight: 700 }}> amber </span>
-        = teacher double-booked.
+        = teacher double-booked ·
+        <span style={{ color: "#6d28d9", fontWeight: 700 }}> violet </span>
+        = student double-booked.
         <b> Manage students</b> renames (cascades to class rosters) or removes a student from every class.
       </p>
     </>
@@ -5351,6 +5397,10 @@ const chipStyle = {
 };
 const teacherWarningStyle = {
   fontSize: 11, background: "#fffbeb", color: "#b45309", border: "1px solid #fde68a",
+  borderRadius: 4, padding: "2px 6px", fontWeight: 700, lineHeight: 1.25,
+};
+const studentWarningStyle = {
+  fontSize: 11, background: "#ede9fe", color: "#6d28d9", border: "1px solid #c4b5fd",
   borderRadius: 4, padding: "2px 6px", fontWeight: 700, lineHeight: 1.25,
 };
 const roomConflictStyle = {
