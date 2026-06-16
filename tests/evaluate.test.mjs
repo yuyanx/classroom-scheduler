@@ -86,6 +86,7 @@ test("buildConflictReport detects student schedule conflicts", () => {
   assert.match(studentItems[0].label, /Alex Chen/);
   assert.match(studentItems[0].label, /ELA/);
   assert.match(studentItems[0].label, /Math/);
+  assert.match(studentItems[0].label, /Rm 1\+2/);
 
   const byStudent = buildStudentConflictClassIds(data.catalog, data.placements);
   assert.ok(byStudent.get("alex chen")?.has("a"));

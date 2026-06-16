@@ -2644,9 +2644,11 @@ export default function ClassroomScheduler() {
                   borderRadius: 8, padding: "6px 10px", fontSize: 12, cursor: "pointer",
                   color: item.type === "room" ? "#b91c1c" : item.type === "teacher" ? "#b45309" : STUDENT_CLASH_TOKENS.text,
                   fontWeight: item.type === "student" ? 700 : 400,
+                  whiteSpace: item.type === "student" ? "normal" : "nowrap",
+                  lineHeight: 1.4,
                 }}
               >
-                {item.type === "room" ? "🔴" : item.type === "teacher" ? "🟠" : "🩷"} {item.label}
+                {item.type === "room" ? "🔴" : item.type === "teacher" ? "🟠" : "⚠ Student:"} {item.label}
               </button>
             ))}
           </div>
@@ -4930,7 +4932,7 @@ function StudentScheduleView({ students, catalog, placements, rooms, idx, onEdit
         = room overlap ·
         <span style={{ color: "#b45309", fontWeight: 700 }}> amber </span>
         = teacher double-booked ·
-        <span style={{ color: STUDENT_CLASH_TOKENS.text, fontWeight: 700 }}> rose </span>
+        <span style={{ color: STUDENT_CLASH_TOKENS.text, fontWeight: 700 }}> orange </span>
         (dashed border) = student double-booked — not a room legend color.
         <b> Manage students</b> renames (cascades to class rosters) or removes a student from every class.
       </p>

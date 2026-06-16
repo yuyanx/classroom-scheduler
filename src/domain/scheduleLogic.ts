@@ -317,7 +317,7 @@ export function buildConflictReport(idx: ReturnType<typeof buildScheduleIndexes>
         className: cls?.name || "Class",
         start: p.start,
         end: p.end,
-        label: `${studentLabel} · ${cls?.name || "Class"} ↔ ${otherCls?.name || "Class"} · ${DAY_SHORT[p.day]} ${fmtRange(p.start, p.end)}`,
+        label: `${studentLabel} · ${cls?.name || "Class"} ↔ ${otherCls?.name || "Class"} · ${DAY_SHORT[p.day]} ${fmtRange(p.start, p.end)} · Rm ${[...p.rooms, ...other.rooms].filter((r, i, a) => a.indexOf(r) === i).sort().join("+")}`,
       });
     });
   });
@@ -484,12 +484,12 @@ export const ROOM_OVERVIEW_PALETTE = [
   { bg: "#e0f2fe", border: "#7dd3fc", text: "#0c4a6e" },
 ];
 
-/** Student double-booking — warm rose; avoids room lavender (#f3e8ff) and cool pink (#fce7f3). */
+/** Student double-booking — coral orange; not used by ROOM_OVERVIEW_PALETTE. */
 export const STUDENT_CLASH_TOKENS = {
-  bg: "#fda4af",
-  border: "#e11d48",
-  glow: "0 0 0 3px rgba(225,29,72,.32)",
-  text: "#9f1239",
+  bg: "#fed7aa",
+  border: "#c2410c",
+  glow: "0 0 0 3px rgba(194,65,12,.28)",
+  text: "#7c2d12",
 };
 
 export function roomOverviewColor(roomId: string, roomOrder: string[]) {
