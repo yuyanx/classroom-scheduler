@@ -4759,12 +4759,13 @@ function StudentScheduleView({ students, catalog, placements, rooms, idx, onEdit
     const rc = roomOverviewColor(roomId, roomOrder);
     const { roomClash, teacherClash, studentClash } = classClash(cls, studentName);
     const singleGroup = groups.length === 1;
+    const rmLabel = overviewRoomLabel(allRooms);
     const teacherLabel = cls.teacher || <span style={{ color: "#b45309" }}>TBD</span>;
     return (
       <div
         key={cls.id}
         onClick={() => onEditClass(cls.id)}
-        title={`${cls.name} · ${groups.map((g) => `${g.dayLabel} ${g.timeLabel}`).join(" · ")} · ${cls.teacher || "TBD"} — click to edit`}
+        title={`${cls.name} · ${groups.map((g) => `${g.dayLabel} ${g.timeLabel}`).join(" · ")} · ${rmLabel} · ${cls.teacher || "TBD"} — click to edit`}
         style={{
           flex: "0 0 auto",
           width: 148,
@@ -4804,6 +4805,9 @@ function StudentScheduleView({ students, catalog, placements, rooms, idx, onEdit
             </div>
           ))
         )}
+        <div style={{ ...metaLine, flexShrink: 0, color: rc.text, fontWeight: 700 }}>
+          {rmLabel}
+        </div>
         <div style={{ ...metaLine, flexShrink: 0, color: "#334155", fontWeight: 600 }}>
           {teacherLabel}
         </div>
@@ -4920,7 +4924,7 @@ function StudentScheduleView({ students, catalog, placements, rooms, idx, onEdit
         </div>
       </div>
       <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
-        🎓 One row per student — cards left to right by earliest meeting time, then class name. Each card shows class, time, days, and teacher — click to edit.
+        🎓 One row per student — cards left to right by earliest meeting time, then class name. Each card shows class, time, days, room, and teacher — click to edit.
         Card colors match the room legend above.
         <span style={{ color: "#b91c1c", fontWeight: 700 }}> Red </span>
         = room overlap ·
