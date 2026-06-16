@@ -2861,7 +2861,9 @@ export default function ClassroomScheduler() {
                 days={days}
                 hours={hours}
                 rooms={rooms}
+                placements={placements}
                 idx={idx}
+                planReadOnly={planReadOnly}
                 onGoToDay={setTab}
                 onEditClass={(classId, placementId) => setEditing({ isNew: false, classId, placementId })}
               />
@@ -3466,8 +3468,126 @@ function RoomHeaderBadge({ roomId, roomOrder }) {
   );
 }
 
+// ───────────────────────── Week overview class detail (read-only, room-colored) ─────────────────────────
+function WeekOverviewClassDetail({ classId, placementId, placements, rooms, idx, planReadOnly, onEdit, onClose }) {
+  const cls = idx.catalogById.get(classId);
+  const placement = placements.find((p) => p.id === placementId);
+  if (!cls || !placement) return null;
+
+  const roomOrder = rooms.map((r) => r.id);
+  const primaryRoom = primaryRoomForPlacement(placement.rooms, roomOrder);
+  const rc = roomOverviewColor(primaryRoom, roomOrder);
+  const cap = placement.rooms.reduce((s, id) => s + (idx.roomCapById.get(id) ?? 12), 0);
+  const col = ratioColor(cls.reg, cap);
+  const pct = cap ? Math.min(100, Math.round((cls.reg / cap) * 100)) : 0;
+  const groups = classScheduleGroups(placements, classId);
+  const rmLabel = overviewRoomLabel(placement.rooms);
+
+  let roomClash = false;
+  let teacherClash = false;
+  placements
+    .filter((p) => p.classId === classId)
+    .forEach((p) => {
+      const ev = evaluatePlacement(
+        idx,
+        { day: p.day, start: p.start, end: p.end, rooms: p.rooms },
+        { excludePlacementId: p.id, teacher: cls.teacher }
+      );
+      if (ev.roomClashes.length) roomClash = true;
+      if (ev.hasTeacherConflict) teacherClash = true;
+    });
+
+  const metaStyle = { fontSize: 13, lineHeight: 1.4, color: rc.text, opacity: 0.92 };
+  const placementRoomsKey = placement.rooms.join("+");
+
+  return (
+    <Overlay onClose={onClose} bare>
+      <div
+        style={{
+          width: "100%",
+          maxWidth: 400,
+          boxSizing: "border-box",
+          background: roomClash ? "#fee2e2" : teacherClash ? "#fffbeb" : rc.bg,
+          border: roomClash ? "2px solid #dc2626" : teacherClash ? "2px solid #d97706" : `2px solid ${rc.border}`,
+          borderRadius: 12,
+          padding: "18px 20px 16px",
+          boxShadow: "0 20px 50px rgba(0,0,0,.28)",
+          color: rc.text,
+        }}
+      >
+        <div style={{ fontWeight: 800, fontSize: 18, lineHeight: 1.25, marginBottom: 6, overflowWrap: "anywhere" }}>
+          {cls.name}{(roomClash || teacherClash) ? " ⚠" : ""}
+        </div>
+        <div style={{ ...metaStyle, fontWeight: 700, marginBottom: 10 }}>
+          {DAY_LABEL[placement.day]} · {fmtRangeAmPm(placement.start, placement.end)} · {rmLabel}
+        </div>
+
+        <div style={{ display: "grid", gap: 8, marginBottom: 12 }}>
+          <div style={metaStyle}>
+            <span style={{ fontWeight: 700 }}>Teacher </span>
+            {cls.teacher || <span style={{ color: "#b45309", fontWeight: 600 }}>TBD</span>}
+          </div>
+          <div>
+            <div style={{ ...metaStyle, fontWeight: 700, marginBottom: 4 }}>
+              Enrolled {cls.reg}/{cap}{cls.reg >= cap && cap > 0 ? " · FULL" : ""}
+            </div>
+            <div style={{ height: 6, background: "rgba(255,255,255,.55)", borderRadius: 3, overflow: "hidden" }}>
+              <div style={{ width: `${pct}%`, height: "100%", background: col.bar, borderRadius: 3 }} />
+            </div>
+          </div>
+          {groups.length > 0 && (
+            <div>
+              <div style={{ ...metaStyle, fontWeight: 700, marginBottom: 4 }}>Schedule</div>
+              {groups.map((g, i) => {
+                const highlight =
+                  g.start === placement.start &&
+                  g.end === placement.end &&
+                  g.rooms.join("+") === placementRoomsKey;
+                return (
+                  <div
+                    key={i}
+                    style={{
+                      ...metaStyle,
+                      fontWeight: highlight ? 700 : 500,
+                      padding: "3px 0",
+                      borderBottom: i < groups.length - 1 ? `1px solid ${rc.border}55` : "none",
+                    }}
+                  >
+                    {g.timeLabel} · {g.dayLabel}
+                    {highlight && groups.length > 1 ? " ← this block" : ""}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {cls.note ? (
+            <div style={metaStyle}>
+              <span style={{ fontWeight: 700 }}>Note </span>
+              {cls.note}
+            </div>
+          ) : null}
+          {(roomClash || teacherClash) && (
+            <div style={{ fontSize: 12, fontWeight: 600, color: roomClash ? "#b91c1c" : "#b45309" }}>
+              {roomClash && "Room overlap detected. "}
+              {teacherClash && "Teacher double-booked."}
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 4 }}>
+          <button type="button" style={btnSecondary} onClick={onClose}>Close</button>
+          {!planReadOnly && (
+            <button type="button" style={btnPrimary} onClick={onEdit}>Edit class</button>
+          )}
+        </div>
+      </div>
+    </Overlay>
+  );
+}
+
 // ───────────────────────── Week overview (time × days, room-colored) ─────────────────────────
-function WeekOverviewView({ days, hours, rooms, idx, onGoToDay, onEditClass }) {
+function WeekOverviewView({ days, hours, rooms, placements, idx, planReadOnly, onGoToDay, onEditClass }) {
+  const [classDetail, setClassDetail] = useState(null);
   const roomIds = rooms.map((r) => r.id);
   const layout = useMemo(
     () => computeWeekOverviewLayout(days, hours, idx.placementsByDay),
@@ -3482,6 +3602,22 @@ function WeekOverviewView({ days, hours, rooms, idx, onGoToDay, onEditClass }) {
   };
 
   return (
+    <>
+    {classDetail && (
+      <WeekOverviewClassDetail
+        classId={classDetail.classId}
+        placementId={classDetail.placementId}
+        placements={placements}
+        rooms={rooms}
+        idx={idx}
+        planReadOnly={planReadOnly}
+        onEdit={() => {
+          onEditClass(classDetail.classId, classDetail.placementId);
+          setClassDetail(null);
+        }}
+        onClose={() => setClassDetail(null)}
+      />
+    )}
     <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto", width: "100%" }}>
       <div style={{ minWidth: 64 + days.length * 132, position: "relative" }}>
         <div style={{ display: "flex", borderBottom: "2px solid #d6dad4", background: "#fafaf8" }}>
@@ -3564,8 +3700,8 @@ function WeekOverviewView({ days, hours, rooms, idx, onGoToDay, onEditClass }) {
                   return (
                     <div
                       key={p.id}
-                      onClick={() => onEditClass(p.classId, p.id)}
-                      title={`${cls.name} · ${fmtRange(p.start, p.end)} · ${cls.teacher || "TBD"} · ${rmLabel} — click to edit`}
+                      onClick={() => setClassDetail({ classId: p.classId, placementId: p.id })}
+                      title={`${cls.name} · ${fmtRange(p.start, p.end)} · ${cls.teacher || "TBD"} · ${rmLabel} — click for details`}
                       style={{
                         position: "absolute",
                         top: top + 1,
@@ -3610,9 +3746,10 @@ function WeekOverviewView({ days, hours, rooms, idx, onGoToDay, onEditClass }) {
         </div>
       </div>
       <div style={{ padding: "8px 12px", fontSize: 11, color: "#64748b", borderTop: "1px solid #eceeea" }}>
-        {fmtAmPm(gridStart)} – {fmtAmPm(gridEnd)} · click a day name to open that day · click a block to edit · overlapping times split side-by-side
+        {fmtAmPm(gridStart)} – {fmtAmPm(gridEnd)} · click a day name to open that day · click a block for class details · overlapping times split side-by-side
       </div>
     </div>
+    </>
   );
 }
 
@@ -4500,7 +4637,7 @@ function RoomModal({ rooms, placements, onSave, onClose }) {
 }
 
 // ───────────────────────── Shared bits ─────────────────────────
-function Overlay({ children, onClose, wide }) {
+function Overlay({ children, onClose, wide, bare }) {
   return (
     <div
       onClick={onClose}
@@ -4512,9 +4649,15 @@ function Overlay({ children, onClose, wide }) {
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: "#fff", borderRadius: 12, padding: "22px 24px",
-          width: "100%", maxWidth: wide ? 820 : 460, boxShadow: "0 20px 50px rgba(0,0,0,.25)",
-          maxHeight: "calc(100vh - 48px)", overflowY: "auto", boxSizing: "border-box",
+          background: bare ? "transparent" : "#fff",
+          borderRadius: 12,
+          padding: bare ? 0 : "22px 24px",
+          width: "100%",
+          maxWidth: bare ? 400 : (wide ? 820 : 460),
+          boxShadow: bare ? "none" : "0 20px 50px rgba(0,0,0,.25)",
+          maxHeight: "calc(100vh - 48px)",
+          overflowY: "auto",
+          boxSizing: "border-box",
         }}
       >
         {children}
