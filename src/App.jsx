@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { createPortal } from "react-dom";
 import {
   STORAGE_KEY,
   createSyncRef,
@@ -3468,8 +3469,25 @@ function RoomHeaderBadge({ roomId, roomOrder }) {
   );
 }
 
+const WEEK_OVERVIEW_DETAIL_W = 320;
+const WEEK_OVERVIEW_DETAIL_H = 300;
+
+function weekOverviewDetailPos(rect) {
+  const pad = 10;
+  let left = rect.right + pad;
+  let top = rect.top;
+  if (left + WEEK_OVERVIEW_DETAIL_W > window.innerWidth - pad) {
+    left = rect.left - WEEK_OVERVIEW_DETAIL_W - pad;
+  }
+  if (left < pad) left = pad;
+  if (top + WEEK_OVERVIEW_DETAIL_H > window.innerHeight - pad) {
+    top = Math.max(pad, window.innerHeight - WEEK_OVERVIEW_DETAIL_H - pad);
+  }
+  return { left, top };
+}
+
 // ───────────────────────── Week overview class detail (read-only, room-colored) ─────────────────────────
-function WeekOverviewClassDetail({ classId, placementId, placements, rooms, idx, planReadOnly, onEdit, onClose }) {
+function WeekOverviewClassDetailCard({ classId, placementId, placements, rooms, idx, planReadOnly, onEdit, onClose }) {
   const cls = idx.catalogById.get(classId);
   const placement = placements.find((p) => p.id === placementId);
   if (!cls || !placement) return null;
@@ -3497,97 +3515,149 @@ function WeekOverviewClassDetail({ classId, placementId, placements, rooms, idx,
       if (ev.hasTeacherConflict) teacherClash = true;
     });
 
-  const metaStyle = { fontSize: 13, lineHeight: 1.4, color: rc.text, opacity: 0.92 };
+  const metaStyle = { fontSize: 12, lineHeight: 1.4, color: rc.text, opacity: 0.92 };
   const placementRoomsKey = placement.rooms.join("+");
 
   return (
-    <Overlay onClose={onClose} bare>
-      <div
-        style={{
-          width: "100%",
-          maxWidth: 400,
-          boxSizing: "border-box",
-          background: roomClash ? "#fee2e2" : teacherClash ? "#fffbeb" : rc.bg,
-          border: roomClash ? "2px solid #dc2626" : teacherClash ? "2px solid #d97706" : `2px solid ${rc.border}`,
-          borderRadius: 12,
-          padding: "18px 20px 16px",
-          boxShadow: "0 20px 50px rgba(0,0,0,.28)",
-          color: rc.text,
-        }}
-      >
-        <div style={{ fontWeight: 800, fontSize: 18, lineHeight: 1.25, marginBottom: 6, overflowWrap: "anywhere" }}>
-          {cls.name}{(roomClash || teacherClash) ? " ⚠" : ""}
-        </div>
-        <div style={{ ...metaStyle, fontWeight: 700, marginBottom: 10 }}>
-          {DAY_LABEL[placement.day]} · {fmtRangeAmPm(placement.start, placement.end)} · {rmLabel}
-        </div>
-
-        <div style={{ display: "grid", gap: 8, marginBottom: 12 }}>
-          <div style={metaStyle}>
-            <span style={{ fontWeight: 700 }}>Teacher </span>
-            {cls.teacher || <span style={{ color: "#b45309", fontWeight: 600 }}>TBD</span>}
-          </div>
-          <div>
-            <div style={{ ...metaStyle, fontWeight: 700, marginBottom: 4 }}>
-              Enrolled {cls.reg}/{cap}{cls.reg >= cap && cap > 0 ? " · FULL" : ""}
-            </div>
-            <div style={{ height: 6, background: "rgba(255,255,255,.55)", borderRadius: 3, overflow: "hidden" }}>
-              <div style={{ width: `${pct}%`, height: "100%", background: col.bar, borderRadius: 3 }} />
-            </div>
-          </div>
-          {groups.length > 0 && (
-            <div>
-              <div style={{ ...metaStyle, fontWeight: 700, marginBottom: 4 }}>Schedule</div>
-              {groups.map((g, i) => {
-                const highlight =
-                  g.start === placement.start &&
-                  g.end === placement.end &&
-                  g.rooms.join("+") === placementRoomsKey;
-                return (
-                  <div
-                    key={i}
-                    style={{
-                      ...metaStyle,
-                      fontWeight: highlight ? 700 : 500,
-                      padding: "3px 0",
-                      borderBottom: i < groups.length - 1 ? `1px solid ${rc.border}55` : "none",
-                    }}
-                  >
-                    {g.timeLabel} · {g.dayLabel}
-                    {highlight && groups.length > 1 ? " ← this block" : ""}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          {cls.note ? (
-            <div style={metaStyle}>
-              <span style={{ fontWeight: 700 }}>Note </span>
-              {cls.note}
-            </div>
-          ) : null}
-          {(roomClash || teacherClash) && (
-            <div style={{ fontSize: 12, fontWeight: 600, color: roomClash ? "#b91c1c" : "#b45309" }}>
-              {roomClash && "Room overlap detected. "}
-              {teacherClash && "Teacher double-booked."}
-            </div>
-          )}
-        </div>
-
-        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 4 }}>
-          <button type="button" style={btnSecondary} onClick={onClose}>Close</button>
-          {!planReadOnly && (
-            <button type="button" style={btnPrimary} onClick={onEdit}>Edit class</button>
-          )}
-        </div>
+    <div
+      style={{
+        width: WEEK_OVERVIEW_DETAIL_W,
+        boxSizing: "border-box",
+        background: roomClash ? "#fee2e2" : teacherClash ? "#fffbeb" : rc.bg,
+        border: roomClash ? "2px solid #dc2626" : teacherClash ? "2px solid #d97706" : `2px solid ${rc.border}`,
+        borderRadius: 12,
+        padding: "14px 16px 12px",
+        boxShadow: "0 16px 40px rgba(0,0,0,.22)",
+        color: rc.text,
+        maxHeight: "calc(100vh - 24px)",
+        overflowY: "auto",
+      }}
+    >
+      <div style={{ fontWeight: 800, fontSize: 16, lineHeight: 1.25, marginBottom: 5, overflowWrap: "anywhere" }}>
+        {cls.name}{(roomClash || teacherClash) ? " ⚠" : ""}
       </div>
-    </Overlay>
+      <div style={{ ...metaStyle, fontWeight: 700, marginBottom: 8 }}>
+        {DAY_LABEL[placement.day]} · {fmtRangeAmPm(placement.start, placement.end)} · {rmLabel}
+      </div>
+
+      <div style={{ display: "grid", gap: 7, marginBottom: 10 }}>
+        <div style={metaStyle}>
+          <span style={{ fontWeight: 700 }}>Teacher </span>
+          {cls.teacher || <span style={{ color: "#b45309", fontWeight: 600 }}>TBD</span>}
+        </div>
+        <div>
+          <div style={{ ...metaStyle, fontWeight: 700, marginBottom: 3 }}>
+            Enrolled {cls.reg}/{cap}{cls.reg >= cap && cap > 0 ? " · FULL" : ""}
+          </div>
+          <div style={{ height: 5, background: "rgba(255,255,255,.55)", borderRadius: 3, overflow: "hidden" }}>
+            <div style={{ width: `${pct}%`, height: "100%", background: col.bar, borderRadius: 3 }} />
+          </div>
+        </div>
+        {groups.length > 0 && (
+          <div>
+            <div style={{ ...metaStyle, fontWeight: 700, marginBottom: 3 }}>Schedule</div>
+            {groups.map((g, i) => {
+              const highlight =
+                g.start === placement.start &&
+                g.end === placement.end &&
+                g.rooms.join("+") === placementRoomsKey;
+              return (
+                <div
+                  key={i}
+                  style={{
+                    ...metaStyle,
+                    fontWeight: highlight ? 700 : 500,
+                    padding: "2px 0",
+                    borderBottom: i < groups.length - 1 ? `1px solid ${rc.border}55` : "none",
+                  }}
+                >
+                  {g.timeLabel} · {g.dayLabel}
+                  {highlight && groups.length > 1 ? " ← this block" : ""}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {cls.note ? (
+          <div style={metaStyle}>
+            <span style={{ fontWeight: 700 }}>Note </span>
+            {cls.note}
+          </div>
+        ) : null}
+        {(roomClash || teacherClash) && (
+          <div style={{ fontSize: 11, fontWeight: 600, color: roomClash ? "#b91c1c" : "#b45309" }}>
+            {roomClash && "Room overlap detected. "}
+            {teacherClash && "Teacher double-booked."}
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 2 }}>
+        <button type="button" style={{ ...btnSecondary, padding: "6px 12px", fontSize: 12 }} onClick={onClose}>Close</button>
+        {!planReadOnly && (
+          <button type="button" style={{ ...btnPrimary, padding: "6px 12px", fontSize: 12 }} onClick={onEdit}>Edit class</button>
+        )}
+      </div>
+    </div>
   );
 }
 
 // ───────────────────────── Week overview (time × days, room-colored) ─────────────────────────
 function WeekOverviewView({ days, hours, rooms, placements, idx, planReadOnly, onGoToDay, onEditClass }) {
-  const [classDetail, setClassDetail] = useState(null);
+  const [classDetail, setClassDetail] = useState(null); // { classId, placementId, left, top, pinned }
+  const detailOpenTimer = useRef(null);
+  const detailCloseTimer = useRef(null);
+  const detailPopoverRef = useRef(null);
+
+  const clearDetailOpenTimer = () => {
+    clearTimeout(detailOpenTimer.current);
+    detailOpenTimer.current = null;
+  };
+  const clearDetailCloseTimer = () => {
+    clearTimeout(detailCloseTimer.current);
+    detailCloseTimer.current = null;
+  };
+
+  useEffect(() => () => {
+    clearDetailOpenTimer();
+    clearDetailCloseTimer();
+  }, []);
+
+  useEffect(() => {
+    if (!classDetail?.pinned) return;
+    const closePinned = (e) => {
+      if (detailPopoverRef.current?.contains(e.target)) return;
+      setClassDetail(null);
+    };
+    const t = setTimeout(() => window.addEventListener("click", closePinned), 0);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener("click", closePinned);
+    };
+  }, [classDetail?.pinned]);
+
+  const openClassDetail = (el, classId, placementId, pinned = false) => {
+    clearDetailCloseTimer();
+    clearDetailOpenTimer();
+    const { left, top } = weekOverviewDetailPos(el.getBoundingClientRect());
+    setClassDetail({ classId, placementId, left, top, pinned });
+  };
+
+  const scheduleClassDetail = (el, classId, placementId) => {
+    clearDetailCloseTimer();
+    clearDetailOpenTimer();
+    detailOpenTimer.current = setTimeout(() => openClassDetail(el, classId, placementId, false), 140);
+  };
+
+  const scheduleHideClassDetail = () => {
+    clearDetailOpenTimer();
+    clearDetailCloseTimer();
+    detailCloseTimer.current = setTimeout(() => {
+      setClassDetail((d) => (d?.pinned ? d : null));
+    }, 160);
+  };
+
+  const keepClassDetail = () => clearDetailCloseTimer();
   const roomIds = rooms.map((r) => r.id);
   const layout = useMemo(
     () => computeWeekOverviewLayout(days, hours, idx.placementsByDay),
@@ -3603,20 +3673,28 @@ function WeekOverviewView({ days, hours, rooms, placements, idx, planReadOnly, o
 
   return (
     <>
-    {classDetail && (
-      <WeekOverviewClassDetail
-        classId={classDetail.classId}
-        placementId={classDetail.placementId}
-        placements={placements}
-        rooms={rooms}
-        idx={idx}
-        planReadOnly={planReadOnly}
-        onEdit={() => {
-          onEditClass(classDetail.classId, classDetail.placementId);
-          setClassDetail(null);
-        }}
-        onClose={() => setClassDetail(null)}
-      />
+    {classDetail && typeof document !== "undefined" && createPortal(
+      <div
+        ref={detailPopoverRef}
+        style={{ position: "fixed", left: classDetail.left, top: classDetail.top, zIndex: 60 }}
+        onMouseEnter={keepClassDetail}
+        onMouseLeave={scheduleHideClassDetail}
+      >
+        <WeekOverviewClassDetailCard
+          classId={classDetail.classId}
+          placementId={classDetail.placementId}
+          placements={placements}
+          rooms={rooms}
+          idx={idx}
+          planReadOnly={planReadOnly}
+          onEdit={() => {
+            onEditClass(classDetail.classId, classDetail.placementId);
+            setClassDetail(null);
+          }}
+          onClose={() => setClassDetail(null)}
+        />
+      </div>,
+      document.body
     )}
     <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto", width: "100%" }}>
       <div style={{ minWidth: 64 + days.length * 132, position: "relative" }}>
@@ -3700,8 +3778,13 @@ function WeekOverviewView({ days, hours, rooms, placements, idx, planReadOnly, o
                   return (
                     <div
                       key={p.id}
-                      onClick={() => setClassDetail({ classId: p.classId, placementId: p.id })}
-                      title={`${cls.name} · ${fmtRange(p.start, p.end)} · ${cls.teacher || "TBD"} · ${rmLabel} — click for details`}
+                      onMouseEnter={(e) => scheduleClassDetail(e.currentTarget, p.classId, p.id)}
+                      onMouseLeave={scheduleHideClassDetail}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openClassDetail(e.currentTarget, p.classId, p.id, true);
+                      }}
+                      title={`${cls.name} · ${fmtRange(p.start, p.end)} · ${cls.teacher || "TBD"} · ${rmLabel} — hover for details`}
                       style={{
                         position: "absolute",
                         top: top + 1,
@@ -3746,7 +3829,7 @@ function WeekOverviewView({ days, hours, rooms, placements, idx, planReadOnly, o
         </div>
       </div>
       <div style={{ padding: "8px 12px", fontSize: 11, color: "#64748b", borderTop: "1px solid #eceeea" }}>
-        {fmtAmPm(gridStart)} – {fmtAmPm(gridEnd)} · click a day name to open that day · click a block for class details · overlapping times split side-by-side
+        {fmtAmPm(gridStart)} – {fmtAmPm(gridEnd)} · click a day name to open that day · hover a block for class details (click to pin) · overlapping times split side-by-side
       </div>
     </div>
     </>
