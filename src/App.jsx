@@ -2648,7 +2648,7 @@ export default function ClassroomScheduler() {
                   lineHeight: 1.4,
                 }}
               >
-                {item.type === "room" ? "🔴" : item.type === "teacher" ? "🟠" : "⚠ Student:"} {item.label}
+                {item.type === "student" ? `Student · ${item.label}` : `${item.type === "room" ? "🔴" : "🟠"} ${item.label}`}
               </button>
             ))}
           </div>
