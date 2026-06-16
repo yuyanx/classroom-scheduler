@@ -484,6 +484,14 @@ export const ROOM_OVERVIEW_PALETTE = [
   { bg: "#e0f2fe", border: "#7dd3fc", text: "#0c4a6e" },
 ];
 
+/** Student double-booking — hot magenta; hue not used by ROOM_OVERVIEW_PALETTE. */
+export const STUDENT_CLASH_TOKENS = {
+  bg: "#f5c2ff",
+  border: "#a21caf",
+  glow: "0 0 0 3px rgba(162,28,175,.32)",
+  text: "#701a75",
+};
+
 export function roomOverviewColor(roomId: string, roomOrder: string[]) {
   const pos = roomOrder.indexOf(roomId);
   const i = pos >= 0 ? pos : 0;

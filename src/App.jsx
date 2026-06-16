@@ -61,6 +61,7 @@ import {
   roomOverviewColor,
   primaryRoomForPlacement,
   computeWeekOverviewLayout,
+  STUDENT_CLASH_TOKENS,
   studentKey,
   normalizeStudentList,
 } from "./domain/scheduleLogic.ts";
@@ -2638,14 +2639,14 @@ export default function ClassroomScheduler() {
                 onClick={() => goToConflict(item)}
                 style={{
                   textAlign: "left",
-                  border: item.type === "student" ? `2px solid ${studentClashTokens.border}` : "1px solid #fde68a",
-                  background: item.type === "student" ? studentClashTokens.bg : "#fff",
+                  border: item.type === "student" ? `2px dashed ${STUDENT_CLASH_TOKENS.border}` : "1px solid #fde68a",
+                  background: item.type === "student" ? STUDENT_CLASH_TOKENS.bg : "#fff",
                   borderRadius: 8, padding: "6px 10px", fontSize: 12, cursor: "pointer",
-                  color: item.type === "room" ? "#b91c1c" : item.type === "teacher" ? "#b45309" : studentClashTokens.text,
+                  color: item.type === "room" ? "#b91c1c" : item.type === "teacher" ? "#b45309" : STUDENT_CLASH_TOKENS.text,
                   fontWeight: item.type === "student" ? 700 : 400,
                 }}
               >
-                {item.type === "room" ? "🔴" : item.type === "teacher" ? "🟠" : "🟣"} {item.label}
+                {item.type === "room" ? "🔴" : item.type === "teacher" ? "🟠" : "💗"} {item.label}
               </button>
             ))}
           </div>
@@ -4769,20 +4770,20 @@ function StudentScheduleView({ students, catalog, placements, rooms, idx, onEdit
           width: 148,
           minHeight: 42,
           boxSizing: "border-box",
-          background: roomClash ? "#fee2e2" : teacherClash ? "#fffbeb" : studentClash ? studentClashTokens.bg : rc.bg,
-          border: roomClash ? "2px solid #dc2626" : teacherClash ? "2px solid #d97706" : studentClash ? `2px solid ${studentClashTokens.border}` : `1px solid ${rc.border}`,
+          background: roomClash ? "#fee2e2" : teacherClash ? "#fffbeb" : studentClash ? STUDENT_CLASH_TOKENS.bg : rc.bg,
+          border: roomClash ? "2px solid #dc2626" : teacherClash ? "2px solid #d97706" : studentClash ? `2px dashed ${STUDENT_CLASH_TOKENS.border}` : `1px solid ${rc.border}`,
           boxShadow: roomClash
             ? "0 0 0 3px rgba(220,38,38,.12)"
             : teacherClash
               ? "0 0 0 3px rgba(217,119,6,.12)"
               : studentClash
-                ? studentClashTokens.glow
+                ? STUDENT_CLASH_TOKENS.glow
                 : "none",
           borderRadius: 8,
           padding: "4px 7px 8px",
           overflow: "hidden",
           cursor: "pointer",
-          color: studentClash && !roomClash && !teacherClash ? studentClashTokens.text : rc.text,
+          color: studentClash && !roomClash && !teacherClash ? STUDENT_CLASH_TOKENS.text : rc.text,
           display: "flex",
           flexDirection: "column",
           gap: 2,
@@ -4830,9 +4831,9 @@ function StudentScheduleView({ students, catalog, placements, rooms, idx, onEdit
           style={{
             fontWeight: 700,
             fontSize: 13,
-            color: studentHasConflict(label) ? studentClashTokens.text : "#123c3a",
-            background: studentHasConflict(label) ? studentClashTokens.bg : "transparent",
-            border: studentHasConflict(label) ? `1px solid ${studentClashTokens.border}` : "none",
+            color: studentHasConflict(label) ? STUDENT_CLASH_TOKENS.text : "#123c3a",
+            background: studentHasConflict(label) ? STUDENT_CLASH_TOKENS.bg : "transparent",
+            border: studentHasConflict(label) ? `2px dashed ${STUDENT_CLASH_TOKENS.border}` : "none",
             borderRadius: studentHasConflict(label) ? 6 : 0,
             padding: studentHasConflict(label) ? "4px 6px" : 0,
             overflowWrap: "anywhere",
@@ -4925,8 +4926,8 @@ function StudentScheduleView({ students, catalog, placements, rooms, idx, onEdit
         = room overlap ·
         <span style={{ color: "#b45309", fontWeight: 700 }}> amber </span>
         = teacher double-booked ·
-        <span style={{ color: studentClashTokens.text, fontWeight: 700 }}> purple </span>
-        = student double-booked.
+        <span style={{ color: STUDENT_CLASH_TOKENS.text, fontWeight: 700 }}> magenta </span>
+        (dashed border) = student double-booked — distinct from room legend colors.
         <b> Manage students</b> renames (cascades to class rosters) or removes a student from every class.
       </p>
     </>
@@ -5413,15 +5414,9 @@ const teacherWarningStyle = {
   fontSize: 11, background: "#fffbeb", color: "#b45309", border: "1px solid #fde68a",
   borderRadius: 4, padding: "2px 6px", fontWeight: 700, lineHeight: 1.25,
 };
-const studentClashTokens = {
-  bg: "#ddd6fe",
-  border: "#5b21b6",
-  glow: "0 0 0 3px rgba(91,33,182,.28)",
-  text: "#4c1d95",
-};
 const studentWarningStyle = {
-  fontSize: 11, background: studentClashTokens.bg, color: studentClashTokens.text,
-  border: `2px solid ${studentClashTokens.border}`,
+  fontSize: 11, background: STUDENT_CLASH_TOKENS.bg, color: STUDENT_CLASH_TOKENS.text,
+  border: `2px dashed ${STUDENT_CLASH_TOKENS.border}`,
   borderRadius: 4, padding: "2px 6px", fontWeight: 700, lineHeight: 1.25,
 };
 const roomConflictStyle = {
