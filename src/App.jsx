@@ -2640,7 +2640,7 @@ export default function ClassroomScheduler() {
                 style={{
                   textAlign: "left",
                   border: item.type === "student" ? `2px dashed ${STUDENT_CLASH_TOKENS.border}` : "1px solid #fde68a",
-                  background: item.type === "student" ? STUDENT_CLASH_TOKENS.cardBg : "#fff",
+                  background: item.type === "student" ? STUDENT_CLASH_TOKENS.bg : "#fff",
                   borderRadius: 8, padding: "6px 10px", fontSize: 12, cursor: "pointer",
                   color: item.type === "room" ? "#b91c1c" : item.type === "teacher" ? "#b45309" : STUDENT_CLASH_TOKENS.text,
                   fontWeight: item.type === "student" ? 700 : 400,
@@ -4770,7 +4770,7 @@ function StudentScheduleView({ students, catalog, placements, rooms, idx, onEdit
           width: 148,
           minHeight: 42,
           boxSizing: "border-box",
-          background: roomClash ? "#fee2e2" : teacherClash ? "#fffbeb" : studentClash ? STUDENT_CLASH_TOKENS.cardBg : rc.bg,
+          background: roomClash ? "#fee2e2" : teacherClash ? "#fffbeb" : studentClash ? STUDENT_CLASH_TOKENS.bg : rc.bg,
           border: roomClash ? "2px solid #dc2626" : teacherClash ? "2px solid #d97706" : studentClash ? `2px dashed ${STUDENT_CLASH_TOKENS.border}` : `1px solid ${rc.border}`,
           boxShadow: roomClash
             ? "0 0 0 3px rgba(220,38,38,.12)"
@@ -4926,7 +4926,7 @@ function StudentScheduleView({ students, catalog, placements, rooms, idx, onEdit
         = room overlap ·
         <span style={{ color: "#b45309", fontWeight: 700 }}> amber </span>
         = teacher double-booked ·
-        <span style={{ color: STUDENT_CLASH_TOKENS.text, fontWeight: 700 }}> rose stripes </span>
+        <span style={{ color: STUDENT_CLASH_TOKENS.text, fontWeight: 700 }}> rose </span>
         (dashed border) = student double-booked — not a room legend color.
         <b> Manage students</b> renames (cascades to class rosters) or removes a student from every class.
       </p>
