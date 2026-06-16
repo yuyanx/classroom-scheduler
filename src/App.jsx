@@ -59,6 +59,8 @@ import {
   roomOverviewColor,
   primaryRoomForPlacement,
   computeWeekOverviewLayout,
+  studentKey,
+  normalizeStudentList,
 } from "./domain/scheduleLogic.ts";
 
 // ───────────────────────── Week / time constants ─────────────────────────
@@ -837,7 +839,7 @@ const LIVE_SEED_TAG = "prod-2026-06-12T21:23";
 // days:       which days the program runs — ordered subset of ALL_DAYS
 // hours:      { default: [startMin, endMin], <day>: [start, end] } scheduling window per day
 // rooms:      [{ id, cap }] — one plain list for the whole week
-// catalog:    one entry per class/cohort — { id, name, teacher, reg, note }
+// catalog:    one entry per class/cohort — { id, name, teacher, reg, note, students[] }
 // placements: where a class meets — { id, classId, day, start, end, rooms: ["2","3"] }
 //             rooms is usually one room; several rooms = a combined classroom, and the
 //             class shows on the calendar in every combined room's column
@@ -883,10 +885,11 @@ function normalizeV2(raw) {
     if (w) hours[d] = w;
   });
 
-  const catalog = (raw.catalog || []).map(({ cap, ...k }) => ({
+  const catalog = (raw.catalog || []).map(({ cap, students, ...k }) => ({
     ...k,
     reg: Math.max(0, parseInt(k.reg, 10) || 0),
     note: k.note || "",
+    students: normalizeStudentList(students),
   }));
   const classIds = new Set(catalog.map((k) => k.id));
 
@@ -913,6 +916,13 @@ function normalizeV2(raw) {
   });
   const teachers = [...teacherMap.values()].sort((a, b) => a.localeCompare(b));
 
+  const studentMap = new Map();
+  [...(Array.isArray(raw.students) ? raw.students : []), ...catalog.flatMap((k) => k.students || [])].forEach((s) => {
+    const key = studentKey(s);
+    if (key && !studentMap.has(key)) studentMap.set(key, String(s).trim());
+  });
+  const students = [...studentMap.values()].sort((a, b) => a.localeCompare(b));
+
   return {
     version: 2,
     days,
@@ -921,6 +931,7 @@ function normalizeV2(raw) {
     catalog,
     placements,
     teachers,
+    students,
     programLabel: cleanProgramLabel(raw.programLabel),
     nextId: raw.nextId || 1000,
   };
@@ -1163,6 +1174,7 @@ export default function ClassroomScheduler() {
   const [roomCapEditing, setRoomCapEditing] = useState(null); // { roomId, value, error }
   const [hoursEditing, setHoursEditing] = useState(null); // { day, start, end, error }
   const [teacherMgrOpen, setTeacherMgrOpen] = useState(false);
+  const [studentMgrOpen, setStudentMgrOpen] = useState(false);
   const [programLabelOpen, setProgramLabelOpen] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [drag, setDrag] = useState(null); // {type:'lib'|'pl', id, dur, grabOffset}
@@ -1764,13 +1776,13 @@ export default function ClassroomScheduler() {
     flushRemoteSave(data);
   };
 
-  const { days, hours, rooms, catalog, placements, teachers, programLabel } = data;
+  const { days, hours, rooms, catalog, placements, teachers, students, programLabel } = data;
   const headerProgramLine = `${programLabel || DEFAULT_PROGRAM_LABEL} · ${rooms.length} rooms · ${DAY_SHORT[days[0]]}–${DAY_SHORT[days[days.length - 1]]}`;
   const idx = useMemo(() => buildScheduleIndexes(data), [data]);
 
   // Make sure the active tab still exists (e.g. after remote data changes the day list)
   useEffect(() => {
-    if (!days.includes(tab) && tab !== "byClass" && tab !== "byTeacher" && tab !== "weekOverview") setTab(days[0]);
+    if (!days.includes(tab) && tab !== "byClass" && tab !== "byTeacher" && tab !== "byStudent" && tab !== "weekOverview") setTab(days[0]);
   }, [days, tab]);
 
   // ── Rooms: a placement may span several rooms (combined classroom) ──
@@ -2093,11 +2105,16 @@ export default function ClassroomScheduler() {
     const newTeachers = tKey && !(teachers || []).some((t) => teacherKey(t) === tKey)
       ? [...(teachers || []), form.teacher].sort((a, b) => a.localeCompare(b))
       : teachers;
+    const newStudents = normalizeStudentList([
+      ...(students || []),
+      ...newCatalog.flatMap((k) => k.students || []),
+    ]);
     persist((d) => ({
       ...d,
       catalog: newCatalog,
       placements: [...others, ...mine],
       teachers: newTeachers,
+      students: newStudents,
       nextId: nid,
     }));
     setEditing(null);
@@ -2193,6 +2210,25 @@ export default function ClassroomScheduler() {
     });
     persist((d) => ({ ...d, teachers: names, catalog: nc }));
     setTeacherMgrOpen(false);
+  };
+
+  const saveStudents = ({ names, renames, removed }) => {
+    let nc = catalog;
+    Object.entries(renames).forEach(([oldName, newName]) => {
+      nc = nc.map((k) => ({
+        ...k,
+        students: (k.students || []).map((s) => (studentKey(s) === studentKey(oldName) ? newName : s)),
+      }));
+    });
+    removed.forEach((oldName) => {
+      nc = nc.map((k) => ({
+        ...k,
+        students: (k.students || []).filter((s) => studentKey(s) !== studentKey(oldName)),
+      }));
+    });
+    nc = nc.map((k) => ({ ...k, students: normalizeStudentList(k.students) }));
+    persist((d) => ({ ...d, students: names, catalog: nc }));
+    setStudentMgrOpen(false);
   };
 
   const saveProgramLabel = (label) => {
@@ -2799,6 +2835,7 @@ export default function ClassroomScheduler() {
               { id: "weekOverview", label: "📅 Week Overview" },
               { id: "byClass", label: "📋 By Class" },
               { id: "byTeacher", label: "👤 By Teacher" },
+              { id: "byStudent", label: "🎓 By Student" },
             ].map((v) => (
               <button
                 key={v.id}
@@ -2821,7 +2858,9 @@ export default function ClassroomScheduler() {
             <span style={{ marginLeft: "auto", alignSelf: "center", fontSize: 13, color: "#64748b" }}>
               {tab === "byTeacher"
                 ? `${(teachers || []).length} teachers · ${noTeacherCount} classes need a teacher`
-                : tab === "byClass"
+                : tab === "byStudent"
+                  ? `${(students || []).length} students · ${catalog.filter((k) => (k.students || []).length > 0).length} classes with rosters`
+                  : tab === "byClass"
                   ? `${catalog.length} classes · ${unscheduledCount} unscheduled`
                   : tab === "weekOverview"
                     ? `${placements.length} meetings · ${days.length} days`
@@ -2855,6 +2894,16 @@ export default function ClassroomScheduler() {
                 idx={idx}
                 onEditClass={(classId) => setEditing({ isNew: false, classId })}
                 onManageTeachers={() => setTeacherMgrOpen(true)}
+              />
+            ) : tab === "byStudent" ? (
+              <StudentScheduleView
+                students={students || []}
+                catalog={catalog}
+                placements={placements}
+                rooms={rooms}
+                idx={idx}
+                onEditClass={(classId) => setEditing({ isNew: false, classId })}
+                onManageStudents={() => setStudentMgrOpen(true)}
               />
             ) : tab === "byClass" ? (
               <ClassScheduleView
@@ -3087,6 +3136,10 @@ export default function ClassroomScheduler() {
         <TeacherModal teachers={teachers || []} catalog={catalog} onSave={saveTeachers} onClose={() => setTeacherMgrOpen(false)} />
       )}
 
+      {studentMgrOpen && (
+        <StudentModal students={students || []} catalog={catalog} onSave={saveStudents} onClose={() => setStudentMgrOpen(false)} />
+      )}
+
       {/* Program label (header subtitle) */}
       {programLabelOpen && (
         <ProgramLabelModal
@@ -3183,6 +3236,7 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
   const [teacher, setTeacher] = useState(c.teacher || "");
   const [reg, setReg] = useState(c.reg ?? 0);
   const [note, setNote] = useState(c.note || "");
+  const [studentsText, setStudentsText] = useState((c.students || []).join("\n"));
   const [rows, setRows] = useState(initialRows); // meeting times: {id?, day, start, end, rooms: []}
 
   const roomPos = new Map(rooms.map((r, i) => [r.id, i]));
@@ -3253,6 +3307,7 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
         teacher: teacher.trim(),
         reg: Math.max(0, parseInt(reg, 10) || 0),
         note: note.trim(),
+        students: normalizeStudentList(studentsText.split("\n")),
       },
       rows
     );
@@ -3294,6 +3349,17 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
       <Field label="Note (optional)">
         <input style={inputStyle} value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. bring laptops" />
       </Field>
+      <Field label="Student roster (one name per line)">
+        <textarea
+          style={{ ...inputStyle, minHeight: 88, resize: "vertical", lineHeight: 1.4, fontFamily: "inherit" }}
+          value={studentsText}
+          onChange={(e) => setStudentsText(e.target.value)}
+          placeholder={"Alex Chen\nJordan Lee\nSam Patel"}
+        />
+      </Field>
+      <p style={{ margin: "-6px 0 10px", fontSize: 11, color: "#94a3b8" }}>
+        Names appear on the 🎓 By Student tab. Signed up count stays separate from roster size.
+      </p>
 
       <div style={{ margin: "6px 0 8px", fontSize: 13, color: "#475569", fontWeight: 600 }}>
         Schedule
@@ -4581,6 +4647,232 @@ function TeacherScheduleView({ teachers, catalog, placements, rooms, idx, onEdit
   );
 }
 
+// ───────────────────────── By-student schedule view (mirrors By Teacher) ─────────────────────────
+const BY_STUDENT_LABEL_W = BY_TEACHER_LABEL_W;
+
+function StudentScheduleView({ students, catalog, placements, rooms, idx, onEditClass, onManageStudents }) {
+  const roomOrder = rooms.map((r) => r.id);
+
+  const earliestStart = (classId) => {
+    let best = null;
+    placements.forEach((p) => {
+      if (p.classId !== classId) return;
+      if (best == null || p.start < best) best = p.start;
+    });
+    return best;
+  };
+
+  const sortByTimeThenName = (list) =>
+    list.slice().sort((a, b) => {
+      const sa = earliestStart(a.id);
+      const sb = earliestStart(b.id);
+      if (sa == null && sb == null) return a.name.localeCompare(b.name);
+      if (sa == null) return 1;
+      if (sb == null) return -1;
+      return sa - sb || a.name.localeCompare(b.name);
+    });
+
+  const inClass = (cls, studentName) =>
+    (cls.students || []).some((s) => studentKey(s) === studentKey(studentName));
+
+  const classesFor = (studentName) =>
+    sortByTimeThenName(catalog.filter((k) => inClass(k, studentName)));
+  const scheduledFor = (studentName) =>
+    classesFor(studentName).filter((k) => placements.some((p) => p.classId === k.id));
+
+  const classClash = (cls) => {
+    let roomClash = false;
+    let teacherClash = false;
+    placements
+      .filter((p) => p.classId === cls.id)
+      .forEach((p) => {
+        const ev = evaluatePlacement(
+          idx,
+          { day: p.day, start: p.start, end: p.end, rooms: p.rooms },
+          { excludePlacementId: p.id, teacher: cls?.teacher }
+        );
+        if (ev.roomClashes.length) roomClash = true;
+        if (ev.hasTeacherConflict) teacherClash = true;
+      });
+    return { roomClash, teacherClash };
+  };
+
+  const metaLine = {
+    fontSize: 11,
+    lineHeight: 1.25,
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    minWidth: 0,
+  };
+
+  const renderCard = (cls) => {
+    const pls = placements.filter((p) => p.classId === cls.id);
+    const groups = classScheduleGroups(pls, cls.id);
+    if (!groups.length) return null;
+    const allRooms = [...new Set(pls.flatMap((p) => p.rooms))];
+    const roomId = primaryRoomForPlacement(allRooms, roomOrder);
+    const rc = roomOverviewColor(roomId, roomOrder);
+    const { roomClash, teacherClash } = classClash(cls);
+    const singleGroup = groups.length === 1;
+    const teacherLabel = cls.teacher || <span style={{ color: "#b45309" }}>TBD</span>;
+    return (
+      <div
+        key={cls.id}
+        onClick={() => onEditClass(cls.id)}
+        title={`${cls.name} · ${groups.map((g) => `${g.dayLabel} ${g.timeLabel}`).join(" · ")} · ${cls.teacher || "TBD"} — click to edit`}
+        style={{
+          flex: "0 0 auto",
+          width: 148,
+          minHeight: 42,
+          boxSizing: "border-box",
+          background: roomClash ? "#fee2e2" : teacherClash ? "#fffbeb" : rc.bg,
+          border: roomClash ? "2px solid #dc2626" : teacherClash ? "2px solid #d97706" : `1px solid ${rc.border}`,
+          boxShadow: roomClash
+            ? "0 0 0 3px rgba(220,38,38,.12)"
+            : teacherClash
+              ? "0 0 0 3px rgba(217,119,6,.12)"
+              : "none",
+          borderRadius: 8,
+          padding: "4px 7px 8px",
+          overflow: "hidden",
+          cursor: "pointer",
+          color: rc.text,
+          display: "flex",
+          flexDirection: "column",
+          gap: 2,
+        }}
+      >
+        <div style={{ fontWeight: 700, fontSize: 12.5, lineHeight: 1.2, overflowWrap: "anywhere", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+          {cls.name}{(roomClash || teacherClash) ? " ⚠" : ""}
+        </div>
+        {singleGroup ? (
+          <>
+            <div style={{ ...metaLine, color: "#475569" }}>{groups[0].timeLabel}</div>
+            <div style={{ ...metaLine, color: "#0f766e" }}>{groups[0].dayLabel}</div>
+          </>
+        ) : (
+          groups.map((g, i) => (
+            <div key={i} style={{ ...metaLine, color: "#475569" }}>
+              {g.timeLabel} · {g.dayLabel}
+            </div>
+          ))
+        )}
+        <div style={{ ...metaLine, flexShrink: 0, color: "#334155", fontWeight: 600 }}>
+          {teacherLabel}
+        </div>
+      </div>
+    );
+  };
+
+  const renderStudentRow = (label, classList, scheduledList) => (
+    <div key={label} style={{ display: "flex", borderTop: "1px solid #eceeea" }}>
+      <div
+        style={{
+          flex: `0 0 ${BY_STUDENT_LABEL_W}px`,
+          width: BY_STUDENT_LABEL_W,
+          position: "sticky",
+          left: 0,
+          zIndex: 2,
+          background: "#fafaf8",
+          boxSizing: "border-box",
+          padding: "10px 10px 12px",
+          borderRight: "1px solid #eceeea",
+          verticalAlign: "top",
+        }}
+      >
+        <div style={{ fontWeight: 700, fontSize: 13, color: "#123c3a", overflowWrap: "anywhere" }}>{label}</div>
+        {classList.length === 0 ? (
+          <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>—</div>
+        ) : (
+          classList.map((k) => (
+            <div key={k.id} style={{ fontSize: 11, color: "#64748b", marginTop: 4, lineHeight: 1.35, overflowWrap: "anywhere" }}>
+              {k.name}
+            </div>
+          ))
+        )}
+      </div>
+      <div
+        style={{
+          flex: 1,
+          boxSizing: "border-box",
+          padding: "8px 10px",
+          background: "#fcfcfb",
+          display: "flex",
+          flexDirection: "row",
+          flexWrap: "wrap",
+          alignItems: "flex-start",
+          gap: 8,
+          minHeight: 48,
+        }}
+      >
+        {scheduledList.length === 0 ? (
+          <span style={{ color: "#cbd5d1", fontSize: 12, padding: "4px 2px" }}>—</span>
+        ) : (
+          scheduledList.map((k) => renderCard(k))
+        )}
+      </div>
+    </div>
+  );
+
+  return (
+    <>
+      <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto", width: "100%" }}>
+        <div style={{ minWidth: BY_STUDENT_LABEL_W + 320, position: "relative" }}>
+          <div style={{ display: "flex", borderBottom: "2px solid #d6dad4", background: "#fafaf8" }}>
+            <div style={{ flex: `0 0 ${BY_STUDENT_LABEL_W}px`, width: BY_STUDENT_LABEL_W, position: "sticky", left: 0, zIndex: 3, background: "#fafaf8", boxSizing: "border-box", padding: "10px 10px", borderRight: "1px solid #eceeea" }}>
+              <button
+                type="button"
+                onClick={onManageStudents}
+                style={{
+                  ...btnGhost,
+                  color: "#123c3a",
+                  borderColor: "#cbd5d1",
+                  background: "#fff",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  padding: "5px 12px",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Manage students
+              </button>
+            </div>
+            <div style={{ flex: 1, boxSizing: "border-box", padding: "10px 12px", display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Room colors:</span>
+              {rooms.map((r) => {
+                const c = roomOverviewColor(r.id, roomOrder);
+                return (
+                  <span key={r.id} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: c.text, fontWeight: 600 }}>
+                    <RoomColorSwatch color={c} />
+                    Room {r.id}
+                    <span style={{ color: "#94a3b8", fontWeight: 500 }}>Cap {r.cap}</span>
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+          {students.map((s) => renderStudentRow(s, classesFor(s), scheduledFor(s)))}
+          {students.length === 0 && (
+            <div style={{ padding: "16px 20px", color: "#94a3b8", fontSize: 13 }}>
+              No students yet — add names in a class roster or use Manage students.
+            </div>
+          )}
+        </div>
+      </div>
+      <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
+        🎓 One row per student — cards left to right by earliest meeting time, then class name. Each card shows class, time, days, and teacher — click to edit.
+        Card colors match the room legend above.
+        <span style={{ color: "#b91c1c", fontWeight: 700 }}> Red </span>
+        = room overlap ·
+        <span style={{ color: "#b45309", fontWeight: 700 }}> amber </span>
+        = teacher double-booked.
+        <b> Manage students</b> renames (cascades to class rosters) or removes a student from every class.
+      </p>
+    </>
+  );
+}
+
 // ───────────────────────── Header program label editor ─────────────────────────
 function ProgramLabelModal({ value, onSave, onClose }) {
   const [label, setLabel] = useState(value);
@@ -4793,6 +5085,80 @@ function TeacherModal({ teachers, catalog, onSave, onClose }) {
       </div>
       <button style={{ ...btnSecondary, marginTop: 10, fontSize: 13, padding: "6px 12px" }} onClick={add}>
         ＋ Add teacher
+      </button>
+      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20 }}>
+        <button style={btnSecondary} onClick={onClose}>Cancel</button>
+        <button style={btnPrimary} onClick={submit}>Save</button>
+      </div>
+    </Overlay>
+  );
+}
+
+// ───────────────────────── Student manager ─────────────────────────
+function StudentModal({ students, catalog, onSave, onClose }) {
+  const [list, setList] = useState(students.map((s) => ({ orig: s, name: s })));
+
+  const countFor = (origName) =>
+    catalog.filter((k) => (k.students || []).some((s) => studentKey(s) === studentKey(origName))).length;
+
+  const remove = (i) => {
+    const n = list[i].orig ? countFor(list[i].orig) : 0;
+    if (n > 0 && !window.confirm(`${list[i].name} is on ${n} class roster(s). Removing them deletes their name from every class. Continue?`)) return;
+    setList(list.filter((_, j) => j !== i));
+  };
+  const add = () => setList([...list, { orig: null, name: "" }]);
+  const edit = (i, v) => {
+    const nl = [...list];
+    nl[i] = { ...nl[i], name: v };
+    setList(nl);
+  };
+
+  const submit = () => {
+    const trimmed = list.map((r) => r.name.trim()).filter((n) => studentKey(n));
+    const keys = trimmed.map((n) => studentKey(n));
+    if (new Set(keys).size !== keys.length) {
+      alert("Student names must be unique.");
+      return;
+    }
+    const names = normalizeStudentList(trimmed);
+    const renames = {};
+    list.forEach((r) => {
+      if (r.orig && r.name.trim() && studentKey(r.name) && r.orig !== r.name.trim()) renames[r.orig] = r.name.trim();
+    });
+    const removed = students.filter((s) => !list.some((r) => r.orig === s));
+    onSave({ names, renames, removed });
+  };
+
+  return (
+    <Overlay onClose={onClose}>
+      <h3 style={{ marginTop: 0 }}>Manage students</h3>
+      <p style={{ fontSize: 13, color: "#64748b", margin: "0 0 14px" }}>
+        Renaming a student updates every class roster. Removing one deletes their name from all classes.
+        Add students here before assigning them in class rosters, if you like.
+      </p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 320, overflowY: "auto" }}>
+        {list.map((r, i) => (
+          <div key={i} style={{ display: "flex", gap: 5, alignItems: "center" }}>
+            <input
+              style={{ ...inputStyle, flex: 1, padding: "6px 8px" }}
+              value={r.name}
+              placeholder="Student name"
+              onChange={(e) => edit(i, e.target.value)}
+            />
+            {r.orig && (
+              <span style={{ fontSize: 11, color: "#94a3b8", whiteSpace: "nowrap" }}>
+                {countFor(r.orig)} cls
+              </span>
+            )}
+            <button style={{ ...miniBtn, color: "#b91c1c" }} onClick={() => remove(i)} title="Remove student">✕</button>
+          </div>
+        ))}
+        {list.length === 0 && (
+          <span style={{ fontSize: 13, color: "#94a3b8" }}>No students — add one below.</span>
+        )}
+      </div>
+      <button style={{ ...btnSecondary, marginTop: 10, fontSize: 13, padding: "6px 12px" }} onClick={add}>
+        ＋ Add student
       </button>
       <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20 }}>
         <button style={btnSecondary} onClick={onClose}>Cancel</button>

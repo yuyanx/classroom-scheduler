@@ -18,6 +18,19 @@ export const teacherKey = (teacher?: string) => {
   return key === "tbd" || key === "n/a" || key === "na" ? "" : key;
 };
 
+export const studentKey = (name?: string) => (name || "").trim().toLowerCase();
+
+export const normalizeStudentList = (raw: unknown): string[] => {
+  const arr = Array.isArray(raw) ? raw : typeof raw === "string" ? raw.split("\n") : [];
+  const seen = new Map<string, string>();
+  arr.forEach((s) => {
+    const t = String(s ?? "").trim();
+    const key = studentKey(t);
+    if (key && !seen.has(key)) seen.set(key, t);
+  });
+  return [...seen.values()].sort((a, b) => a.localeCompare(b));
+};
+
 export const overlaps = (a: { day: string; start: number; end: number }, b: { day: string; start: number; end: number }) =>
   a.day === b.day && a.start < b.end && b.start < a.end;
 

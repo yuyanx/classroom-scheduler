@@ -20,6 +20,8 @@ export {
   primaryRoomForPlacement,
   computeWeekOverviewLayout,
   ROOM_OVERVIEW_PALETTE,
+  studentKey,
+  normalizeStudentList,
 } from "./domain/scheduleLogic.ts";
 
 export {

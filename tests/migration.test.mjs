@@ -9,6 +9,8 @@ import {
   LIVE_V1_SEED,
   DEFAULT_PROGRAM_LABEL,
   cleanProgramLabel,
+  normalizeStudentList,
+  studentKey,
 } from "../dist/test-logic.mjs";
 
 const tinyV1 = {
@@ -145,4 +147,22 @@ test("normalizeV2 preserves custom programLabel", () => {
 test("cleanProgramLabel falls back when blank", () => {
   assert.equal(cleanProgramLabel(""), DEFAULT_PROGRAM_LABEL);
   assert.equal(cleanProgramLabel("  2027 Spring · Jericho "), "2027 Spring · Jericho");
+});
+
+test("normalizeV2 defaults catalog students to empty array", () => {
+  const v2 = normalizeV2({
+    version: 2,
+    days: ["mon"],
+    hours: { default: [540, 1020] },
+    rooms: [{ id: "1", cap: 12 }],
+    catalog: [{ id: "k1", name: "Bio", teacher: "A", reg: 2, note: "" }],
+    placements: [],
+  });
+  assert.deepEqual(v2.catalog[0].students, []);
+  assert.deepEqual(v2.students, []);
+});
+
+test("normalizeStudentList dedupes and sorts", () => {
+  assert.deepEqual(normalizeStudentList(["Sam", "  alex ", "sam", ""]), ["alex", "Sam"]);
+  assert.equal(studentKey("  Alex Chen "), "alex chen");
 });
