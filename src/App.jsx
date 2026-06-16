@@ -1180,6 +1180,7 @@ export default function ClassroomScheduler() {
   const [studentMgrOpen, setStudentMgrOpen] = useState(false);
   const [programLabelOpen, setProgramLabelOpen] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [confirmDeleteClass, setConfirmDeleteClass] = useState(null);
   const [drag, setDrag] = useState(null); // {type:'lib'|'pl', id, dur, grabOffset}
   const [dragOver, setDragOver] = useState(null); // "tray" | null
   const [ghost, setGhost] = useState(null); // {room, start, dur, names: []}
@@ -2126,12 +2127,27 @@ export default function ClassroomScheduler() {
 
   const deleteClass = (classId) => {
     const n = placementsOf(classId).length;
-    if (n > 1 && !window.confirm(`This class meets ${n} times. Delete it everywhere?`)) return;
+    if (n > 1) {
+      setConfirmDeleteClass({ classId, count: n });
+      return;
+    }
     persist((d) => ({
       ...d,
       catalog: d.catalog.filter((k) => k.id !== classId),
       placements: d.placements.filter((p) => p.classId !== classId),
     }));
+    setEditing(null);
+  };
+
+  const confirmDeleteClassNow = () => {
+    if (!confirmDeleteClass) return;
+    const { classId } = confirmDeleteClass;
+    persist((d) => ({
+      ...d,
+      catalog: d.catalog.filter((k) => k.id !== classId),
+      placements: d.placements.filter((p) => p.classId !== classId),
+    }));
+    setConfirmDeleteClass(null);
     setEditing(null);
   };
 
@@ -3242,6 +3258,19 @@ export default function ClassroomScheduler() {
           </div>
         </Overlay>
       )}
+
+      {confirmDeleteClass && (
+        <Overlay onClose={() => setConfirmDeleteClass(null)}>
+          <h3 style={{ marginTop: 0 }}>Delete class everywhere?</h3>
+          <p style={{ fontSize: 14, color: "#475569", lineHeight: 1.5, margin: "0 0 18px" }}>
+            This class meets {confirmDeleteClass.count} times per week. Deleting removes every meeting time and the class from the library.
+          </p>
+          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+            <button style={btnSecondary} onClick={() => setConfirmDeleteClass(null)}>Cancel</button>
+            <button style={{ ...btnPrimary, background: "#dc2626" }} onClick={confirmDeleteClassNow}>Delete class</button>
+          </div>
+        </Overlay>
+      )}
     </div>
   );
 }
@@ -3255,6 +3284,15 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
   const [note, setNote] = useState(c.note || "");
   const [studentsText, setStudentsText] = useState((c.students || []).join("\n"));
   const [rows, setRows] = useState(initialRows); // meeting times: {id?, day, start, end, rooms: []}
+  const [formError, setFormError] = useState("");
+  const [errorRow, setErrorRow] = useState(null);
+  const [confirmStep, setConfirmStep] = useState(null);
+
+  const clearFeedback = () => {
+    if (formError) setFormError("");
+    if (errorRow != null) setErrorRow(null);
+    if (confirmStep) setConfirmStep(null);
+  };
 
   const roomPos = new Map(rooms.map((r, i) => [r.id, i]));
   const sortRoomIds = (list) => [...list].sort((a, b) => (roomPos.get(a) ?? 99) - (roomPos.get(b) ?? 99));
@@ -3288,43 +3326,8 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
     if (adds.length) setRows([...rows, ...adds]);
   };
 
-  const submit = () => {
-    if (!name.trim()) return;
-    for (let i = 0; i < rows.length; i++) {
-      const r = rows[i];
-      const label = `${DAY_LABEL[r.day]} ${fmtRange(r.start, r.end)}`;
-      if (r.rooms.length === 0) {
-        alert("Pick at least one room for every meeting time (or remove the row).");
-        return;
-      }
-      if (!(r.end > r.start)) {
-        alert(`The end time must be after the start time (${label}).`);
-        return;
-      }
-      if (timeDup(r, i)) {
-        alert(`This class has two overlapping meetings (${label}). Adjust one of them.`);
-        return;
-      }
-      const taken = r.rooms.map((id) => ({ id, by: takenBy(r, id, i) })).filter((x) => x.by);
-      if (taken.length) {
-        alert(`Room conflict: ${label} Room ${taken[0].id} already has ${taken[0].by}. Pick a different room or time.`);
-        return;
-      }
-    }
-    // Teacher overlaps are allowed, but confirm so they never slip through unnoticed
-    const teacherOverlaps = teacherKey(teacher)
-      ? [...new Set(rows.flatMap((r) => teacherConflictsAt({ day: r.day, start: r.start, end: r.end, rooms: r.rooms }, teacher)))]
-      : [];
-    if (teacherOverlaps.length > 0 && !window.confirm(
-      `${teacher.trim()} is also teaching at the same time: ${teacherOverlaps.join(", ")}.\n\nSave anyway?`
-    )) return;
+  const doSave = () => {
     const roster = normalizeStudentList(studentsText.split("\n"));
-    const studentOverlaps = studentConflictsAt
-      ? [...new Set(rows.flatMap((r) => studentConflictsAt({ day: r.day, start: r.start, end: r.end, rooms: r.rooms }, roster)))]
-      : [];
-    if (studentOverlaps.length > 0 && !window.confirm(
-      `A student on this roster is also scheduled at the same time: ${studentOverlaps.join(", ")}.\n\nSave anyway?`
-    )) return;
     onSave(
       {
         name: name.trim(),
@@ -3337,13 +3340,85 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
     );
   };
 
+  const submit = () => {
+    if (!name.trim()) return;
+    setFormError("");
+    setErrorRow(null);
+    setConfirmStep(null);
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const label = `${DAY_LABEL[r.day]} ${fmtRange(r.start, r.end)}`;
+      if (r.rooms.length === 0) {
+        setFormError("Pick at least one room for every meeting time, or remove the row.");
+        setErrorRow(i);
+        return;
+      }
+      if (!(r.end > r.start)) {
+        setFormError(`End time must be after start time (${label}).`);
+        setErrorRow(i);
+        return;
+      }
+      if (timeDup(r, i)) {
+        setFormError(`This class has two overlapping meetings (${label}). Adjust one of them.`);
+        setErrorRow(i);
+        return;
+      }
+      const taken = r.rooms.map((id) => ({ id, by: takenBy(r, id, i) })).filter((x) => x.by);
+      if (taken.length) {
+        setFormError(`${label} · Room ${taken[0].id} already has ${taken[0].by}. Pick a different room or time.`);
+        setErrorRow(i);
+        return;
+      }
+    }
+    const roster = normalizeStudentList(studentsText.split("\n"));
+    const teacherOverlaps = teacherKey(teacher)
+      ? [...new Set(rows.flatMap((r) => teacherConflictsAt({ day: r.day, start: r.start, end: r.end, rooms: r.rooms }, teacher)))]
+      : [];
+    const studentOverlaps = studentConflictsAt
+      ? [...new Set(rows.flatMap((r) => studentConflictsAt({ day: r.day, start: r.start, end: r.end, rooms: r.rooms }, roster)))]
+      : [];
+    const finishStudentCheck = () => {
+      if (studentOverlaps.length > 0) {
+        setConfirmStep({
+          title: "Student double-booked",
+          message: `A student on this roster is also scheduled at the same time: ${studentOverlaps.join(", ")}.`,
+          confirmLabel: "Save anyway",
+          onConfirm: () => {
+            setConfirmStep(null);
+            doSave();
+          },
+        });
+        return;
+      }
+      doSave();
+    };
+    if (teacherOverlaps.length > 0) {
+      setConfirmStep({
+        title: "Teacher double-booked",
+        message: `${teacher.trim()} is also teaching at the same time: ${teacherOverlaps.join(", ")}.`,
+        confirmLabel: "Save anyway",
+        onConfirm: () => {
+          setConfirmStep(null);
+          finishStudentCheck();
+        },
+      });
+      return;
+    }
+    finishStudentCheck();
+  };
+
   return (
     <Overlay onClose={onClose} wide>
       <h3 style={{ marginTop: 0, marginBottom: 4 }}>{editing.isNew ? "Add class" : "Edit class"}</h3>
       <p style={{ margin: "0 0 16px", fontSize: 13, color: "#64748b" }}>{contextLabel}</p>
+      {formError && (
+        <FormNotice tone="error" title="Can't save yet">
+          {formError}
+        </FormNotice>
+      )}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
         <Field label="Class name *" style={{ flex: 2, minWidth: 180 }}>
-          <input style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. SAT Math" autoFocus />
+          <input style={inputStyle} value={name} onChange={(e) => { setName(e.target.value); clearFeedback(); }} placeholder="e.g. SAT Math" autoFocus />
         </Field>
         <Field label="Teacher" style={{ flex: 1.4, minWidth: 130 }}>
           <select
@@ -3356,6 +3431,7 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
                 if (name && teacherKey(name)) setTeacher(name);
               } else {
                 setTeacher(v);
+                clearFeedback();
               }
             }}
           >
@@ -3377,7 +3453,7 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
         <textarea
           style={{ ...inputStyle, minHeight: 88, resize: "vertical", lineHeight: 1.4, fontFamily: "inherit" }}
           value={studentsText}
-          onChange={(e) => setStudentsText(e.target.value)}
+          onChange={(e) => { setStudentsText(e.target.value); clearFeedback(); }}
           placeholder={"Alex Chen\nJordan Lee\nSam Patel"}
         />
       </Field>
@@ -3411,12 +3487,20 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
           ? freeRoomsAt({ day: r.day, start: r.start, end: r.end }).filter((id) => !r.rooms.includes(id))
           : [];
         return (
-          <div key={i} style={{ marginBottom: 10 }}>
+          <div
+            key={i}
+            style={{
+              marginBottom: 10,
+              ...(errorRow === i
+                ? { background: "#fef2f2", borderRadius: 10, padding: 10, border: "1px solid #fecaca" }
+                : {}),
+            }}
+          >
             <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
               <select
                 style={{ ...selStyle, flex: "1 1 110px" }}
                 value={r.day}
-                onChange={(e) => setRow(i, { day: e.target.value })}
+                onChange={(e) => { setRow(i, { day: e.target.value }); clearFeedback(); }}
               >
                 {days.map((d) => (
                   <option key={d} value={d}>{DAY_LABEL[d]}</option>
@@ -3431,6 +3515,7 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
                   const v = fromInput(e.target.value);
                   if (v == null) return;
                   setRow(i, { start: v, end: v + (r.end - r.start) });
+                  clearFeedback();
                 }}
                 title="Start time"
               />
@@ -3444,6 +3529,7 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
                   const v = fromInput(e.target.value);
                   if (v == null) return;
                   setRow(i, { end: v > r.start ? v : r.start + SNAP });
+                  clearFeedback();
                 }}
                 title="End time"
               />
@@ -3464,7 +3550,10 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
                 return (
                   <button
                     key={rm.id}
-                    onClick={() => setRow(i, { rooms: on ? r.rooms.filter((x) => x !== rm.id) : sortRoomIds([...r.rooms, rm.id]) })}
+                    onClick={() => {
+                      setRow(i, { rooms: on ? r.rooms.filter((x) => x !== rm.id) : sortRoomIds([...r.rooms, rm.id]) });
+                      clearFeedback();
+                    }}
                     disabled={!!taken}
                     title={
                       taken
@@ -3534,15 +3623,25 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
       )}
       <button style={{ ...btnSecondary, fontSize: 13, padding: "6px 12px" }} onClick={addRow}>＋ Add meeting time</button>
 
-      <div style={{ display: "flex", gap: 10, marginTop: 18, flexWrap: "wrap" }}>
-        {!editing.isNew && (
-          <button style={{ ...btnSecondary, color: "#b91c1c", borderColor: "#fca5a5" }} onClick={onDelete}>Delete class</button>
-        )}
-        <div style={{ marginLeft: "auto", display: "flex", gap: 10 }}>
-          <button style={btnSecondary} onClick={onClose}>Cancel</button>
-          <button style={btnPrimary} onClick={submit} disabled={!name.trim()}>Save</button>
+      {confirmStep ? (
+        <InlineConfirm
+          title={confirmStep.title}
+          message={confirmStep.message}
+          confirmLabel={confirmStep.confirmLabel}
+          onCancel={() => setConfirmStep(null)}
+          onConfirm={confirmStep.onConfirm}
+        />
+      ) : (
+        <div style={{ display: "flex", gap: 10, marginTop: 18, flexWrap: "wrap" }}>
+          {!editing.isNew && (
+            <button style={{ ...btnSecondary, color: "#b91c1c", borderColor: "#fca5a5" }} onClick={onDelete}>Delete class</button>
+          )}
+          <div style={{ marginLeft: "auto", display: "flex", gap: 10 }}>
+            <button style={btnSecondary} onClick={onClose}>Cancel</button>
+            <button style={btnPrimary} onClick={submit} disabled={!name.trim()}>Save</button>
+          </div>
         </div>
-      </div>
+      )}
     </Overlay>
   );
 }
@@ -5093,13 +5192,23 @@ function RoomCapModal({ roomId, value, error, onChange, onSave, onClose }) {
 // ───────────────────────── Teacher manager ─────────────────────────
 function TeacherModal({ teachers, catalog, onSave, onClose }) {
   const [list, setList] = useState(teachers.map((t) => ({ orig: t, name: t })));
+  const [formError, setFormError] = useState("");
+  const [pendingRemove, setPendingRemove] = useState(null);
 
   const countFor = (origName) => catalog.filter((k) => teacherKey(k.teacher) === teacherKey(origName)).length;
 
+  const removeAt = (i) => setList(list.filter((_, j) => j !== i));
+
   const remove = (i) => {
     const n = list[i].orig ? countFor(list[i].orig) : 0;
-    if (n > 0 && !window.confirm(`${list[i].name} teaches ${n} class(es). Removing them sets those classes to "Teacher TBD". Continue?`)) return;
-    setList(list.filter((_, j) => j !== i));
+    if (n > 0) {
+      setPendingRemove({
+        i,
+        message: `${list[i].name} teaches ${n} class(es). Removing them sets those classes to "Teacher TBD".`,
+      });
+      return;
+    }
+    removeAt(i);
   };
   const add = () => setList([...list, { orig: null, name: "" }]);
   const edit = (i, v) => {
@@ -5109,10 +5218,11 @@ function TeacherModal({ teachers, catalog, onSave, onClose }) {
   };
 
   const submit = () => {
+    setFormError("");
     const names = list.map((r) => r.name.trim()).filter((n) => n && teacherKey(n));
     const keys = names.map((n) => teacherKey(n));
     if (new Set(keys).size !== keys.length) {
-      alert("Teacher names must be unique.");
+      setFormError("Teacher names must be unique.");
       return;
     }
     const renames = {};
@@ -5129,6 +5239,7 @@ function TeacherModal({ teachers, catalog, onSave, onClose }) {
       <p style={{ fontSize: 13, color: "#64748b", margin: "0 0 14px" }}>
         Renaming a teacher updates every class they teach. Removing one sets their classes to "Teacher TBD".
       </p>
+      {formError && <FormNotice tone="error">{formError}</FormNotice>}
       <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 320, overflowY: "auto" }}>
         {list.map((r, i) => (
           <div key={i} style={{ display: "flex", gap: 5, alignItems: "center" }}>
@@ -5136,7 +5247,7 @@ function TeacherModal({ teachers, catalog, onSave, onClose }) {
               style={{ ...inputStyle, flex: 1, padding: "6px 8px" }}
               value={r.name}
               placeholder="Teacher name"
-              onChange={(e) => edit(i, e.target.value)}
+              onChange={(e) => { edit(i, e.target.value); setFormError(""); }}
             />
             {r.orig && (
               <span style={{ fontSize: 11, color: "#94a3b8", whiteSpace: "nowrap" }}>
@@ -5153,10 +5264,21 @@ function TeacherModal({ teachers, catalog, onSave, onClose }) {
       <button style={{ ...btnSecondary, marginTop: 10, fontSize: 13, padding: "6px 12px" }} onClick={add}>
         ＋ Add teacher
       </button>
-      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20 }}>
-        <button style={btnSecondary} onClick={onClose}>Cancel</button>
-        <button style={btnPrimary} onClick={submit}>Save</button>
-      </div>
+      {pendingRemove ? (
+        <InlineConfirm
+          title="Remove teacher?"
+          message={pendingRemove.message}
+          confirmLabel="Remove"
+          danger
+          onCancel={() => setPendingRemove(null)}
+          onConfirm={() => { removeAt(pendingRemove.i); setPendingRemove(null); }}
+        />
+      ) : (
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20 }}>
+          <button style={btnSecondary} onClick={onClose}>Cancel</button>
+          <button style={btnPrimary} onClick={submit}>Save</button>
+        </div>
+      )}
     </Overlay>
   );
 }
@@ -5164,14 +5286,24 @@ function TeacherModal({ teachers, catalog, onSave, onClose }) {
 // ───────────────────────── Student manager ─────────────────────────
 function StudentModal({ students, catalog, onSave, onClose }) {
   const [list, setList] = useState(students.map((s) => ({ orig: s, name: s })));
+  const [formError, setFormError] = useState("");
+  const [pendingRemove, setPendingRemove] = useState(null);
 
   const countFor = (origName) =>
     catalog.filter((k) => (k.students || []).some((s) => studentKey(s) === studentKey(origName))).length;
 
+  const removeAt = (i) => setList(list.filter((_, j) => j !== i));
+
   const remove = (i) => {
     const n = list[i].orig ? countFor(list[i].orig) : 0;
-    if (n > 0 && !window.confirm(`${list[i].name} is on ${n} class roster(s). Removing them deletes their name from every class. Continue?`)) return;
-    setList(list.filter((_, j) => j !== i));
+    if (n > 0) {
+      setPendingRemove({
+        i,
+        message: `${list[i].name} is on ${n} class roster(s). Removing them deletes their name from every class.`,
+      });
+      return;
+    }
+    removeAt(i);
   };
   const add = () => setList([...list, { orig: null, name: "" }]);
   const edit = (i, v) => {
@@ -5181,10 +5313,11 @@ function StudentModal({ students, catalog, onSave, onClose }) {
   };
 
   const submit = () => {
+    setFormError("");
     const trimmed = list.map((r) => r.name.trim()).filter((n) => studentKey(n));
     const keys = trimmed.map((n) => studentKey(n));
     if (new Set(keys).size !== keys.length) {
-      alert("Student names must be unique.");
+      setFormError("Student names must be unique.");
       return;
     }
     const names = normalizeStudentList(trimmed);
@@ -5203,6 +5336,7 @@ function StudentModal({ students, catalog, onSave, onClose }) {
         Renaming a student updates every class roster. Removing one deletes their name from all classes.
         Add students here before assigning them in class rosters, if you like.
       </p>
+      {formError && <FormNotice tone="error">{formError}</FormNotice>}
       <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 320, overflowY: "auto" }}>
         {list.map((r, i) => (
           <div key={i} style={{ display: "flex", gap: 5, alignItems: "center" }}>
@@ -5210,7 +5344,7 @@ function StudentModal({ students, catalog, onSave, onClose }) {
               style={{ ...inputStyle, flex: 1, padding: "6px 8px" }}
               value={r.name}
               placeholder="Student name"
-              onChange={(e) => edit(i, e.target.value)}
+              onChange={(e) => { edit(i, e.target.value); setFormError(""); }}
             />
             {r.orig && (
               <span style={{ fontSize: 11, color: "#94a3b8", whiteSpace: "nowrap" }}>
@@ -5227,10 +5361,21 @@ function StudentModal({ students, catalog, onSave, onClose }) {
       <button style={{ ...btnSecondary, marginTop: 10, fontSize: 13, padding: "6px 12px" }} onClick={add}>
         ＋ Add student
       </button>
-      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20 }}>
-        <button style={btnSecondary} onClick={onClose}>Cancel</button>
-        <button style={btnPrimary} onClick={submit}>Save</button>
-      </div>
+      {pendingRemove ? (
+        <InlineConfirm
+          title="Remove student?"
+          message={pendingRemove.message}
+          confirmLabel="Remove"
+          danger
+          onCancel={() => setPendingRemove(null)}
+          onConfirm={() => { removeAt(pendingRemove.i); setPendingRemove(null); }}
+        />
+      ) : (
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20 }}>
+          <button style={btnSecondary} onClick={onClose}>Cancel</button>
+          <button style={btnPrimary} onClick={submit}>Save</button>
+        </div>
+      )}
     </Overlay>
   );
 }
@@ -5238,6 +5383,8 @@ function StudentModal({ students, catalog, onSave, onClose }) {
 // ───────────────────────── Room manager (one list for the whole week) ─────────────────────────
 function RoomModal({ rooms, placements, onSave, onClose }) {
   const [list, setList] = useState(rooms.map((r) => ({ orig: r.id, name: r.id, cap: r.cap })));
+  const [formError, setFormError] = useState("");
+  const [pendingRemove, setPendingRemove] = useState(null);
 
   const roomOrder = list.map((r, i) => r.name.trim() || `__draft_${i}`);
   const colorForIndex = (i) => roomOverviewColor(roomOrder[i], roomOrder);
@@ -5251,10 +5398,18 @@ function RoomModal({ rooms, placements, onSave, onClose }) {
     [nl[i], nl[j]] = [nl[j], nl[i]];
     setList(nl);
   };
+  const removeAt = (i) => setList(list.filter((_, idx) => idx !== i));
+
   const remove = (i) => {
     const n = list[i].orig ? countFor(list[i].orig) : 0;
-    if (n > 0 && !window.confirm(`Room "${list[i].name}" is used by ${n} class meeting(s). Deleting it removes it from them (a meeting left with no rooms is unscheduled). Continue?`)) return;
-    setList(list.filter((_, idx) => idx !== i));
+    if (n > 0) {
+      setPendingRemove({
+        i,
+        message: `Room "${list[i].name}" is used by ${n} class meeting(s). Deleting it removes it from them (a meeting left with no rooms is unscheduled).`,
+      });
+      return;
+    }
+    removeAt(i);
   };
   const add = () => setList([...list, { orig: null, name: "", cap: 12 }]);
   const patch = (i, p) => {
@@ -5264,13 +5419,14 @@ function RoomModal({ rooms, placements, onSave, onClose }) {
   };
 
   const submit = () => {
+    setFormError("");
     const names = list.map((r) => r.name.trim()).filter(Boolean);
     if (names.length === 0) {
-      alert("Keep at least one room.");
+      setFormError("Keep at least one room.");
       return;
     }
     if (new Set(names).size !== names.length) {
-      alert("Room names must be unique.");
+      setFormError("Room names must be unique.");
       return;
     }
     const renames = {};
@@ -5309,6 +5465,7 @@ function RoomModal({ rooms, placements, onSave, onClose }) {
       <p style={{ fontSize: 11, color: "#94a3b8", margin: "0 0 10px" }}>
         Colors follow list order — use ↑↓ to reorder. New rooms get the next color automatically.
       </p>
+      {formError && <FormNotice tone="error">{formError}</FormNotice>}
       <div style={{ display: "grid", gridTemplateColumns: roomMgrGrid, gap: 5, alignItems: "center", marginBottom: 5, fontSize: 11, color: "#64748b", fontWeight: 700, width: "fit-content" }}>
         <span />
         <span>Room</span>
@@ -5326,14 +5483,14 @@ function RoomModal({ rooms, placements, onSave, onClose }) {
               style={{ ...inputStyle, padding: "6px 8px", width: 80, boxSizing: "border-box" }}
               value={r.name}
               placeholder="#"
-              onChange={(e) => patch(i, { name: e.target.value })}
+              onChange={(e) => { patch(i, { name: e.target.value }); setFormError(""); }}
             />
             <input
               style={{ ...inputStyle, padding: "6px 8px" }}
               type="number"
               min="0"
               value={r.cap}
-              onChange={(e) => patch(i, { cap: e.target.value })}
+              onChange={(e) => { patch(i, { cap: e.target.value }); setFormError(""); }}
             />
             {r.orig ? (
               <span style={{ fontSize: 11, color: "#94a3b8", whiteSpace: "nowrap" }}>
@@ -5349,15 +5506,49 @@ function RoomModal({ rooms, placements, onSave, onClose }) {
       <button style={{ ...btnSecondary, marginTop: 10, fontSize: 13, padding: "6px 12px" }} onClick={add}>
         ＋ Add room
       </button>
-      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20 }}>
-        <button style={btnSecondary} onClick={onClose}>Cancel</button>
-        <button style={btnPrimary} onClick={submit}>Save</button>
-      </div>
+      {pendingRemove ? (
+        <InlineConfirm
+          title="Delete room?"
+          message={pendingRemove.message}
+          confirmLabel="Delete room"
+          danger
+          onCancel={() => setPendingRemove(null)}
+          onConfirm={() => { removeAt(pendingRemove.i); setPendingRemove(null); }}
+        />
+      ) : (
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20 }}>
+          <button style={btnSecondary} onClick={onClose}>Cancel</button>
+          <button style={btnPrimary} onClick={submit}>Save</button>
+        </div>
+      )}
     </Overlay>
   );
 }
 
 // ───────────────────────── Shared bits ─────────────────────────
+function FormNotice({ tone = "error", title, children }) {
+  const box = tone === "warn" ? formNoticeWarnStyle : formNoticeErrorStyle;
+  return (
+    <div style={box}>
+      {title && <div style={{ fontWeight: 700, marginBottom: children ? 4 : 0 }}>{title}</div>}
+      {children}
+    </div>
+  );
+}
+
+function InlineConfirm({ title, message, confirmLabel = "Continue", onCancel, onConfirm, danger }) {
+  return (
+    <div style={{ ...formNoticeWarnStyle, marginTop: 18, marginBottom: 0 }}>
+      <div style={{ fontWeight: 700, fontSize: 14, color: "#123c3a", marginBottom: 6 }}>{title}</div>
+      <p style={{ margin: "0 0 14px", fontSize: 13, color: "#475569", lineHeight: 1.45 }}>{message}</p>
+      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap" }}>
+        <button style={btnSecondary} onClick={onCancel}>Cancel</button>
+        <button style={danger ? { ...btnPrimary, background: "#dc2626" } : btnPrimary} onClick={onConfirm}>{confirmLabel}</button>
+      </div>
+    </div>
+  );
+}
+
 function Overlay({ children, onClose, wide, bare }) {
   return (
     <div
@@ -5428,6 +5619,14 @@ const studentWarningStyle = {
 const roomConflictStyle = {
   fontSize: 11, background: "#fee2e2", color: "#b91c1c", border: "1px solid #fecaca",
   borderRadius: 4, padding: "2px 6px", fontWeight: 700, lineHeight: 1.25,
+};
+const formNoticeErrorStyle = {
+  background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10,
+  padding: "12px 14px", marginBottom: 14, color: "#991b1b", fontSize: 13, lineHeight: 1.45,
+};
+const formNoticeWarnStyle = {
+  background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10,
+  padding: "14px 16px", marginBottom: 14, color: "#92400e", fontSize: 13, lineHeight: 1.45,
 };
 const btnGhost = {
   background: "transparent", border: "1px solid rgba(255,255,255,.35)", color: "inherit",
