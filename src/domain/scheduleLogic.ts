@@ -253,9 +253,41 @@ export function studentConflictLabelsAt(
   return labels;
 }
 
+const formatStudentConflictSlots = (slots: { day: string; start: number; end: number }[]) => {
+  const byTime = new Map<string, string[]>();
+  slots.forEach((s) => {
+    const tk = `${s.start}|${s.end}`;
+    if (!byTime.has(tk)) byTime.set(tk, []);
+    byTime.get(tk)!.push(s.day);
+  });
+  return [...byTime.entries()]
+    .sort((a, b) => {
+      const da = [...a[1]].sort((x, y) => dayIdx(x) - dayIdx(y))[0];
+      const db = [...b[1]].sort((x, y) => dayIdx(x) - dayIdx(y))[0];
+      return dayIdx(da) - dayIdx(db) || Number(a[0].split("|")[0]) - Number(b[0].split("|")[0]);
+    })
+    .map(([tk, days]) => {
+      const [start, end] = tk.split("|").map(Number);
+      return `${formatDayRange(days)} ${fmtRange(start, end)}`;
+    })
+    .join(" · ");
+};
+
 export function buildConflictReport(idx: ReturnType<typeof buildScheduleIndexes>, data: { placements?: { id: string; classId: string; day: string; start: number; end: number; rooms: string[] }[] }) {
   const items: { type: string; placementId: string; otherPlacementId: string; day: string; classId: string; className: string; start: number; end: number; label: string }[] = [];
   const seen = new Set<string>();
+  const studentGroupMap = new Map<
+    string,
+    {
+      studentName: string;
+      classIdA: string;
+      classIdB: string;
+      classNameA: string;
+      classNameB: string;
+      slots: { day: string; start: number; end: number; placementId: string; otherPlacementId: string; rooms: string[] }[];
+    }
+  >();
+  const seenStudentPlacementPair = new Set<string>();
   const allPls = data.placements || [];
   allPls.forEach((p) => {
     const cls = idx.catalogById.get(p.classId);
@@ -298,27 +330,59 @@ export function buildConflictReport(idx: ReturnType<typeof buildScheduleIndexes>
     allPls.forEach((other) => {
       if (other.id === p.id || other.classId === p.classId) return;
       if (!overlaps(p, other)) return;
-      const pairKey = [p.id, other.id].sort().join("|") + ":student";
-      if (seen.has(pairKey)) return;
+      const placementPairKey = [p.id, other.id].sort().join("|");
+      if (seenStudentPlacementPair.has(placementPairKey)) return;
+      seenStudentPlacementPair.add(placementPairKey);
       const otherCls = idx.catalogById.get(other.classId);
       const shared = sharedRosterStudents(cls, otherCls);
       if (!shared.length) return;
-      seen.add(pairKey);
-      const studentLabel =
-        shared.length === 1
-          ? shared[0]
-          : `${shared.length} students (${shared.slice(0, 2).join(", ")}${shared.length > 2 ? "…" : ""})`;
-      items.push({
-        type: "student",
-        placementId: p.id,
-        otherPlacementId: other.id,
-        day: p.day,
-        classId: p.classId,
-        className: cls?.name || "Class",
-        start: p.start,
-        end: p.end,
-        label: `${studentLabel} · ${cls?.name || "Class"} ↔ ${otherCls?.name || "Class"} · ${DAY_SHORT[p.day]} ${fmtRange(p.start, p.end)} · Rm ${[...p.rooms, ...other.rooms].filter((r, i, a) => a.indexOf(r) === i).sort().join("+")}`,
+      const [classIdA, classIdB] = [p.classId, other.classId].sort();
+      const clsA = idx.catalogById.get(classIdA);
+      const clsB = idx.catalogById.get(classIdB);
+      const rooms = [...new Set([...p.rooms, ...other.rooms])].sort();
+      shared.forEach((studentName) => {
+        const groupKey = `${studentKey(studentName)}:${classIdA}|${classIdB}`;
+        let group = studentGroupMap.get(groupKey);
+        if (!group) {
+          group = {
+            studentName,
+            classIdA,
+            classIdB,
+            classNameA: clsA?.name || "Class",
+            classNameB: clsB?.name || "Class",
+            slots: [],
+          };
+          studentGroupMap.set(groupKey, group);
+        }
+        const slotKey = `${p.day}|${p.start}|${p.end}`;
+        if (!group.slots.some((s) => `${s.day}|${s.start}|${s.end}` === slotKey)) {
+          group.slots.push({
+            day: p.day,
+            start: p.start,
+            end: p.end,
+            placementId: p.id,
+            otherPlacementId: other.id,
+            rooms,
+          });
+        }
       });
+    });
+  });
+  studentGroupMap.forEach((group) => {
+    const slots = group.slots.sort((a, b) => dayIdx(a.day) - dayIdx(b.day) || a.start - b.start);
+    const first = slots[0];
+    const scheduleLabel = formatStudentConflictSlots(slots);
+    const allRooms = [...new Set(slots.flatMap((s) => s.rooms))].sort().join("+");
+    items.push({
+      type: "student",
+      placementId: first.placementId,
+      otherPlacementId: first.otherPlacementId,
+      day: first.day,
+      classId: group.classIdA,
+      className: group.classNameA,
+      start: first.start,
+      end: first.end,
+      label: `${group.studentName} · ${group.classNameA} ↔ ${group.classNameB} · ${scheduleLabel} · Rm ${allRooms}`,
     });
   });
   return items.sort((a, b) => dayIdx(a.day) - dayIdx(b.day) || a.start - b.start || a.type.localeCompare(b.type));
