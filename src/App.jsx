@@ -1910,6 +1910,17 @@ export default function ClassroomScheduler() {
     }));
   };
 
+  const applyByClassMoves = (moved) => {
+    if (!moved?.length) return;
+    persist((d) => ({
+      ...d,
+      placements: d.placements.map((p) => {
+        const m = moved.find((x) => x.id === p.id);
+        return m ? { ...p, start: m.start, end: m.end, rooms: m.rooms } : p;
+      }),
+    }));
+  };
+
   // ── Drag & drop on the day grid ──
   const snapStartFromEvent = (e, dur) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -2855,6 +2866,8 @@ export default function ClassroomScheduler() {
                 idx={idx}
                 planReadOnly={planReadOnly}
                 onBumpReg={bump}
+                onMoveClass={applyByClassMoves}
+                onFlash={flashMsg}
                 onEditClass={(classId, placementId) => setEditing({ isNew: false, classId, placementId })}
               />
             ) : tab === "weekOverview" ? (
@@ -3840,10 +3853,14 @@ function WeekOverviewView({ days, hours, rooms, placements, idx, planReadOnly, o
 const BY_CLASS_PX_PER_MIN = 1.25;
 const BY_CLASS_ROOM_MIN_W = 148;
 
-function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planReadOnly, onBumpReg, onEditClass }) {
+function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planReadOnly, onBumpReg, onMoveClass, onFlash, onEditClass }) {
   const roomOrder = rooms.map((r) => r.id);
   const roomCap = (id) => idx?.roomCapById?.get(id) ?? 12;
   const capOfRooms = (list) => (list || []).reduce((s, id) => s + roomCap(id), 0);
+  const [byClassDrag, setByClassDrag] = useState(null);
+  const [byClassGhost, setByClassGhost] = useState(null);
+  const byClassGridRef = useRef(null);
+  const byClassGhostKeyRef = useRef(null);
 
   const layout = useMemo(
     () => computeWeekOverviewLayout(days, hours, idx.placementsByDay, BY_CLASS_PX_PER_MIN),
@@ -3925,6 +3942,158 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
     return { roomClash, teacherClash };
   };
 
+  const blockForClass = (classId) => classBlocks.find((b) => b.classId === classId);
+
+  const pointToByClassSlot = (clientX, clientY) => {
+    if (!byClassDrag || !byClassGridRef.current) return null;
+    const rect = byClassGridRef.current.getBoundingClientRect();
+    const timeColW = 64;
+    const roomAreaW = rect.width - timeColW;
+    const colW = roomAreaW / rooms.length;
+    const xInRooms = clientX - rect.left - timeColW;
+    const roomIdx = Math.max(0, Math.min(rooms.length - 1, Math.floor(xInRooms / colW)));
+    const block = blockForClass(byClassDrag.classId);
+    const multiRoom = block && block.rooms.length > 1;
+    const targetRoomId = multiRoom ? null : rooms[roomIdx]?.id;
+    const blockDur = byClassDrag.blockEnd - byClassDrag.blockStart;
+    let y = clientY - rect.top - (byClassDrag.grabOffset || 0);
+    let anchorStart = gridStart + Math.round(y / BY_CLASS_PX_PER_MIN / SNAP) * SNAP;
+    anchorStart = Math.max(gridStart, Math.min(anchorStart, gridEnd - blockDur));
+    return { anchorStart, targetRoomId, ghostRooms: multiRoom ? block.rooms : [rooms[roomIdx]?.id] };
+  };
+
+  const computeByClassMoves = (anchorStart, targetRoomId) => {
+    const block = blockForClass(byClassDrag.classId);
+    if (!block) return [];
+    const delta = anchorStart - block.start;
+    const multiRoom = block.rooms.length > 1;
+    return placements
+      .filter((p) => p.classId === byClassDrag.classId)
+      .map((p) => {
+        const dur = p.end - p.start;
+        let start = p.start + delta;
+        start = Math.max(gridStart, Math.min(start, gridEnd - dur));
+        let newRooms = p.rooms;
+        if (!multiRoom && targetRoomId) newRooms = [targetRoomId];
+        return { id: p.id, start, end: start + dur, rooms: newRooms };
+      });
+  };
+
+  const validateByClassMoves = (classId, moved) => {
+    const cls = idx.catalogById.get(classId);
+    const tempPlacements = placements.map((p) => {
+      const m = moved.find((x) => x.id === p.id);
+      return m ? { ...p, start: m.start, end: m.end, rooms: m.rooms } : p;
+    });
+    const tempIdx = buildScheduleIndexes({ catalog, placements: tempPlacements, rooms });
+    for (const m of moved) {
+      const p = tempPlacements.find((x) => x.id === m.id);
+      const ev = evaluatePlacement(
+        tempIdx,
+        { day: p.day, start: p.start, end: p.end, rooms: p.rooms },
+        { excludePlacementId: p.id, excludeClassId: classId, teacher: cls?.teacher }
+      );
+      if (!ev.ok) return `Can't move — overlaps ${ev.roomConflictNames.join(", ")}.`;
+      if (ev.hasTeacherConflict) return `Can't move — ${cls?.teacher || "teacher"} is double-booked.`;
+    }
+    return null;
+  };
+
+  const ghostGeomForSlot = (slot) => {
+    const rect = byClassGridRef.current?.getBoundingClientRect();
+    if (!rect || !byClassDrag) return null;
+    const timeColW = 64;
+    const roomAreaW = rect.width - timeColW;
+    const colW = roomAreaW / rooms.length;
+    const ghostRoomIds = slot.ghostRooms.filter(Boolean);
+    const indices = ghostRoomIds
+      .map((id) => rooms.findIndex((r) => r.id === id))
+      .filter((i) => i >= 0)
+      .sort((a, b) => a - b);
+    if (!indices.length) return null;
+    const colStart = indices[0];
+    const colEnd = indices[indices.length - 1];
+    return {
+      left: timeColW + colStart * colW + 4,
+      width: (colEnd - colStart + 1) * colW - 8,
+      top: (slot.anchorStart - gridStart) * BY_CLASS_PX_PER_MIN + 3,
+      height: Math.max(14, (byClassDrag.blockEnd - byClassDrag.blockStart) * BY_CLASS_PX_PER_MIN - 6),
+    };
+  };
+
+  const byClassGridHandlers = {
+    onDragOver: (e) => {
+      if (!byClassDrag) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      const slot = pointToByClassSlot(e.clientX, e.clientY);
+      if (!slot) return;
+      const key = `${slot.anchorStart}|${slot.targetRoomId || slot.ghostRooms.join("+")}`;
+      if (byClassGhostKeyRef.current === key) return;
+      byClassGhostKeyRef.current = key;
+      const moved = computeByClassMoves(slot.anchorStart, slot.targetRoomId);
+      const err = validateByClassMoves(byClassDrag.classId, moved);
+      const geom = ghostGeomForSlot(slot);
+      setByClassGhost({
+        ...slot,
+        className: byClassDrag.className,
+        conflict: !!err,
+        geom,
+      });
+    },
+    onDragLeave: (e) => {
+      if (!e.currentTarget.contains(e.relatedTarget)) {
+        setByClassGhost(null);
+        byClassGhostKeyRef.current = null;
+      }
+    },
+    onDrop: (e) => {
+      e.preventDefault();
+      if (!byClassDrag) return;
+      const slot = pointToByClassSlot(e.clientX, e.clientY);
+      if (!slot) return;
+      const moved = computeByClassMoves(slot.anchorStart, slot.targetRoomId);
+      const unchanged = moved.every((m) => {
+        const p = placements.find((x) => x.id === m.id);
+        return p && p.start === m.start && p.end === m.end && p.rooms.join("+") === m.rooms.join("+");
+      });
+      if (unchanged) {
+        endByClassDrag();
+        return;
+      }
+      const err = validateByClassMoves(byClassDrag.classId, moved);
+      if (err) onFlash?.(err);
+      else onMoveClass?.(moved);
+      setByClassDrag(null);
+      setByClassGhost(null);
+      byClassGhostKeyRef.current = null;
+    },
+  };
+
+  const startByClassDrag = (e, block) => {
+    if (planReadOnly) return;
+    e.stopPropagation();
+    e.dataTransfer.setData("text/plain", "byclass:" + block.classId);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setDragImage(emptyDragImage(), 0, 0);
+    const rect = e.currentTarget.getBoundingClientRect();
+    setByClassDrag({
+      classId: block.classId,
+      blockStart: block.start,
+      blockEnd: block.end,
+      rooms: block.rooms,
+      className: block.cls.name,
+      teacher: block.cls.teacher,
+      grabOffset: e.clientY - rect.top,
+    });
+  };
+
+  const endByClassDrag = () => {
+    setByClassDrag(null);
+    setByClassGhost(null);
+    byClassGhostKeyRef.current = null;
+  };
+
   const renderBlock = (block, colorRoomId, laneInfo, geom) => {
     const { cls, classId, start, end, rooms: blockRooms, groups } = block;
     const { lane, lanes: laneCount } = laneInfo || { lane: 0, lanes: 1 };
@@ -3953,11 +4122,15 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
       left: `calc(${(lane / laneCount) * 100}% + 4px)`,
       width: `calc(${100 / laneCount}% - 8px)`,
     };
+    const isDragging = byClassDrag?.classId === classId;
     return (
       <div
         key={classId}
+        draggable={!planReadOnly}
+        onDragStart={(e) => startByClassDrag(e, block)}
+        onDragEnd={endByClassDrag}
         onClick={(e) => { e.stopPropagation(); onEditClass(cls.id); }}
-        title={`${cls.name} · ${summary} · ${cls.teacher || "TBD"} · ${overviewRoomLabel(blockRooms)} — click to edit`}
+        title={`${cls.name} · ${summary} · ${cls.teacher || "TBD"} · ${overviewRoomLabel(blockRooms)} — drag to move time/room · click to edit`}
         style={{
           position: "absolute",
           top: top + 3,
@@ -3966,6 +4139,7 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
           width: pos.width,
           boxSizing: "border-box",
           zIndex: geom ? 2 : 1,
+          opacity: isDragging ? 0.45 : 1,
           background: roomClash ? "#fee2e2" : teacherClash ? "#fffbeb" : rc.bg,
           border: roomClash ? "2px solid #dc2626" : teacherClash ? "2px solid #d97706" : `1px solid ${rc.border}`,
           boxShadow: roomClash
@@ -3976,7 +4150,7 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
           borderRadius: 8,
           padding: compact ? "3px 5px 6px" : "4px 7px 9px",
           overflow: "hidden",
-          cursor: "pointer",
+          cursor: planReadOnly ? "pointer" : "grab",
           pointerEvents: geom ? "auto" : undefined,
           color: rc.text,
           display: "flex",
@@ -4088,7 +4262,11 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
                 </div>
               ))}
             </div>
-            <div style={{ flex: 1, display: "flex", position: "relative", minWidth: rooms.length * BY_CLASS_ROOM_MIN_W }}>
+            <div
+              ref={byClassGridRef}
+              style={{ flex: 1, display: "flex", position: "relative", minWidth: rooms.length * BY_CLASS_ROOM_MIN_W }}
+              {...byClassGridHandlers}
+            >
               <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 0 }}>
                 {hourMarks.map((t) => (
                   <div key={t} style={{ position: "absolute", left: 0, right: 0, top: (t - gridStart) * BY_CLASS_PX_PER_MIN, borderTop: "1px solid #eceeea" }} />
@@ -4103,6 +4281,7 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
                 return (
                   <div
                     key={room.id}
+                    onDragOver={(e) => { if (byClassDrag) e.preventDefault(); }}
                     style={{ flex: 1, minWidth: BY_CLASS_ROOM_MIN_W, position: "relative", height: gridH, boxSizing: "border-box", borderLeft: "1px solid #eceeea", background: "#fcfcfb", zIndex: 1 }}
                   >
                     {colBlocks.map((b) => renderBlock(b, room.id, lanes.get(b.classId)))}
@@ -4117,6 +4296,31 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
                   return renderBlock(b, primaryRoomForPlacement(b.rooms, roomOrder), laneInfo, geom);
                 })}
               </div>
+              {byClassGhost?.geom && (
+                <div
+                  style={{
+                    position: "absolute",
+                    left: byClassGhost.geom.left,
+                    width: byClassGhost.geom.width,
+                    top: byClassGhost.geom.top,
+                    height: byClassGhost.geom.height,
+                    boxSizing: "border-box",
+                    zIndex: 4,
+                    pointerEvents: "none",
+                    borderRadius: 8,
+                    border: byClassGhost.conflict ? "2px dashed #dc2626" : "2px dashed #123c3a",
+                    background: byClassGhost.conflict ? "rgba(254,226,226,.88)" : "rgba(240,253,250,.88)",
+                    padding: "4px 7px",
+                    overflow: "hidden",
+                    color: "#123c3a",
+                    fontWeight: 700,
+                    fontSize: 12,
+                  }}
+                >
+                  {byClassGhost.className}
+                  {byClassGhost.conflict ? " ⚠" : ""}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -4140,7 +4344,8 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
       )}
       <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
         📋 One block per class — time ({fmtAmPm(gridStart)}–{fmtAmPm(gridEnd)}) × rooms.
-        Name, time, days (Mon to Fri / Mon & Tue), teacher, and cap bar on each block. Use −/+ to adjust enrollment — no drag here.
+        Drag a block to change meeting time and room (all meetings of that class move together; combined rooms keep their room set).
+        Use −/+ to adjust enrollment · click to edit details.
       </p>
     </>
   );
