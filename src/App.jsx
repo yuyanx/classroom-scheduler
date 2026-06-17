@@ -5055,8 +5055,79 @@ function StudentScheduleView({ students, catalog, placements, rooms, idx, onEdit
 }
 
 // ───────────────────────── Roster table (one row per class × student) ─────────────────────────
+const ROSTER_COLUMN_DEFS = {
+  className: { label: "Class name", minWidth: 140, paddingLeft: 12 },
+  schedule: { label: "Class schedule", minWidth: 220 },
+  student: { label: "Student", minWidth: 120 },
+  room: { label: "Room", minWidth: 88 },
+  teacher: { label: "Teacher", minWidth: 120 },
+};
+const ROSTER_DEFAULT_COLUMN_ORDER = ["className", "schedule", "student", "room", "teacher"];
+const ROSTER_COLUMN_STORAGE_KEY = "premier-roster-columns";
+
+function loadRosterColumnOrder() {
+  try {
+    const raw = window.localStorage.getItem(ROSTER_COLUMN_STORAGE_KEY);
+    if (!raw) return ROSTER_DEFAULT_COLUMN_ORDER;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return ROSTER_DEFAULT_COLUMN_ORDER;
+    const valid = parsed.filter((id) => ROSTER_DEFAULT_COLUMN_ORDER.includes(id));
+    const missing = ROSTER_DEFAULT_COLUMN_ORDER.filter((id) => !valid.includes(id));
+    return valid.length ? [...valid, ...missing] : ROSTER_DEFAULT_COLUMN_ORDER;
+  } catch (e) {
+    return ROSTER_DEFAULT_COLUMN_ORDER;
+  }
+}
+
+function persistRosterColumnOrder(order) {
+  try { window.localStorage.setItem(ROSTER_COLUMN_STORAGE_KEY, JSON.stringify(order)); } catch (e) { /* ignore */ }
+}
+
+function compareRosterRows(a, b, columnId) {
+  switch (columnId) {
+    case "schedule": {
+      const sa = a.earliestStart;
+      const sb = b.earliestStart;
+      if (sa == null && sb == null) return a.schedule.localeCompare(b.schedule);
+      if (sa == null) return 1;
+      if (sb == null) return -1;
+      return sa - sb || a.schedule.localeCompare(b.schedule);
+    }
+    case "room": {
+      const ra = a.sortRoom;
+      const rb = b.sortRoom;
+      if (!ra && !rb) return 0;
+      if (!ra) return 1;
+      if (!rb) return -1;
+      const na = parseInt(ra, 10);
+      const nb = parseInt(rb, 10);
+      if (!Number.isNaN(na) && !Number.isNaN(nb)) return na - nb || a.room.localeCompare(b.room);
+      return String(ra).localeCompare(String(rb));
+    }
+    case "student": {
+      if (a.student === "—" && b.student === "—") return 0;
+      if (a.student === "—") return 1;
+      if (b.student === "—") return -1;
+      return a.student.localeCompare(b.student);
+    }
+    case "teacher": {
+      if (a.teacher === "TBD" && b.teacher === "TBD") return 0;
+      if (a.teacher === "TBD") return 1;
+      if (b.teacher === "TBD") return -1;
+      return a.teacher.localeCompare(b.teacher);
+    }
+    case "className":
+    default:
+      return a.className.localeCompare(b.className);
+  }
+}
+
 function RosterView({ catalog, placements, rooms, onEditClass }) {
   const roomOrder = rooms.map((r) => r.id);
+  const [columnOrder, setColumnOrder] = useState(loadRosterColumnOrder);
+  const [sort, setSort] = useState({ columnId: null, dir: "asc" });
+  const [dragColumn, setDragColumn] = useState(null);
+  const [dropColumn, setDropColumn] = useState(null);
 
   const rows = useMemo(() => {
     const out = [];
@@ -5064,6 +5135,10 @@ function RosterView({ catalog, placements, rooms, onEditClass }) {
       const scheduleLines = classScheduleLines(placements, cls.id);
       const schedule = scheduleLines.length ? scheduleLines.join(" · ") : "—";
       const pls = placements.filter((p) => p.classId === cls.id);
+      let earliestStart = null;
+      pls.forEach((p) => {
+        if (earliestStart == null || p.start < earliestStart) earliestStart = p.start;
+      });
       const allRooms = [...new Set(pls.flatMap((p) => p.rooms))];
       const room = allRooms.length ? overviewRoomLabel(allRooms) : "—";
       const primaryRoom = allRooms.length ? primaryRoomForPlacement(allRooms, roomOrder) : "";
@@ -5078,8 +5153,10 @@ function RosterView({ catalog, placements, rooms, onEditClass }) {
           classId: cls.id,
           className: cls.name,
           schedule,
+          earliestStart,
           student,
           room,
+          sortRoom: primaryRoom || "",
           roomColor,
           teacher,
         });
@@ -5088,6 +5165,35 @@ function RosterView({ catalog, placements, rooms, onEditClass }) {
     return out;
   }, [catalog, placements, roomOrder]);
 
+  const displayRows = useMemo(() => {
+    if (!sort.columnId) return rows;
+    const dir = sort.dir === "desc" ? -1 : 1;
+    return [...rows].sort((a, b) => compareRosterRows(a, b, sort.columnId) * dir);
+  }, [rows, sort]);
+
+  const toggleSort = (columnId) => {
+    setSort((prev) => {
+      if (prev.columnId === columnId) {
+        return { columnId, dir: prev.dir === "asc" ? "desc" : "asc" };
+      }
+      return { columnId, dir: "asc" };
+    });
+  };
+
+  const reorderColumn = (sourceId, targetId) => {
+    if (!sourceId || !targetId || sourceId === targetId) return;
+    setColumnOrder((order) => {
+      const next = [...order];
+      const from = next.indexOf(sourceId);
+      const to = next.indexOf(targetId);
+      if (from < 0 || to < 0) return order;
+      next.splice(from, 1);
+      next.splice(to, 0, sourceId);
+      persistRosterColumnOrder(next);
+      return next;
+    });
+  };
+
   const cell = {
     padding: "10px 12px",
     borderBottom: "1px solid #eceeea",
@@ -5095,6 +5201,75 @@ function RosterView({ catalog, placements, rooms, onEditClass }) {
     color: "#334155",
     verticalAlign: "top",
     lineHeight: 1.4,
+  };
+
+  const renderRosterCell = (columnId, row) => {
+    const borderColor = row.roomColor?.border || "#eceeea";
+    switch (columnId) {
+      case "className":
+        return (
+          <td key={columnId} style={{ ...cell, fontWeight: 600, color: row.roomColor?.text || "#123c3a", borderBottomColor: borderColor }}>
+            {row.className}
+          </td>
+        );
+      case "schedule":
+        return (
+          <td key={columnId} style={{ ...cell, color: "#475569", borderBottomColor: borderColor }}>
+            {row.schedule}
+          </td>
+        );
+      case "student":
+        return (
+          <td
+            key={columnId}
+            style={{
+              ...cell,
+              fontWeight: row.student === "—" ? 400 : 700,
+              color: row.student === "—" ? "#94a3b8" : "#123c3a",
+              borderBottomColor: borderColor,
+            }}
+          >
+            {row.student}
+          </td>
+        );
+      case "room":
+        return (
+          <td
+            key={columnId}
+            style={{
+              ...cell,
+              fontWeight: 600,
+              color: row.roomColor?.text || "#64748b",
+              borderBottomColor: borderColor,
+            }}
+          >
+            {row.room === "—" ? (
+              "—"
+            ) : (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <RoomColorSwatch color={row.roomColor} />
+                {row.room}
+              </span>
+            )}
+          </td>
+        );
+      case "teacher":
+        return (
+          <td
+            key={columnId}
+            style={{
+              ...cell,
+              color: row.teacher === "TBD" ? "#b45309" : "#334155",
+              fontWeight: row.teacher === "TBD" ? 600 : 400,
+              borderBottomColor: borderColor,
+            }}
+          >
+            {row.teacher}
+          </td>
+        );
+      default:
+        return null;
+    }
   };
 
   return (
@@ -5115,70 +5290,85 @@ function RosterView({ catalog, placements, rooms, onEditClass }) {
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860 }}>
           <thead>
             <tr>
-              <th style={{ ...thStyle, textAlign: "left", paddingLeft: 12, minWidth: 140 }}>Class name</th>
-              <th style={{ ...thStyle, textAlign: "left", minWidth: 220 }}>Class schedule</th>
-              <th style={{ ...thStyle, textAlign: "left", minWidth: 120 }}>Student</th>
-              <th style={{ ...thStyle, textAlign: "left", minWidth: 88 }}>Room</th>
-              <th style={{ ...thStyle, textAlign: "left", minWidth: 120 }}>Teacher</th>
+              {columnOrder.map((columnId) => {
+                const def = ROSTER_COLUMN_DEFS[columnId];
+                const isSorted = sort.columnId === columnId;
+                const isDragSource = dragColumn === columnId;
+                const isDropTarget = dropColumn === columnId && dragColumn && dragColumn !== columnId;
+                return (
+                  <th
+                    key={columnId}
+                    draggable
+                    onClick={() => toggleSort(columnId)}
+                    onDragStart={(e) => {
+                      setDragColumn(columnId);
+                      e.dataTransfer.effectAllowed = "move";
+                      e.dataTransfer.setData("text/plain", columnId);
+                    }}
+                    onDragEnd={() => { setDragColumn(null); setDropColumn(null); }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "move";
+                      if (dragColumn && dragColumn !== columnId) setDropColumn(columnId);
+                    }}
+                    onDragLeave={() => {
+                      if (dropColumn === columnId) setDropColumn(null);
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const sourceId = dragColumn || e.dataTransfer.getData("text/plain");
+                      reorderColumn(sourceId, columnId);
+                      setDragColumn(null);
+                      setDropColumn(null);
+                    }}
+                    title="Click to sort · drag to reorder column"
+                    style={{
+                      ...thStyle,
+                      textAlign: "left",
+                      paddingLeft: def.paddingLeft ?? 8,
+                      minWidth: def.minWidth,
+                      cursor: "pointer",
+                      userSelect: "none",
+                      opacity: isDragSource ? 0.45 : 1,
+                      background: isDropTarget ? "#e6f4f3" : isSorted ? "#eef6f5" : "#fafaf8",
+                      boxShadow: isDropTarget ? "inset 0 0 0 2px #0f766e" : undefined,
+                    }}
+                  >
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                      <span style={{ color: "#94a3b8", fontSize: 10, letterSpacing: 1 }} aria-hidden>⋮⋮</span>
+                      {def.label}
+                      {isSorted && (
+                        <span style={{ fontSize: 11, color: "#0f766e" }} aria-label={sort.dir === "asc" ? "sorted ascending" : "sorted descending"}>
+                          {sort.dir === "asc" ? "↑" : "↓"}
+                        </span>
+                      )}
+                    </span>
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => {
+            {displayRows.map((row) => {
               const rowBg = row.roomColor?.bg || "#fff";
               const rowHoverBg = row.roomColor ? row.roomColor.bg : "#f8fafc";
               return (
-              <tr
-                key={row.key}
-                onClick={() => onEditClass(row.classId)}
-                title="Click to edit class"
-                style={{
-                  cursor: "pointer",
-                  background: rowBg,
-                  boxShadow: row.roomColor ? `inset 4px 0 0 ${row.roomColor.border}` : undefined,
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = rowHoverBg; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = rowBg; }}
-              >
-                <td style={{ ...cell, fontWeight: 600, color: row.roomColor?.text || "#123c3a", borderBottomColor: row.roomColor?.border || "#eceeea" }}>
-                  {row.className}
-                </td>
-                <td style={{ ...cell, color: "#475569", borderBottomColor: row.roomColor?.border || "#eceeea" }}>{row.schedule}</td>
-                <td style={{
-                  ...cell,
-                  fontWeight: row.student === "—" ? 400 : 700,
-                  color: row.student === "—" ? "#94a3b8" : "#123c3a",
-                  borderBottomColor: row.roomColor?.border || "#eceeea",
-                }}
+                <tr
+                  key={row.key}
+                  onClick={() => onEditClass(row.classId)}
+                  title="Click to edit class"
+                  style={{
+                    cursor: "pointer",
+                    background: rowBg,
+                    boxShadow: row.roomColor ? `inset 4px 0 0 ${row.roomColor.border}` : undefined,
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = rowHoverBg; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = rowBg; }}
                 >
-                  {row.student}
-                </td>
-                <td style={{
-                  ...cell,
-                  fontWeight: 600,
-                  color: row.roomColor?.text || "#64748b",
-                  borderBottomColor: row.roomColor?.border || "#eceeea",
-                }}
-                >
-                  {row.room === "—" ? (
-                    "—"
-                  ) : (
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                      <RoomColorSwatch color={row.roomColor} />
-                      {row.room}
-                    </span>
-                  )}
-                </td>
-                <td style={{
-                  ...cell,
-                  color: row.teacher === "TBD" ? "#b45309" : "#334155",
-                  fontWeight: row.teacher === "TBD" ? 600 : 400,
-                  borderBottomColor: row.roomColor?.border || "#eceeea",
-                }}
-                >
-                  {row.teacher}
-                </td>
-              </tr>
-            );})}
+                  {columnOrder.map((columnId) => renderRosterCell(columnId, row))}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
         {rows.length === 0 && (
@@ -5188,7 +5378,8 @@ function RosterView({ catalog, placements, rooms, onEditClass }) {
         )}
       </div>
       <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
-        📒 One row per student on each class roster (classes with no roster show one row with —). Row background and left edge use the room legend color. Sorted by earliest class time, then class name (unscheduled last). Click any row to edit the class.
+        📒 One row per student on each class roster (classes with no roster show one row with —). Row background and left edge use the room legend color.
+        Default order: earliest class time, then class name (unscheduled last). <b>Click a column header</b> to sort A→Z or Z→A; <b>drag a header</b> to reorder columns (saved in this browser). Click any row to edit the class.
       </p>
     </>
   );
