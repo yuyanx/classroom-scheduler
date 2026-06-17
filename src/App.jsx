@@ -2942,6 +2942,7 @@ export default function ClassroomScheduler() {
               <RosterView
                 catalog={catalog}
                 placements={placements}
+                rooms={rooms}
                 onEditClass={(classId) => setEditing({ isNew: false, classId })}
               />
             ) : tab === "byClass" ? (
@@ -5053,7 +5054,9 @@ function StudentScheduleView({ students, catalog, placements, rooms, idx, onEdit
 }
 
 // ───────────────────────── Roster table (one row per class × student) ─────────────────────────
-function RosterView({ catalog, placements, onEditClass }) {
+function RosterView({ catalog, placements, rooms, onEditClass }) {
+  const roomOrder = rooms.map((r) => r.id);
+
   const rows = useMemo(() => {
     const out = [];
     sortCatalogForByClassView(catalog, placements).forEach((cls) => {
@@ -5062,6 +5065,8 @@ function RosterView({ catalog, placements, onEditClass }) {
       const pls = placements.filter((p) => p.classId === cls.id);
       const allRooms = [...new Set(pls.flatMap((p) => p.rooms))];
       const room = allRooms.length ? overviewRoomLabel(allRooms) : "—";
+      const primaryRoom = allRooms.length ? primaryRoomForPlacement(allRooms, roomOrder) : "";
+      const roomColor = primaryRoom ? roomOverviewColor(primaryRoom, roomOrder) : null;
       const teacher = cls.teacher?.trim() || "TBD";
       const roster = (cls.students || []).length
         ? [...cls.students].sort((a, b) => a.localeCompare(b))
@@ -5074,12 +5079,13 @@ function RosterView({ catalog, placements, onEditClass }) {
           schedule,
           student,
           room,
+          roomColor,
           teacher,
         });
       });
     });
     return out;
-  }, [catalog, placements]);
+  }, [catalog, placements, roomOrder]);
 
   const cell = {
     padding: "10px 12px",
@@ -5093,6 +5099,18 @@ function RosterView({ catalog, placements, onEditClass }) {
   return (
     <>
       <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto", width: "100%" }}>
+        <div style={{ padding: "10px 12px", borderBottom: "1px solid #eceeea", display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", background: "#fafaf8" }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>Room colors:</span>
+          {rooms.map((r) => {
+            const c = roomOverviewColor(r.id, roomOrder);
+            return (
+              <span key={r.id} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: c.text, fontWeight: 600 }}>
+                <RoomColorSwatch color={c} />
+                Room {r.id}
+              </span>
+            );
+          })}
+        </div>
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860 }}>
           <thead>
             <tr>
@@ -5104,24 +5122,54 @@ function RosterView({ catalog, placements, onEditClass }) {
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => (
+            {rows.map((row) => {
+              const rowBg = row.roomColor?.bg || "#fff";
+              const rowHoverBg = row.roomColor ? row.roomColor.bg : "#f8fafc";
+              return (
               <tr
                 key={row.key}
                 onClick={() => onEditClass(row.classId)}
                 title="Click to edit class"
-                style={{ cursor: "pointer" }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = "#f8fafc"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = ""; }}
+                style={{
+                  cursor: "pointer",
+                  background: rowBg,
+                  boxShadow: row.roomColor ? `inset 4px 0 0 ${row.roomColor.border}` : undefined,
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = rowHoverBg; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = rowBg; }}
               >
-                <td style={{ ...cell, fontWeight: 600, color: "#123c3a" }}>{row.className}</td>
-                <td style={{ ...cell, color: "#475569" }}>{row.schedule}</td>
-                <td style={cell}>{row.student}</td>
-                <td style={{ ...cell, fontWeight: 600, color: "#0f766e" }}>{row.room}</td>
-                <td style={{ ...cell, color: row.teacher === "TBD" ? "#b45309" : "#334155", fontWeight: row.teacher === "TBD" ? 600 : 400 }}>
+                <td style={{ ...cell, fontWeight: 600, color: row.roomColor?.text || "#123c3a", borderBottomColor: row.roomColor?.border || "#eceeea" }}>
+                  {row.className}
+                </td>
+                <td style={{ ...cell, color: "#475569", borderBottomColor: row.roomColor?.border || "#eceeea" }}>{row.schedule}</td>
+                <td style={{ ...cell, borderBottomColor: row.roomColor?.border || "#eceeea" }}>{row.student}</td>
+                <td style={{
+                  ...cell,
+                  fontWeight: 600,
+                  color: row.roomColor?.text || "#64748b",
+                  borderBottomColor: row.roomColor?.border || "#eceeea",
+                }}
+                >
+                  {row.room === "—" ? (
+                    "—"
+                  ) : (
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <RoomColorSwatch color={row.roomColor} />
+                      {row.room}
+                    </span>
+                  )}
+                </td>
+                <td style={{
+                  ...cell,
+                  color: row.teacher === "TBD" ? "#b45309" : "#334155",
+                  fontWeight: row.teacher === "TBD" ? 600 : 400,
+                  borderBottomColor: row.roomColor?.border || "#eceeea",
+                }}
+                >
                   {row.teacher}
                 </td>
               </tr>
-            ))}
+            );})}
           </tbody>
         </table>
         {rows.length === 0 && (
@@ -5131,7 +5179,7 @@ function RosterView({ catalog, placements, onEditClass }) {
         )}
       </div>
       <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
-        📒 One row per student on each class roster (classes with no roster show one row with —). Sorted by class meeting time, then name. Click any row to edit the class.
+        📒 One row per student on each class roster (classes with no roster show one row with —). Row background and left edge use the room legend color. Sorted by class meeting time, then name. Click any row to edit the class.
       </p>
     </>
   );
