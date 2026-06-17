@@ -12,6 +12,7 @@ import {
   classScheduleLines,
   classScheduleGroups,
   sortCatalogForByClassView,
+  sortCatalogForRosterView,
   layoutLanes,
   formatDayRange,
   overlaps,
@@ -180,6 +181,22 @@ test("sortCatalogForByClassView: unscheduled first, then letter, then time", () 
   ];
   const sorted = sortCatalogForByClassView(catalog, placements);
   assert.deepEqual(sorted.map((k) => k.id), ["z", "a", "b"]);
+});
+
+test("sortCatalogForRosterView: earliest time then class name", () => {
+  const catalog = [
+    { id: "z", name: "Zebra", teacher: "", reg: 0, note: "" },
+    { id: "b", name: "Biology", teacher: "", reg: 0, note: "" },
+    { id: "a", name: "Algebra", teacher: "", reg: 0, note: "" },
+    { id: "c", name: "Chemistry", teacher: "", reg: 0, note: "" },
+  ];
+  const placements = [
+    { id: "p1", classId: "a", day: "mon", start: 600, end: 690, rooms: ["1"] },
+    { id: "p2", classId: "b", day: "mon", start: 540, end: 630, rooms: ["1"] },
+    { id: "p3", classId: "c", day: "mon", start: 540, end: 630, rooms: ["2"] },
+  ];
+  const sorted = sortCatalogForRosterView(catalog, placements);
+  assert.deepEqual(sorted.map((k) => k.id), ["b", "c", "a", "z"]);
 });
 
 test("sortCatalogForByClassView: same numeric prefix sorts by earliest time", () => {

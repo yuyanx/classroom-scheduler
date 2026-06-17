@@ -507,6 +507,25 @@ export const catalogSortBucket = (name: string) => {
   return (t[0] || "").toLowerCase();
 };
 
+export function sortCatalogForRosterView(catalog: { id: string; name: string }[], placements: { classId: string; start: number }[]) {
+  const earliestStart = (classId: string) => {
+    let best: number | null = null;
+    placements.forEach((p) => {
+      if (p.classId !== classId) return;
+      if (best == null || p.start < best) best = p.start;
+    });
+    return best;
+  };
+  return catalog.slice().sort((a, b) => {
+    const sa = earliestStart(a.id);
+    const sb = earliestStart(b.id);
+    if (sa == null && sb == null) return a.name.localeCompare(b.name);
+    if (sa == null) return 1;
+    if (sb == null) return -1;
+    return sa - sb || a.name.localeCompare(b.name);
+  });
+}
+
 export function sortCatalogForByClassView(catalog: { id: string; name: string }[], placements: { classId: string; start: number }[]) {
   const earliestStart = (classId: string) => {
     let best: number | null = null;

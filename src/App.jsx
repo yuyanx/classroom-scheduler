@@ -56,6 +56,7 @@ import {
   classScheduleLines,
   classScheduleGroups,
   sortCatalogForByClassView,
+  sortCatalogForRosterView,
   overviewPillStyle,
   overviewRoomLabel,
   roomOverviewColor,
@@ -5059,7 +5060,7 @@ function RosterView({ catalog, placements, rooms, onEditClass }) {
 
   const rows = useMemo(() => {
     const out = [];
-    sortCatalogForByClassView(catalog, placements).forEach((cls) => {
+    sortCatalogForRosterView(catalog, placements).forEach((cls) => {
       const scheduleLines = classScheduleLines(placements, cls.id);
       const schedule = scheduleLines.length ? scheduleLines.join(" · ") : "—";
       const pls = placements.filter((p) => p.classId === cls.id);
@@ -5179,7 +5180,7 @@ function RosterView({ catalog, placements, rooms, onEditClass }) {
         )}
       </div>
       <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
-        📒 One row per student on each class roster (classes with no roster show one row with —). Row background and left edge use the room legend color. Sorted by class meeting time, then name. Click any row to edit the class.
+        📒 One row per student on each class roster (classes with no roster show one row with —). Row background and left edge use the room legend color. Sorted by earliest class time, then class name (unscheduled last). Click any row to edit the class.
       </p>
     </>
   );
@@ -5821,6 +5822,7 @@ export {
   formatDayRange,
   classScheduleLines,
   sortCatalogForByClassView,
+  sortCatalogForRosterView,
   isLocalDevHost,
   isVercelGitPreviewHost,
   isPreviewHost,

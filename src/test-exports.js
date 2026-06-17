@@ -18,6 +18,7 @@ export {
   classScheduleLines,
   classScheduleGroups,
   sortCatalogForByClassView,
+  sortCatalogForRosterView,
   roomOverviewColor,
   primaryRoomForPlacement,
   computeWeekOverviewLayout,
