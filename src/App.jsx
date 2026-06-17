@@ -5143,7 +5143,15 @@ function RosterView({ catalog, placements, rooms, onEditClass }) {
                   {row.className}
                 </td>
                 <td style={{ ...cell, color: "#475569", borderBottomColor: row.roomColor?.border || "#eceeea" }}>{row.schedule}</td>
-                <td style={{ ...cell, borderBottomColor: row.roomColor?.border || "#eceeea" }}>{row.student}</td>
+                <td style={{
+                  ...cell,
+                  fontWeight: row.student === "—" ? 400 : 700,
+                  color: row.student === "—" ? "#94a3b8" : "#123c3a",
+                  borderBottomColor: row.roomColor?.border || "#eceeea",
+                }}
+                >
+                  {row.student}
+                </td>
                 <td style={{
                   ...cell,
                   fontWeight: 600,
