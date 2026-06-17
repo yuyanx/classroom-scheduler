@@ -1786,7 +1786,7 @@ export default function ClassroomScheduler() {
 
   // Make sure the active tab still exists (e.g. after remote data changes the day list)
   useEffect(() => {
-    if (!days.includes(tab) && tab !== "byClass" && tab !== "byTeacher" && tab !== "byStudent" && tab !== "weekOverview") setTab(days[0]);
+    if (!days.includes(tab) && tab !== "byClass" && tab !== "byTeacher" && tab !== "byStudent" && tab !== "roster" && tab !== "weekOverview") setTab(days[0]);
   }, [days, tab]);
 
   // ── Rooms: a placement may span several rooms (combined classroom) ──
@@ -1821,6 +1821,10 @@ export default function ClassroomScheduler() {
 
   const totalReg = useMemo(() => catalog.reduce((s, k) => s + (k.reg || 0), 0), [catalog]);
   const noTeacherCount = useMemo(() => catalog.filter((k) => !teacherKey(k.teacher)).length, [catalog]);
+  const rosterRowCount = useMemo(
+    () => catalog.reduce((n, k) => n + Math.max(1, (k.students || []).length), 0),
+    [catalog]
+  );
 
   // ── Day-grid geometry for the active tab ──
   const isDayTab = days.includes(tab);
@@ -2862,6 +2866,7 @@ export default function ClassroomScheduler() {
               { id: "byClass", label: "📋 By Class" },
               { id: "byTeacher", label: "👤 By Teacher" },
               { id: "byStudent", label: "🎓 By Student" },
+              { id: "roster", label: "📒 Roster" },
             ].map((v) => (
               <button
                 key={v.id}
@@ -2886,7 +2891,9 @@ export default function ClassroomScheduler() {
                 ? `${(teachers || []).length} teachers · ${noTeacherCount} classes need a teacher`
                 : tab === "byStudent"
                   ? `${(students || []).length} students · ${catalog.filter((k) => (k.students || []).length > 0).length} classes with rosters`
-                  : tab === "byClass"
+                  : tab === "roster"
+                    ? `${rosterRowCount} rows · ${catalog.length} classes`
+                    : tab === "byClass"
                   ? `${catalog.length} classes · ${unscheduledCount} unscheduled`
                   : tab === "weekOverview"
                     ? `${placements.length} meetings · ${days.length} days`
@@ -2930,6 +2937,12 @@ export default function ClassroomScheduler() {
                 idx={idx}
                 onEditClass={(classId) => setEditing({ isNew: false, classId })}
                 onManageStudents={() => setStudentMgrOpen(true)}
+              />
+            ) : tab === "roster" ? (
+              <RosterView
+                catalog={catalog}
+                placements={placements}
+                onEditClass={(classId) => setEditing({ isNew: false, classId })}
               />
             ) : tab === "byClass" ? (
               <ClassScheduleView
@@ -5034,6 +5047,91 @@ function StudentScheduleView({ students, catalog, placements, rooms, idx, onEdit
         <span style={{ color: STUDENT_CLASH_TOKENS.text, fontWeight: 700 }}> orange </span>
         (dashed border) = student double-booked — not a room legend color.
         <b> Manage students</b> renames (cascades to class rosters) or removes a student from every class.
+      </p>
+    </>
+  );
+}
+
+// ───────────────────────── Roster table (one row per class × student) ─────────────────────────
+function RosterView({ catalog, placements, onEditClass }) {
+  const rows = useMemo(() => {
+    const out = [];
+    sortCatalogForByClassView(catalog, placements).forEach((cls) => {
+      const scheduleLines = classScheduleLines(placements, cls.id);
+      const schedule = scheduleLines.length ? scheduleLines.join(" · ") : "—";
+      const pls = placements.filter((p) => p.classId === cls.id);
+      const allRooms = [...new Set(pls.flatMap((p) => p.rooms))];
+      const room = allRooms.length ? overviewRoomLabel(allRooms) : "—";
+      const teacher = cls.teacher?.trim() || "TBD";
+      const roster = (cls.students || []).length
+        ? [...cls.students].sort((a, b) => a.localeCompare(b))
+        : ["—"];
+      roster.forEach((student) => {
+        out.push({
+          key: `${cls.id}\0${student}`,
+          classId: cls.id,
+          className: cls.name,
+          schedule,
+          student,
+          room,
+          teacher,
+        });
+      });
+    });
+    return out;
+  }, [catalog, placements]);
+
+  const cell = {
+    padding: "10px 12px",
+    borderBottom: "1px solid #eceeea",
+    fontSize: 13,
+    color: "#334155",
+    verticalAlign: "top",
+    lineHeight: 1.4,
+  };
+
+  return (
+    <>
+      <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: "0 10px 10px 10px", overflowX: "auto", width: "100%" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860 }}>
+          <thead>
+            <tr>
+              <th style={{ ...thStyle, textAlign: "left", paddingLeft: 12, minWidth: 140 }}>Class name</th>
+              <th style={{ ...thStyle, textAlign: "left", minWidth: 220 }}>Class schedule</th>
+              <th style={{ ...thStyle, textAlign: "left", minWidth: 120 }}>Student</th>
+              <th style={{ ...thStyle, textAlign: "left", minWidth: 88 }}>Room</th>
+              <th style={{ ...thStyle, textAlign: "left", minWidth: 120 }}>Teacher</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr
+                key={row.key}
+                onClick={() => onEditClass(row.classId)}
+                title="Click to edit class"
+                style={{ cursor: "pointer" }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "#f8fafc"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = ""; }}
+              >
+                <td style={{ ...cell, fontWeight: 600, color: "#123c3a" }}>{row.className}</td>
+                <td style={{ ...cell, color: "#475569" }}>{row.schedule}</td>
+                <td style={cell}>{row.student}</td>
+                <td style={{ ...cell, fontWeight: 600, color: "#0f766e" }}>{row.room}</td>
+                <td style={{ ...cell, color: row.teacher === "TBD" ? "#b45309" : "#334155", fontWeight: row.teacher === "TBD" ? 600 : 400 }}>
+                  {row.teacher}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {rows.length === 0 && (
+          <div style={{ padding: "16px 20px", color: "#94a3b8", fontSize: 13 }}>
+            No classes in the library yet.
+          </div>
+        )}
+      </div>
+      <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 10 }}>
+        📒 One row per student on each class roster (classes with no roster show one row with —). Sorted by class meeting time, then name. Click any row to edit the class.
       </p>
     </>
   );
