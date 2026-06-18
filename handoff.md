@@ -30,8 +30,9 @@ Vercel is connected to the GitHub repo — every push to `main` triggers an auto
 | State | React `useState` + `localStorage` |
 | Build output | `app.js` (committed, pre-bundled) |
 | HTML shell | `index.html` (mounts `#root`, loads `app.js`) |
+| Pure logic | `src/domain/scheduleLogic.ts` (esbuild bundles `.ts` into `app.js`) |
 
-No TypeScript, no router, no state management library.
+No router, no state management library. UI is JSX; schedule math lives in TypeScript.
 
 ---
 
@@ -100,13 +101,14 @@ Runs `node:test` against pure schedule helpers (esbuild bundles `src/test-export
 `planService` (v3), overview helpers, student conflicts, and smoke guards. CI runs `npm test` + `npm run build`.
 **Run `npm run test:ci` before every commit.**
 
-**Local preview (v3 branch):** `npx serve . -l 4180` → http://localhost:4180
+**Local preview:** `npx serve . -l 4180` → http://localhost:4180
 
 **Preview deploys** (`*.vercel.app` except production host) do **not** sync to Supabase —
 same as localhost. Header shows “Preview — not syncing to shared schedule”.
 
-**Every commit must update this file** — add a changelog entry (and adjust architecture sections when
-behavior or UI changes). Keep `handoff.md` in sync with the code you ship.
+**Every significant change must update all docs** — add a changelog entry here (and adjust architecture
+sections when behavior changes); keep [README.md](./README.md) (user-facing) and [AGENTS.md](./AGENTS.md)
+(agent rules) in sync with the code you ship.
 
 ### Performance (feature branch)
 
@@ -191,6 +193,8 @@ Legacy row `id=1` may still be a flat v2 `schedule` until the next save; the app
 | `premier-schedule-plan-{id}` | Per-plan schedule cache |
 | `premier-plans-v3` | Full multi-plan store (localhost / offline) |
 | `premier-classroom-schedule` | Legacy cache for active copy |
+| `premier-ui-lib-open` | Class Library sidebar collapsed (`0`) or open (`1`) |
+| `premier-roster-columns` | Roster tab column order (JSON array of column ids) |
 
 ---
 
@@ -331,28 +335,25 @@ under the day grid shows the active day's range and an **✎ Edit hours** button
 case-insensitively via `teacherKey()`. The class dialog's Teacher field is a dropdown over the roster
 plus "(Teacher TBD)" and "＋ Add new teacher…" (prompt; the name joins the roster when the class is
 saved). The **👤 By Teacher** tab (`tab === "byTeacher"`, not a real day) replaces the calendar with a
-teachers × days table. The sticky Teacher column lists each teacher's **class names** under their
-name (not an "N classes" count). Each day cell lists that teacher's meetings as stacked **pill cards**
-(rounded, bordered, `minHeight: 42`): **class name on the first line** (bold), time + room on the
-second line (subtitle); amber border/background + ⚠ when two of their classes overlap in time;
-click-to-edit.
-Its "Manage teachers" button opens
+**one-row-per-teacher** layout: sticky Teacher column lists each teacher's **class names** under
+their name; the wide area to the right shows **horizontal schedule cards** for scheduled classes
+(room-legend colors, class name + time + `Rm #`). Red / amber / orange dashed borders match grid
+semantics (room / teacher / student clashes). Room legend bar across the top. Click a card to edit.
+**Manage teachers** opens
 `TeacherModal`: rename cascades to all classes (matched via `teacherKey`), removal sets classes to
 TBD, a "(Teacher TBD)" row in the view collects unassigned classes. When `tab === "byTeacher"` the
 class dialog's `defaultDay` falls back to the first day.
 
 ### By Class overview
 
-The **📋 By Class** tab (`tab === "byClass"`) is a classes × days table. The sticky left column
-shows class name, teacher, signed-up count, note, and **schedule summary lines** (e.g.
-`Mon to Fri 9:00–10:30 AM`) derived from placements via `classScheduleLines()` — not a
-"meets N×/week" count. Day columns use the same pill style as main: time on line 1, room on line 2;
-morning placements (`start < 720`) use teal `#f0fdfa`, afternoon use gray `#f8fafc`. Unscheduled
-classes sort first (amber row). Rows order by **first letter of class name** A–Z, then by each
-class's **earliest start time** within the same letter (morning before afternoon), then full name
-when times still tie. Overview tables use `width: 100%`,
-large `minWidth`, and horizontal scroll inside the white container; stacked pills use
-`flex flex-col gap: 4`.
+The **📋 By Class** tab (`tab === "byClass"`) is a **time × rooms** grid (like a mini day calendar):
+sticky left column shows class name, teacher, signed-up count, note, and **schedule summary lines**
+(e.g. `Mon to Fri 9:00–10:30 AM`) via `classScheduleLines()`. Each class row renders positioned
+blocks in room columns for that class's meeting window; blocks use room-legend colors with reg/cap
+bar. **Drag a block** to move meeting time and room (all placements of the class shift together;
+combined rooms keep their room set). Unscheduled classes sort first (amber). Row order matches the
+Class Library (`sortCatalogForByClassView`: unscheduled first, bucket letter, earliest time, name).
+Horizontal scroll inside the white container.
 
 ### Student roster, By Student & Roster tabs
 
@@ -549,7 +550,7 @@ app runs exactly as the old browser-only version.
 
 - **Export / print view** — a read-only printable summary of the week's schedule.
 - **TypeScript** — the data model is well-defined; adding types to `App.jsx` is a self-contained change.
-- **Split into components** — `App.jsx` is a single ~2400-line file. `ClassModal`, `RoomModal`, and `Overlay` are already split into functions at the bottom; moving them to separate files under `src/components/` is straightforward.
-- **Build pipeline** — currently `app.js` is committed. Adding a `vercel.json` with a `buildCommand` would let Vercel run esbuild on deploy instead, removing the committed bundle.
+- **Split into components** — `App.jsx` is a single ~5800-line file. `ClassModal`, `RoomModal`, and `Overlay` are already split into functions at the bottom; moving them to separate files under `src/components/` is straightforward.
+- **Build pipeline** — `app.js` is still committed for zero-step GitHub Pages; `vercel.json` already runs `npm run build` on deploy. Could stop committing the bundle if all hosts run esbuild.
 - **Mobile layout** — the grid uses a `<table>` with `overflowX: auto`. A card-based layout for small screens would improve mobile usability.
 

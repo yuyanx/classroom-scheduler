@@ -18,14 +18,14 @@ This file contains the practical rules and context you need to make changes that
 - Test: `npm run test:ci` (67 tests + build). Open `index.html` or `npx serve .`.
 - Work on a feature branch. Push and let the user decide on merging/PR. **Do not push `main` unless asked.**
 
-## Branches (as of 2026-06-13)
+## Branches (as of 2026-06-17)
 
 | Branch | Status |
 |--------|--------|
 | `main` | Production — v3 multi-plan, Week Overview, By Student, 📒 Roster (column sort/reorder), student conflicts |
 | `v3-plans` | Merged into `main` (2026-06-13); branch kept for reference |
 
-Local v3 preview: `npx serve . -l 4180` → http://localhost:4180
+Local preview: `npx serve . -l 4180` → http://localhost:4180
 
 ## Core Architecture (must internalize)
 
@@ -75,11 +75,12 @@ Central hooks in `App.jsx`: `persist`, `flushRemoteSave`, `switchPlan`, `planApi
 
 ## References
 
-- [handoff.md](./handoff.md) — full architecture + v3 section
-- Source: `src/App.jsx`, `src/planService.js`, `src/main.jsx`
+- [handoff.md](./handoff.md) — full architecture + v3 section + changelog
+- [README.md](./README.md) — user-facing feature summary + dev quick start
+- Source: `src/App.jsx`, `src/planService.js`, `src/scheduleService.js`, `src/domain/scheduleLogic.ts`, `src/main.jsx`
 - Build: `app.js` (committed)
 
-When an agent makes significant changes, update **both** `handoff.md` (changelog + architecture) and this file.
+When an agent makes significant changes, update **all docs**: `handoff.md` (changelog + architecture), `AGENTS.md` (agent rules), and `README.md` (user-facing features).
 
 ---
 

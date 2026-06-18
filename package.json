@@ -1,7 +1,7 @@
 {
   "name": "classroom-scheduler",
   "version": "1.0.0",
-  "description": "",
+  "description": "Premier Plus classroom scheduler — React day calendar, multi-plan sync, student rosters",
   "main": "index.js",
   "scripts": {
     "build": "node scripts/build.mjs",
