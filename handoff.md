@@ -46,8 +46,10 @@ classroom-scheduler/
 │   ├── main.jsx          # Entry point — ReactDOM.createRoot → <ClassroomScheduler />
 │   ├── planService.js    # v3 multi-plan pack/unpack, local store, Supabase plan API
 │   ├── scheduleService.js # localStorage + dirty-revision sync guard
+│   ├── domain/
+│   │   └── scheduleLogic.ts # Pure schedule math (conflicts, overview sort, layout)
 │   ├── test-exports.js   # Test-only re-export entry (not loaded by the app)
-│   └── App.jsx           # Entire application (single file, ~3500 lines)
+│   └── App.jsx           # Entire application (single file, ~5800 lines)
 ├── tests/
 │   ├── plan.test.mjs      # v3 plan envelope + local store
 │   ├── schedule.test.mjs  # Core helper regression tests
@@ -64,8 +66,10 @@ Components inside `App.jsx` (top to bottom): time helpers + default data + migra
 (`migrateOld()` → `migrateV1toV2()` → `normalizeV2()`, entry point `upgrade()`) →
 `ClassroomScheduler` (main: left library sidebar, day tabs, day calendar with drag/resize, all state ops) →
 `ClassModal` (class fields + schedule-rows editor) → `WeekOverviewView` (Week Overview tab) →
-`ClassScheduleView` (By Class tab) → `TeacherScheduleView` (By Teacher tab) → `TeacherModal` → `RoomModal` → `RoomCapModal` →
-`HoursModal` → overview pill helpers → `Overlay` / `Field` → style objects.
+`ClassScheduleView` (By Class tab) → `TeacherScheduleView` (By Teacher tab) →
+`StudentScheduleView` (By Student tab) → `RosterView` (Roster tab) →
+`TeacherModal` → `StudentModal` → `RoomModal` → `RoomCapModal` →
+`HoursModal` → `FormNotice` / `InlineConfirm` → overview pill helpers → `Overlay` / `Field` → style objects.
 
 ---
 
@@ -92,8 +96,8 @@ npm test
 ```
 
 Runs `node:test` against pure schedule helpers (esbuild bundles `src/test-exports.js` →
-`dist/test-logic.mjs`, gitignored). **51 tests** cover migrations, conflicts, sync gating,
-`planService` (v3), overview helpers, and smoke guards. CI runs `npm test` + `npm run build`.
+`dist/test-logic.mjs`, gitignored). **67 tests** cover migrations, conflicts, sync gating,
+`planService` (v3), overview helpers, student conflicts, and smoke guards. CI runs `npm test` + `npm run build`.
 **Run `npm run test:ci` before every commit.**
 
 **Local preview (v3 branch):** `npx serve . -l 4180` → http://localhost:4180
@@ -210,8 +214,9 @@ All state lives in one object persisted to localStorage / the Supabase row:
     ...
   ],
   catalog: [
-    { id, name, teacher, reg, note }                 // one entry per class/cohort
+    { id, name, teacher, reg, note, students: string[] }  // one entry per class/cohort
   ],
+  students: ["Alex Chen", ...],                      // deduped union (normalizeData on load)
   placements: [
     // minutes since midnight; rooms is usually one room — several = a combined classroom
     { id, classId, day: "tue", start: 870, end: 960, rooms: ["5"] },
@@ -251,7 +256,8 @@ survive). After deploying, ask everyone to refresh open tabs.
 ### Days / tabs
 
 One tab per entry in `days` (Mon–Sat by default), plus pseudo-tabs: **`weekOverview`** (📅 Week
-Overview — time × days grid, room-colored blocks), **`byClass`**, **`byTeacher`**. Code that uses
+Overview — time × days grid, room-colored blocks), **`byClass`**, **`byTeacher`**, **`byStudent`**
+(🎓 By Student), **`roster`** (📒 Roster spreadsheet table). Code that uses
 `tab` as a day must guard for pseudo-tabs (see `isDayTab` / `defaultDay`). There is no "Morning (Daily)" section anymore — a
 daily class is simply five placements (the class dialog's **⇄ Mon–Fri** button creates them in
 one click, and hovering a day tab mid-drag switches days so a card can be dropped on another day).
@@ -314,7 +320,7 @@ under the day grid shows the active day's range and an **✎ Edit hours** button
    (`{id?, day, start, end, rooms[]}` per meeting time; native `<input type="time">` fields and a
    row of room chips — click several chips to combine rooms; the label shows the combined
    capacity). Chips are disabled when taken (by another class on the board, or another overlapping
-   row in the same dialog); `submit()` re-validates and alerts on conflict. The **⇄ Mon–Fri**
+   row in the same dialog); `submit()` re-validates and shows `FormNotice` on conflict. The **⇄ Mon–Fri**
    button copies a row to every weekday. On save, `saveClass(form, rows)` rebuilds the class's
    placements: rows keep existing placement ids where present, new rows get fresh ids.
 
@@ -348,7 +354,25 @@ when times still tie. Overview tables use `width: 100%`,
 large `minWidth`, and horizontal scroll inside the white container; stacked pills use
 `flex flex-col gap: 4`.
 
-### Conflicts: room (red, blocking) vs teacher (amber, soft)
+### Student roster, By Student & Roster tabs
+
+Each catalog entry has a **`students[]`** roster (names, one per line in `ClassModal`; deduped via
+`normalizeStudentList()`). Top-level **`students`** is rebuilt on load as stored list ∪ every name
+on any class roster. **`reg`** (signed-up count) stays separate from roster size.
+
+The **🎓 By Student** tab (`tab === "byStudent"`) lists one row per student. Schedule cards run
+left-to-right by earliest meeting time, then class name; cards use room-legend colors and show class,
+time, days, room (`Rm #`), and teacher. **Manage students** opens `StudentModal`: rename cascades to
+every class roster; remove drops the student from all classes.
+
+The **📒 Roster** tab (`tab === "roster"`) is a flat table — one row per student per class (classes
+with no roster show one `—` row). Columns: Class name, Class schedule, Student (bold), Room, Teacher.
+Row background and left edge use room-legend colors. Default row order: earliest class time, then
+class name (`sortCatalogForRosterView()`). **Spreadsheet controls:** click a column header to sort
+A→Z / Z→A (↑↓ indicator); drag headers to reorder columns (persisted in `premier-roster-columns`).
+Click any row to edit the class.
+
+### Conflicts: room (red, blocking) vs teacher (amber, soft) vs student (orange, soft)
 
 Room conflicts are hard errors, teacher overlaps are warnings — styled and worded distinctly so
 they can't be confused:
@@ -357,15 +381,28 @@ they can't be confused:
   collisions of combined rooms included). Prevented by disabled room options in the modal
   dropdowns and rejected drops on the calendar; if a selected room becomes taken (after changing
   a row's day/time), an inline red "Room conflict: Room X already has Y" error appears and save is
-  blocked with an alert. A class with two overlapping meetings of its own is blocked the same way.
+  blocked with `FormNotice`. A class with two overlapping meetings of its own is blocked the same way.
   Pre-existing overlaps (e.g. surfaced by migration) still render — side by side with red borders —
   so they can be seen and fixed by dragging.
 - **Teacher overlap (amber, `teacherWarningStyle`)** — `teacherKey()` normalizes teacher names and
   ignores blank / `TBD` / `N/A`; `teacherBusy()` finds other placements with the same teacher
   overlapping in time. Non-blocking: amber "⚠ Teacher overlap" notes under modal rows,
-  amber border + badge on calendar cards, badge on sidebar cards, and a `window.confirm` summary on save.
+  amber border + badge on calendar cards, badge on sidebar cards, and an `InlineConfirm` step on save.
+- **Student schedule clash (orange/coral, `STUDENT_CLASH_TOKENS`)** — when the same student appears
+  on two class rosters and those classes have overlapping placements, `buildStudentConflictClassIds()`
+  / `buildConflictReport()` flag the clash. Non-blocking: dashed orange border on overview cards and
+  grid cards; header conflict panel shows **one row per student + class pair** (weekdays merged) with
+  full `Rm #` labels; class editor shows `studentConflictLabelsAt()` warnings per schedule row.
+  Student clash colors are intentionally **off** the room palette (not purple / room legend).
 - **Open-room hints** — while a modal schedule row has no room selected, a muted line lists which
   rooms are still free at that time ("Open rooms: 1, 3" / "No open rooms at this time").
+
+### In-app notices (`FormNotice` / `InlineConfirm`)
+
+Class editor and manager modals use **`FormNotice`** (inline error/warning banner) and
+**`InlineConfirm`** (two-step confirm inside the modal) instead of browser `alert()` / `confirm()`.
+Teacher-overlap save and destructive actions (delete class, remove teacher/student) go through
+`InlineConfirm`.
 
 ### Persistence (shared via Supabase)
 
@@ -488,6 +525,23 @@ app runs exactly as the old browser-only version.
 - 2026-06-13 — **v3 simplify UX**: drop planning-mode banner; all editable plans sync the same
   way; **Clear schedule** on Plan (empty times + zero reg) vs **Reset Data** on Default only.
 - 2026-06-13 — **v3 protect Default**: `isProtectedPlan` — `id=1` / `kind: live` cannot be deleted.
+- 2026-06-13 — **By Teacher room-column layout**: teachers × room columns (like By Class); horizontal
+  schedule cards per row with room-legend colors.
+- 2026-06-13 — **Editable program label**: header subtitle (`programLabel`) editable via modal; persists
+  in schedule data.
+- 2026-06-14 — **Week Overview day headers**: click a day column header to jump to that day tab.
+- 2026-06-15 — **Week Overview polish**: room-colored block detail on hover; richer pre-edit labels.
+- 2026-06-16 — **Per-class student rosters + 🎓 By Student tab**: `catalog[].students[]`, top-level
+  `students` list, roster textarea in class dialog, `StudentModal` (rename/remove cascades).
+- 2026-06-16 — **Student schedule conflicts**: detection in `scheduleLogic.ts`; orange dashed styling
+  on cards; header panel rows merged per student/class pair with `Rm #` labels.
+- 2026-06-16 — **By Class drag**: drag overview pills to move meeting time and room (like grid).
+- 2026-06-16 — **In-app dialogs**: `FormNotice` / `InlineConfirm` replace native `alert`/`confirm` in
+  class editor and manager modals.
+- 2026-06-17 — **📒 Roster tab**: flat class × student table with room-legend row colors; default sort
+  via `sortCatalogForRosterView()` (earliest time, then name); bold student names.
+- 2026-06-17 — **Roster spreadsheet columns**: click headers to sort any column; drag headers to
+  reorder columns (`premier-roster-columns` in localStorage).
 
 ---
 

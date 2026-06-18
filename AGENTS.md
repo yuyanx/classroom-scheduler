@@ -15,14 +15,14 @@ This file contains the practical rules and context you need to make changes that
     --define:process.env.NODE_ENV='"production"'
   ```
 - Commit **both** the source change **and** the updated `app.js` together.
-- Test: `npm run test:ci` (51 tests + build). Open `index.html` or `npx serve .`.
+- Test: `npm run test:ci` (67 tests + build). Open `index.html` or `npx serve .`.
 - Work on a feature branch. Push and let the user decide on merging/PR. **Do not push `main` unless asked.**
 
 ## Branches (as of 2026-06-13)
 
 | Branch | Status |
 |--------|--------|
-| `main` | Production — v3 multi-plan, Week Overview, room-colored overview pills, library sort |
+| `main` | Production — v3 multi-plan, Week Overview, By Student, 📒 Roster (column sort/reorder), student conflicts |
 | `v3-plans` | Merged into `main` (2026-06-13); branch kept for reference |
 
 Local v3 preview: `npx serve . -l 4180` → http://localhost:4180
@@ -32,10 +32,11 @@ Local v3 preview: `npx serve . -l 4180` → http://localhost:4180
 - **Single source of truth for UI**: Everything lives in `src/App.jsx` (one big component + helper functions at the bottom). Do not introduce new component files unless the user explicitly asks.
 - **Allowed helper modules**: `src/planService.js` (v3 plans), `src/scheduleService.js` (localStorage + sync guard), `src/domain/scheduleLogic.ts` (pure schedule math).
 - **Data model** (see handoff.md):
-  - `catalog[]` — one record per class/cohort (`id, name, teacher, reg, note`).
+  - `catalog[]` — one record per class/cohort (`id, name, teacher, reg, note, students[]`).
+  - `students[]` — deduped master list (union of class rosters); separate from `reg` signed-up count.
   - `placements[]` — scheduling entries (`classId, day, start, end, rooms[]`).
   - Multi-placement classes share one catalog entry (one roster).
-- **Three coordinated views** (grid, 📋 By Class, 👤 By Teacher) + 📅 Week Overview — pill/card design must stay consistent across all (see handoff.md).
+- **Coordinated views** (grid, 📋 By Class, 👤 By Teacher, 🎓 By Student, 📒 Roster) + 📅 Week Overview — pill/card design must stay consistent across overview tabs (see handoff.md). Roster is a table with spreadsheet column sort/reorder.
 - **Styling rule**: Inline styles only. Reuse style objects at the bottom of `App.jsx`.
 
 ## Persistence & Shared State
@@ -49,6 +50,7 @@ Local v3 preview: `npx serve . -l 4180` → http://localhost:4180
 - **Archive** — read-only; restore copies to new Plan.
 - Active plan: `premier-active-plan-id`. Edits sync only for the active plan row; colleagues must switch to the same plan to see edits.
 - localhost: `premier-plans-v3` local store; remote sync off (`IS_LOCAL_DEV`).
+- UI prefs: `premier-ui-lib-open`, `premier-roster-columns` (Roster column order).
 
 Central hooks in `App.jsx`: `persist`, `flushRemoteSave`, `switchPlan`, `planApi` from `createRemotePlanApi`.
 
@@ -56,7 +58,9 @@ Central hooks in `App.jsx`: `persist`, `flushRemoteSave`, `switchPlan`, `planApi
 
 - Drag Library ↔ grid, grid ↔ grid, grid → Library tray.
 - Multi-placement class: edit name/teacher/reg once → everywhere.
-- Teacher conflicts in grid, Library, both overview tabs.
+- Teacher conflicts in grid, Library, overview tabs.
+- Student conflicts: header panel, By Student cards, class editor schedule rows (orange dashed, not room colors).
+- **Roster**: column click-sort, drag-reorder headers, row click → class editor.
 - **Resize test** on By Class / By Teacher (narrow window, horizontal scroll, uniform pill heights).
 - **v3 plans**: switch plans, new plan, delete plan (not Default), archive + restore, Clear schedule vs Reset Data.
 
@@ -79,4 +83,4 @@ When an agent makes significant changes, update **both** `handoff.md` (changelog
 
 ---
 
-**Last updated**: v3 merged to `main` (2026-06-13).
+**Last updated**: Roster spreadsheet columns + student conflicts on `main` (2026-06-17).
