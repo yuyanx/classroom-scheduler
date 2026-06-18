@@ -65,7 +65,20 @@ import {
   STUDENT_CLASH_TOKENS,
   studentKey,
   normalizeStudentList,
+  isISODate,
 } from "./domain/scheduleLogic.ts";
+import {
+  thStyle, tdStyle, inputStyle, selStyle, chipStyle,
+  teacherWarningStyle, studentWarningStyle, roomConflictStyle,
+  formNoticeErrorStyle, formNoticeWarnStyle,
+  btnGhost, btnPrimary, btnSecondary, miniBtn, stepBtn, stepBtnCompact,
+  Overlay, Field, FormNotice, InlineConfirm,
+} from "./components/uikit.jsx";
+import Classbook from "./components/Classbook.jsx";
+import GradesView from "./components/GradesView.jsx";
+import ReportCards from "./components/ReportCards.jsx";
+import TermModal from "./components/TermModal.jsx";
+import IdentityModal from "./components/IdentityModal.jsx";
 
 // ───────────────────────── Week / time constants ─────────────────────────
 const ALL_DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
@@ -857,6 +870,105 @@ const cleanProgramLabel = (s) => {
   return t || DEFAULT_PROGRAM_LABEL;
 };
 
+// ── Course-management layer cleaners (carried through normalizeV2) ──
+// These MUST run on every load/poll or the new data is silently dropped.
+const ATT_STATUS = new Set(["present", "absent", "tardy", "excused", ""]);
+const HW_STATUS = new Set(["complete", "incomplete", "late", "missing", ""]);
+
+function cleanTerm(raw) {
+  if (!raw || !isISODate(raw.start) || !isISODate(raw.end) || raw.end < raw.start) return null;
+  const skipDates = [...new Set((Array.isArray(raw.skipDates) ? raw.skipDates : []).filter(isISODate))].sort();
+  return { start: raw.start, end: raw.end, skipDates };
+}
+
+function cleanSessionLogs(raw, classIds) {
+  const byKey = new Map();
+  (Array.isArray(raw) ? raw : []).forEach((r) => {
+    if (!r || !classIds.has(r.classId) || !isISODate(r.date)) return;
+    const content = String(r.content || "");
+    const homework = String(r.homework || "");
+    const note = String(r.note || "");
+    if (!content.trim() && !homework.trim() && !note.trim()) return;
+    byKey.set(`${r.classId}|${r.date}`, { classId: r.classId, date: r.date, content, homework, note });
+  });
+  return [...byKey.values()];
+}
+
+function cleanAttendance(raw, classIds) {
+  const byKey = new Map();
+  (Array.isArray(raw) ? raw : []).forEach((r) => {
+    if (!r || !classIds.has(r.classId) || !isISODate(r.date)) return;
+    const student = String(r.student || "").trim();
+    if (!student) return;
+    const status = ATT_STATUS.has(r.status) ? r.status : "";
+    const homework = HW_STATUS.has(r.homework) ? r.homework : "";
+    const note = String(r.note || "");
+    if (!status && !homework && !note.trim()) return; // drop empty rows
+    byKey.set(`${r.classId}|${r.date}|${studentKey(student)}`, {
+      classId: r.classId, date: r.date, student, status, homework, note,
+      by: String(r.by || ""), at: String(r.at || ""),
+    });
+  });
+  return [...byKey.values()];
+}
+
+function cleanQuizzes(raw, classIds) {
+  const byId = new Map();
+  (Array.isArray(raw) ? raw : []).forEach((q) => {
+    if (!q || !q.id || !classIds.has(q.classId)) return;
+    const maxScore = Number(q.maxScore);
+    byId.set(q.id, {
+      id: q.id, classId: q.classId, date: isISODate(q.date) ? q.date : "",
+      title: String(q.title || "Quiz"),
+      maxScore: Number.isFinite(maxScore) && maxScore > 0 ? maxScore : 100,
+      kind: q.kind || "quiz",
+    });
+  });
+  return [...byId.values()];
+}
+
+function cleanQuizScores(raw, quizIds) {
+  const byKey = new Map();
+  (Array.isArray(raw) ? raw : []).forEach((s) => {
+    if (!s || !quizIds.has(s.quizId)) return;
+    const student = String(s.student || "").trim();
+    if (!student) return;
+    const score = Number(s.score);
+    if (!Number.isFinite(score)) return;
+    byKey.set(`${s.quizId}|${studentKey(student)}`, {
+      quizId: s.quizId, student, score,
+      note: String(s.note || ""), by: String(s.by || ""), at: String(s.at || ""),
+    });
+  });
+  return [...byKey.values()];
+}
+
+function cleanReportComments(raw, classIds) {
+  const byKey = new Map();
+  (Array.isArray(raw) ? raw : []).forEach((c) => {
+    if (!c || !classIds.has(c.classId)) return;
+    const student = String(c.student || "").trim();
+    const comment = String(c.comment || "");
+    if (!student || !comment.trim()) return;
+    byKey.set(`${c.classId}|${studentKey(student)}`, {
+      classId: c.classId, student, comment, by: String(c.by || ""), at: String(c.at || ""),
+    });
+  });
+  return [...byKey.values()];
+}
+
+function cleanStaffPins(raw) {
+  const out = {};
+  if (raw && typeof raw === "object") {
+    Object.entries(raw).forEach(([name, pin]) => {
+      const n = String(name || "").trim();
+      const p = String(pin || "").trim();
+      if (n && p) out[n] = p;
+    });
+  }
+  return out;
+}
+
 function normalizeV2(raw) {
   // Earlier v2 builds modeled combined rooms as standalone entries ({ occupies: [...] });
   // these dissolve into their member rooms and their placements get a rooms[] array.
@@ -927,6 +1039,10 @@ function normalizeV2(raw) {
   });
   const students = [...studentMap.values()].sort((a, b) => a.localeCompare(b));
 
+  // Course-management layer — quizzes first so quizScores can be filtered to live quiz ids.
+  const quizzes = cleanQuizzes(raw.quizzes, classIds);
+  const quizIds = new Set(quizzes.map((q) => q.id));
+
   return {
     version: 2,
     days,
@@ -938,6 +1054,13 @@ function normalizeV2(raw) {
     students,
     programLabel: cleanProgramLabel(raw.programLabel),
     nextId: raw.nextId || 1000,
+    term: cleanTerm(raw.term),
+    sessionLogs: cleanSessionLogs(raw.sessionLogs, classIds),
+    attendance: cleanAttendance(raw.attendance, classIds),
+    quizzes,
+    quizScores: cleanQuizScores(raw.quizScores, quizIds),
+    reportComments: cleanReportComments(raw.reportComments, classIds),
+    staffPins: cleanStaffPins(raw.staffPins),
   };
 }
 
@@ -1180,6 +1303,11 @@ export default function ClassroomScheduler() {
   const [teacherMgrOpen, setTeacherMgrOpen] = useState(false);
   const [studentMgrOpen, setStudentMgrOpen] = useState(false);
   const [programLabelOpen, setProgramLabelOpen] = useState(false);
+  const [termOpen, setTermOpen] = useState(false);
+  const [identityOpen, setIdentityOpen] = useState(false);
+  const [currentTeacher, setCurrentTeacher] = useState(() => {
+    try { return localStorage.getItem("premier-current-teacher") || ""; } catch { return ""; }
+  });
   const [confirmReset, setConfirmReset] = useState(false);
   const [confirmDeleteClass, setConfirmDeleteClass] = useState(null);
   const [drag, setDrag] = useState(null); // {type:'lib'|'pl', id, dur, grabOffset}
@@ -1781,13 +1909,14 @@ export default function ClassroomScheduler() {
     flushRemoteSave(data);
   };
 
-  const { days, hours, rooms, catalog, placements, teachers, students, programLabel } = data;
+  const { days, hours, rooms, catalog, placements, teachers, students, programLabel, term } = data;
   const headerProgramLine = `${programLabel || DEFAULT_PROGRAM_LABEL} · ${rooms.length} rooms · ${DAY_SHORT[days[0]]}–${DAY_SHORT[days[days.length - 1]]}`;
   const idx = useMemo(() => buildScheduleIndexes(data), [data]);
 
   // Make sure the active tab still exists (e.g. after remote data changes the day list)
   useEffect(() => {
-    if (!days.includes(tab) && tab !== "byClass" && tab !== "byTeacher" && tab !== "byStudent" && tab !== "roster" && tab !== "weekOverview") setTab(days[0]);
+    const PSEUDO = ["byClass", "byTeacher", "byStudent", "roster", "weekOverview", "classbook", "grades", "reports"];
+    if (!days.includes(tab) && !PSEUDO.includes(tab)) setTab(days[0]);
   }, [days, tab]);
 
   // ── Rooms: a placement may span several rooms (combined classroom) ──
@@ -2130,28 +2259,34 @@ export default function ClassroomScheduler() {
     setEditing(null);
   };
 
+  // Delete a class and every record that hangs off it (sessions, attendance, quizzes…).
+  const stripClassData = (d, classId) => {
+    const removedQuizIds = new Set((d.quizzes || []).filter((q) => q.classId === classId).map((q) => q.id));
+    return {
+      catalog: d.catalog.filter((k) => k.id !== classId),
+      placements: d.placements.filter((p) => p.classId !== classId),
+      sessionLogs: (d.sessionLogs || []).filter((r) => r.classId !== classId),
+      attendance: (d.attendance || []).filter((r) => r.classId !== classId),
+      quizzes: (d.quizzes || []).filter((q) => q.classId !== classId),
+      quizScores: (d.quizScores || []).filter((s) => !removedQuizIds.has(s.quizId)),
+      reportComments: (d.reportComments || []).filter((c) => c.classId !== classId),
+    };
+  };
+
   const deleteClass = (classId) => {
     const n = placementsOf(classId).length;
     if (n > 1) {
       setConfirmDeleteClass({ classId, count: n });
       return;
     }
-    persist((d) => ({
-      ...d,
-      catalog: d.catalog.filter((k) => k.id !== classId),
-      placements: d.placements.filter((p) => p.classId !== classId),
-    }));
+    persist((d) => ({ ...d, ...stripClassData(d, classId) }));
     setEditing(null);
   };
 
   const confirmDeleteClassNow = () => {
     if (!confirmDeleteClass) return;
     const { classId } = confirmDeleteClass;
-    persist((d) => ({
-      ...d,
-      catalog: d.catalog.filter((k) => k.id !== classId),
-      placements: d.placements.filter((p) => p.classId !== classId),
-    }));
+    persist((d) => ({ ...d, ...stripClassData(d, classId) }));
     setConfirmDeleteClass(null);
     setEditing(null);
   };
@@ -2233,7 +2368,14 @@ export default function ClassroomScheduler() {
     removed.forEach((oldName) => {
       nc = nc.map((k) => (teacherKey(k.teacher) === teacherKey(oldName) ? { ...k, teacher: "" } : k));
     });
-    persist((d) => ({ ...d, teachers: names, catalog: nc }));
+    persist((d) => {
+      const pins = { ...(d.staffPins || {}) };
+      Object.entries(renames).forEach(([oldName, newName]) => {
+        if (pins[oldName] != null) { pins[newName] = pins[oldName]; delete pins[oldName]; }
+      });
+      removed.forEach((oldName) => { delete pins[oldName]; });
+      return { ...d, teachers: names, catalog: nc, staffPins: pins };
+    });
     setTeacherMgrOpen(false);
   };
 
@@ -2252,13 +2394,54 @@ export default function ClassroomScheduler() {
       }));
     });
     nc = nc.map((k) => ({ ...k, students: normalizeStudentList(k.students) }));
-    persist((d) => ({ ...d, students: names, catalog: nc }));
+
+    // Cascade rename/remove into attendance / quiz scores / report comments.
+    const renameByKey = {};
+    Object.entries(renames).forEach(([oldName, newName]) => { renameByKey[studentKey(oldName)] = newName; });
+    const removedKeys = new Set(removed.map(studentKey));
+    const remapStudentRecords = (arr) =>
+      (arr || [])
+        .filter((r) => !removedKeys.has(studentKey(r.student)))
+        .map((r) => {
+          const nn = renameByKey[studentKey(r.student)];
+          return nn ? { ...r, student: nn } : r;
+        });
+
+    persist((d) => ({
+      ...d,
+      students: names,
+      catalog: nc,
+      attendance: remapStudentRecords(d.attendance),
+      quizScores: remapStudentRecords(d.quizScores),
+      reportComments: remapStudentRecords(d.reportComments),
+    }));
     setStudentMgrOpen(false);
   };
 
   const saveProgramLabel = (label) => {
     persist((d) => ({ ...d, programLabel: cleanProgramLabel(label) }));
     setProgramLabelOpen(false);
+  };
+
+  // ── Program term (drives the Classbook / Grades / Report Card session calendar) ──
+  const saveTerm = (term) => {
+    persist((d) => ({ ...d, term: term || null }));
+    setTermOpen(false);
+  };
+
+  // ── Lightweight teacher identity (stamps records with who recorded them) ──
+  const signInTeacher = (name) => {
+    setCurrentTeacher(name);
+    try { localStorage.setItem("premier-current-teacher", name); } catch (e) { /* ignore */ }
+    setIdentityOpen(false);
+  };
+  const signOutTeacher = () => {
+    setCurrentTeacher("");
+    try { localStorage.removeItem("premier-current-teacher"); } catch (e) { /* ignore */ }
+    setIdentityOpen(false);
+  };
+  const saveStaffPin = (name, pin) => {
+    persist((d) => ({ ...d, staffPins: { ...(d.staffPins || {}), [name]: pin } }));
   };
 
   const resettingDefaultPlan = activePlanId === 1;
@@ -2610,6 +2793,21 @@ export default function ClassroomScheduler() {
             >
               {saveStatus.label}
             </span>
+            <button
+              onClick={() => setTermOpen(true)}
+              style={{ ...btnGhost, opacity: planReadOnly ? 0.35 : 1 }}
+              disabled={planReadOnly}
+              title="Set the program term — turns weekdays into dated sessions for the Classbook"
+            >
+              📅 {term ? "Term set" : "Set term"}
+            </button>
+            <button
+              onClick={() => setIdentityOpen(true)}
+              style={btnGhost}
+              title="Set who's recording attendance & grades"
+            >
+              👤 {currentTeacher || "Sign in"}
+            </button>
             <button onClick={() => setRoomMgrOpen(true)} style={btnGhost} disabled={planReadOnly}>Manage Rooms</button>
             <button
               onClick={() => setConfirmReset(true)}
@@ -2692,7 +2890,7 @@ export default function ClassroomScheduler() {
 
       <div style={{ width: "100%", boxSizing: "border-box", padding: "16px 12px 40px", display: "flex", gap: 12, alignItems: "flex-start" }}>
         {/* Class Library */}
-        <aside style={{ flex: `0 0 ${libOpen ? 240 : 46}px`, width: libOpen ? 240 : 46, position: "sticky", top: 16, alignSelf: "flex-start" }}>
+        <aside style={{ display: ["classbook", "grades", "reports"].includes(tab) ? "none" : undefined, flex: `0 0 ${libOpen ? 240 : 46}px`, width: libOpen ? 240 : 46, position: "sticky", top: 16, alignSelf: "flex-start" }}>
           {!libOpen && (
             <div
               {...trayHandlers}
@@ -2868,6 +3066,9 @@ export default function ClassroomScheduler() {
               { id: "byTeacher", label: "👤 By Teacher" },
               { id: "byStudent", label: "🎓 By Student" },
               { id: "roster", label: "📒 Roster" },
+              { id: "classbook", label: "📓 Classbook" },
+              { id: "grades", label: "📝 Grades" },
+              { id: "reports", label: "🪪 Report Cards" },
             ].map((v) => (
               <button
                 key={v.id}
@@ -2898,6 +3099,12 @@ export default function ClassroomScheduler() {
                   ? `${catalog.length} classes · ${unscheduledCount} unscheduled`
                   : tab === "weekOverview"
                     ? `${placements.length} meetings · ${days.length} days`
+                  : tab === "classbook"
+                    ? `${term ? "term set" : "no term yet"} · ${catalog.length} classes`
+                  : tab === "grades"
+                    ? `${(data.quizzes || []).length} quizzes · ${catalog.length} classes`
+                  : tab === "reports"
+                    ? `${(students || []).length} students`
                     : `${tabPls.length} classes · ${tabReg} students on ${DAY_LABEL[tab] || "this day"}`}
             </span>
           </nav>
@@ -2970,6 +3177,30 @@ export default function ClassroomScheduler() {
                 planReadOnly={planReadOnly}
                 onGoToDay={setTab}
                 onEditClass={(classId, placementId) => setEditing({ isNew: false, classId, placementId })}
+              />
+            ) : tab === "classbook" ? (
+              <Classbook
+                data={data}
+                persist={persist}
+                currentTeacher={currentTeacher}
+                planReadOnly={planReadOnly}
+                onSetTerm={() => setTermOpen(true)}
+                onEditClass={(classId) => setEditing({ isNew: false, classId })}
+              />
+            ) : tab === "grades" ? (
+              <GradesView
+                data={data}
+                persist={persist}
+                currentTeacher={currentTeacher}
+                planReadOnly={planReadOnly}
+                onSetTerm={() => setTermOpen(true)}
+              />
+            ) : tab === "reports" ? (
+              <ReportCards
+                data={data}
+                persist={persist}
+                currentTeacher={currentTeacher}
+                planReadOnly={planReadOnly}
               />
             ) : (
             <>
@@ -3194,6 +3425,22 @@ export default function ClassroomScheduler() {
           value={programLabel || DEFAULT_PROGRAM_LABEL}
           onSave={saveProgramLabel}
           onClose={() => setProgramLabelOpen(false)}
+        />
+      )}
+
+      {termOpen && (
+        <TermModal term={term} onSave={saveTerm} onClose={() => setTermOpen(false)} />
+      )}
+
+      {identityOpen && (
+        <IdentityModal
+          teachers={teachers || []}
+          staffPins={data.staffPins || {}}
+          current={currentTeacher}
+          onSignIn={signInTeacher}
+          onSavePin={saveStaffPin}
+          onSignOut={signOutTeacher}
+          onClose={() => setIdentityOpen(false)}
         />
       )}
 
@@ -5872,132 +6119,9 @@ function RoomModal({ rooms, placements, onSave, onClose }) {
 }
 
 // ───────────────────────── Shared bits ─────────────────────────
-function FormNotice({ tone = "error", title, children }) {
-  const box = tone === "warn" ? formNoticeWarnStyle : formNoticeErrorStyle;
-  return (
-    <div style={box}>
-      {title && <div style={{ fontWeight: 700, marginBottom: children ? 4 : 0 }}>{title}</div>}
-      {children}
-    </div>
-  );
-}
-
-function InlineConfirm({ title, message, confirmLabel = "Continue", onCancel, onConfirm, danger }) {
-  return (
-    <div style={{ ...formNoticeWarnStyle, marginTop: 18, marginBottom: 0 }}>
-      <div style={{ fontWeight: 700, fontSize: 14, color: "#123c3a", marginBottom: 6 }}>{title}</div>
-      <p style={{ margin: "0 0 14px", fontSize: 13, color: "#475569", lineHeight: 1.45 }}>{message}</p>
-      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap" }}>
-        <button style={btnSecondary} onClick={onCancel}>Cancel</button>
-        <button style={danger ? { ...btnPrimary, background: "#dc2626" } : btnPrimary} onClick={onConfirm}>{confirmLabel}</button>
-      </div>
-    </div>
-  );
-}
-
-function Overlay({ children, onClose, wide, bare }) {
-  return (
-    <div
-      onClick={onClose}
-      style={{
-        position: "fixed", inset: 0, background: "rgba(15,23,42,.45)",
-        display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 16,
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: bare ? "transparent" : "#fff",
-          borderRadius: 12,
-          padding: bare ? 0 : "22px 24px",
-          width: "100%",
-          maxWidth: bare ? 400 : (wide ? 820 : 460),
-          boxShadow: bare ? "none" : "0 20px 50px rgba(0,0,0,.25)",
-          maxHeight: "calc(100vh - 48px)",
-          overflowY: "auto",
-          boxSizing: "border-box",
-        }}
-      >
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function Field({ label, children, style }) {
-  return (
-    <label style={{ display: "block", marginBottom: 12, ...style }}>
-      <span style={{ display: "block", fontSize: 13, color: "#475569", marginBottom: 4 }}>{label}</span>
-      {children}
-    </label>
-  );
-}
-
-// ───────────────────────── Styles ─────────────────────────
-const thStyle = {
-  padding: "10px 8px", borderBottom: "2px solid #d6dad4", borderRight: "1px solid #eceeea",
-  fontSize: 13, fontWeight: 600, color: "#475569", textAlign: "center", background: "#fafaf8",
-};
-const tdStyle = {
-  padding: 6, borderBottom: "1px solid #eceeea", borderRight: "1px solid #eceeea", verticalAlign: "top",
-};
-const inputStyle = {
-  width: "100%", boxSizing: "border-box", padding: "8px 10px", fontSize: 14,
-  border: "1px solid #cbd5d1", borderRadius: 8, outline: "none",
-};
-const selStyle = {
-  boxSizing: "border-box", padding: "7px 8px", fontSize: 13, minWidth: 0,
-  border: "1px solid #cbd5d1", borderRadius: 8, outline: "none", background: "#fff", color: "#1e293b",
-};
-const chipStyle = {
-  fontSize: 11, background: "#e6f4f3", color: "#0f766e", borderRadius: 4,
-  padding: "1px 6px", whiteSpace: "nowrap", fontWeight: 600,
-};
-const teacherWarningStyle = {
-  fontSize: 11, background: "#fffbeb", color: "#b45309", border: "1px solid #fde68a",
-  borderRadius: 4, padding: "2px 6px", fontWeight: 700, lineHeight: 1.25,
-};
-const studentWarningStyle = {
-  fontSize: 11, background: STUDENT_CLASH_TOKENS.bg, color: STUDENT_CLASH_TOKENS.text,
-  border: `2px dashed ${STUDENT_CLASH_TOKENS.border}`,
-  borderRadius: 4, padding: "2px 6px", fontWeight: 700, lineHeight: 1.25,
-};
-const roomConflictStyle = {
-  fontSize: 11, background: "#fee2e2", color: "#b91c1c", border: "1px solid #fecaca",
-  borderRadius: 4, padding: "2px 6px", fontWeight: 700, lineHeight: 1.25,
-};
-const formNoticeErrorStyle = {
-  background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10,
-  padding: "12px 14px", marginBottom: 14, color: "#991b1b", fontSize: 13, lineHeight: 1.45,
-};
-const formNoticeWarnStyle = {
-  background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10,
-  padding: "14px 16px", marginBottom: 14, color: "#92400e", fontSize: 13, lineHeight: 1.45,
-};
-const btnGhost = {
-  background: "transparent", border: "1px solid rgba(255,255,255,.35)", color: "inherit",
-  borderRadius: 8, padding: "6px 12px", fontSize: 13, cursor: "pointer",
-};
-const btnPrimary = {
-  background: "#123c3a", color: "#fff", border: "none", borderRadius: 8,
-  padding: "8px 18px", fontSize: 14, fontWeight: 600, cursor: "pointer",
-};
-const btnSecondary = {
-  background: "#fff", color: "#334155", border: "1px solid #cbd5d1", borderRadius: 8,
-  padding: "8px 14px", fontSize: 14, cursor: "pointer",
-};
-const miniBtn = {
-  background: "#fff", border: "1px solid #d6dad4", borderRadius: 6, width: 26, height: 26,
-  fontSize: 12, cursor: "pointer", color: "#475569", lineHeight: 1,
-};
-const stepBtn = {
-  width: 20, height: 20, flex: "0 0 20px", borderRadius: 6, border: "1px solid #cbd5d1", background: "#fff",
-  cursor: "pointer", fontSize: 13, lineHeight: 1, color: "#334155", padding: 0,
-};
-const stepBtnCompact = {
-  ...stepBtn,
-  width: 16, height: 16, flex: "0 0 16px", borderRadius: 4, fontSize: 11,
-};
+// Shared UI primitives (Overlay / Field / FormNotice / InlineConfirm) and style
+// tokens (inputStyle, btnPrimary, …) now live in ./components/uikit.jsx — imported
+// at the top of this file so both App.jsx and the course-management views share them.
 
 // Pure helpers exported for node:test (see tests/ + src/test-exports.js).
 export {

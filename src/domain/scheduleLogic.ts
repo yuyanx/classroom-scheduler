@@ -696,3 +696,191 @@ export function computeWeekOverviewLayout(
   });
   return { gridStart, gridEnd, gridH, hourMarks, halfMarks, lanesByDay, pxPerMin };
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// Course management — dated sessions, attendance, homework, quizzes, reports
+// ════════════════════════════════════════════════════════════════════════════
+
+// getUTCDay(): 0 = Sun … 6 = Sat. Map to the app's day ids.
+const DAY_ID_BY_DOW = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+
+export const isISODate = (s: unknown): s is string =>
+  typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+
+const utcOf = (iso: string) => {
+  const [y, m, d] = iso.split("-").map(Number);
+  return Date.UTC(y, m - 1, d);
+};
+const isoOfUtc = (ms: number) => {
+  const dt = new Date(ms);
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
+};
+
+/** Day id ("mon"…"sun") for a "YYYY-MM-DD" string — TZ-safe via UTC. */
+export function weekdayIdOf(dateISO: string): string {
+  if (!isISODate(dateISO)) return "";
+  return DAY_ID_BY_DOW[new Date(utcOf(dateISO)).getUTCDay()];
+}
+
+/** "January 5" style label for display (TZ-safe). */
+export function formatDateLabel(dateISO: string): string {
+  if (!isISODate(dateISO)) return "";
+  const dt = new Date(utcOf(dateISO));
+  const month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][dt.getUTCMonth()];
+  return `${DAY_SHORT[DAY_ID_BY_DOW[dt.getUTCDay()]]} ${month} ${dt.getUTCDate()}`;
+}
+
+/** Local "today" as "YYYY-MM-DD" (what the user perceives as today). */
+export function todayISO(): string {
+  const dt = new Date();
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+}
+
+/** Inclusive list of "YYYY-MM-DD" dates from start to end (capped at ~3 years). */
+export function eachDateInRange(startISO: string, endISO: string): string[] {
+  if (!isISODate(startISO) || !isISODate(endISO)) return [];
+  let cur = utcOf(startISO);
+  const end = utcOf(endISO);
+  if (cur > end) return [];
+  const out: string[] = [];
+  let guard = 0;
+  while (cur <= end && guard++ < 1100) {
+    out.push(isoOfUtc(cur));
+    cur += 86400000;
+  }
+  return out;
+}
+
+export type TermLike = { start?: string; end?: string; skipDates?: string[] } | null | undefined;
+type SessionPlacement = { classId: string; day: string; start: number; end: number; rooms?: string[] };
+export type ClassSession = { date: string; weekday: string; placements: SessionPlacement[] };
+
+/**
+ * Concrete dated sessions for a class: every date in the term whose weekday the
+ * class meets (skip dates excluded). Derived, never stored.
+ */
+export function sessionsForClass(
+  classId: string,
+  placements: SessionPlacement[],
+  term: TermLike,
+): ClassSession[] {
+  if (!term || !isISODate(term.start) || !isISODate(term.end)) return [];
+  const skip = new Set((term.skipDates || []).filter(isISODate));
+  const pls = (placements || []).filter((p) => p.classId === classId);
+  if (!pls.length) return [];
+  const byDay = new Map<string, SessionPlacement[]>();
+  pls.forEach((p) => {
+    if (!byDay.has(p.day)) byDay.set(p.day, []);
+    byDay.get(p.day)!.push(p);
+  });
+  const out: ClassSession[] = [];
+  for (const date of eachDateInRange(term.start, term.end)) {
+    if (skip.has(date)) continue;
+    const wd = weekdayIdOf(date);
+    const dayPls = byDay.get(wd);
+    if (dayPls && dayPls.length) {
+      out.push({ date, weekday: wd, placements: dayPls.slice().sort((a, b) => a.start - b.start) });
+    }
+  }
+  return out;
+}
+
+/** Friday session dates for a class — used to pre-fill the weekly quiz. */
+export function suggestQuizDates(classId: string, placements: SessionPlacement[], term: TermLike): string[] {
+  return sessionsForClass(classId, placements, term)
+    .filter((s) => s.weekday === "fri")
+    .map((s) => s.date);
+}
+
+type AttRec = { classId: string; date: string; student: string; status?: string; homework?: string };
+
+/** present/absent/tardy/excused counts; rate = (present+tardy)/recorded. */
+export function attendanceSummary(attendance: AttRec[] | undefined, classId: string, student: string) {
+  const key = studentKey(student);
+  const c = { present: 0, absent: 0, tardy: 0, excused: 0 };
+  (attendance || []).forEach((r) => {
+    if (r.classId !== classId || studentKey(r.student) !== key) return;
+    if (r.status && (c as Record<string, number>)[r.status] != null) (c as Record<string, number>)[r.status]++;
+  });
+  const total = c.present + c.absent + c.tardy + c.excused;
+  const attended = c.present + c.tardy;
+  return { ...c, total, rate: total ? attended / total : null };
+}
+
+/** complete/incomplete/late/missing counts; rate = (complete+late)/recorded. */
+export function homeworkCompletionRate(attendance: AttRec[] | undefined, classId: string, student: string) {
+  const key = studentKey(student);
+  const c = { complete: 0, incomplete: 0, late: 0, missing: 0 };
+  (attendance || []).forEach((r) => {
+    if (r.classId !== classId || studentKey(r.student) !== key) return;
+    if (r.homework && (c as Record<string, number>)[r.homework] != null) (c as Record<string, number>)[r.homework]++;
+  });
+  const total = c.complete + c.incomplete + c.late + c.missing;
+  const done = c.complete + c.late;
+  return { ...c, total, rate: total ? done / total : null };
+}
+
+type QuizLike = { id: string; classId: string; date?: string; title?: string; maxScore?: number };
+type QuizScoreLike = { quizId: string; student: string; score: number | string };
+
+/** Per-quiz detail + average percent/raw for one student in one class. */
+export function quizAverage(
+  quizzes: QuizLike[] | undefined,
+  quizScores: QuizScoreLike[] | undefined,
+  classId: string,
+  student: string,
+) {
+  const key = studentKey(student);
+  const qById = new Map<string, QuizLike>();
+  (quizzes || []).forEach((q) => { if (q.classId === classId) qById.set(q.id, q); });
+  const detail: { quizId: string; title: string; date: string; score: number; maxScore: number | null; pct: number | null }[] = [];
+  (quizScores || []).forEach((s) => {
+    if (studentKey(s.student) !== key) return;
+    const q = qById.get(s.quizId);
+    if (!q) return;
+    const score = Number(s.score);
+    if (!Number.isFinite(score)) return;
+    const max = Number(q.maxScore) > 0 ? Number(q.maxScore) : null;
+    detail.push({ quizId: q.id, title: q.title || "Quiz", date: q.date || "", score, maxScore: max, pct: max ? (score / max) * 100 : null });
+  });
+  detail.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const pcts = detail.map((d) => d.pct).filter((p): p is number => p != null);
+  const avgPct = pcts.length ? pcts.reduce((a, b) => a + b, 0) / pcts.length : null;
+  const raw = detail.map((d) => d.score);
+  const avgScore = raw.length ? raw.reduce((a, b) => a + b, 0) / raw.length : null;
+  return { detail, avgPct, avgScore, count: detail.length };
+}
+
+type ReportData = {
+  catalog?: { id: string; name: string; teacher?: string; students?: string[] }[];
+  placements?: SessionPlacement[];
+  attendance?: AttRec[];
+  quizzes?: QuizLike[];
+  quizScores?: QuizScoreLike[];
+  reportComments?: { classId: string; student: string; comment: string }[];
+  term?: TermLike;
+};
+
+/** Aggregate everything for one student across all their classes — for the report card. */
+export function buildReportCard(student: string, data: ReportData) {
+  const key = studentKey(student);
+  const catalog = data.catalog || [];
+  const placements = data.placements || [];
+  const commentByClass = new Map<string, string>();
+  (data.reportComments || []).forEach((c) => {
+    if (studentKey(c.student) === key) commentByClass.set(c.classId, c.comment);
+  });
+  const classes = catalog
+    .filter((k) => (k.students || []).some((s) => studentKey(s) === key))
+    .map((k) => ({
+      classId: k.id,
+      className: k.name,
+      teacher: k.teacher || "",
+      schedule: classScheduleLines(placements, k.id),
+      attendance: attendanceSummary(data.attendance, k.id, student),
+      homework: homeworkCompletionRate(data.attendance, k.id, student),
+      quiz: quizAverage(data.quizzes, data.quizScores, k.id, student),
+      comment: commentByClass.get(k.id) || "",
+    }));
+  return { student, term: data.term || null, classes };
+}

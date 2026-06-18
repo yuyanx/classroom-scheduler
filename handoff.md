@@ -48,14 +48,17 @@ classroom-scheduler/
 │   ├── planService.js    # v3 multi-plan pack/unpack, local store, Supabase plan API
 │   ├── scheduleService.js # localStorage + dirty-revision sync guard
 │   ├── domain/
-│   │   └── scheduleLogic.ts # Pure schedule math (conflicts, overview sort, layout)
+│   │   └── scheduleLogic.ts # Pure logic (conflicts, sort, layout, sessions, report aggregation)
+│   ├── components/       # uikit.jsx (shared styles + Overlay/Field/FormNotice/InlineConfirm) +
+│   │                     #   Classbook / GradesView / ReportCards / TermModal / IdentityModal / classbookUtils
 │   ├── test-exports.js   # Test-only re-export entry (not loaded by the app)
-│   └── App.jsx           # Entire application (single file, ~5800 lines)
+│   └── App.jsx           # Scheduler UI + state (imports the components above)
 ├── tests/
 │   ├── plan.test.mjs      # v3 plan envelope + local store
 │   ├── schedule.test.mjs  # Core helper regression tests
 │   ├── migration.test.mjs # migrateOld / migrateV1toV2 / normalizeV2
 │   ├── conflicts.test.mjs # maxEndForPlacement, room/teacher conflict edge cases
+│   ├── classbook.test.mjs # sessions, attendance/quiz aggregation, normalizeV2 carry-through
 │   ├── sync.test.mjs      # Preview / localhost remote-sync gating
 │   └── smoke.test.mjs     # TDZ order, bundle size
 ├── .github/workflows/ci.yml # npm test + npm run build on push/PR
@@ -97,7 +100,7 @@ npm test
 ```
 
 Runs `node:test` against pure schedule helpers (esbuild bundles `src/test-exports.js` →
-`dist/test-logic.mjs`, gitignored). **67 tests** cover migrations, conflicts, sync gating,
+`dist/test-logic.mjs`, gitignored). **82 tests** cover migrations, conflicts, sync gating,
 `planService` (v3), overview helpers, student conflicts, and smoke guards. CI runs `npm test` + `npm run build`.
 **Run `npm run test:ci` before every commit.**
 
@@ -429,6 +432,62 @@ app runs exactly as the old browser-only version.
 - amber (`#d97706`) — 75–99 % full
 - red (`#dc2626`) — at or over room capacity
 
+### Course management (sessions · attendance · homework · quizzes · report cards)
+
+A second layer on top of the schedule that turns the weekday-recurring board into a
+per-session gradebook. All of it rides in the **same per-plan envelope** (localStorage +
+Supabase), so it follows plans and offline caching like everything else.
+
+**New top-level fields** (added to the v2 `schedule` object; `version` stays `2`):
+
+```js
+term: { start: "2026-06-15", end: "2026-08-21", skipDates: ["2026-07-04"] } | null,
+sessionLogs:    [ { classId, date, content, homework, note } ],                       // per class/date
+attendance:     [ { classId, date, student, status, homework, note, by, at } ],       // per class/date/student
+quizzes:        [ { id, classId, date, title, maxScore, kind } ],
+quizScores:     [ { quizId, student, score, note, by, at } ],
+reportComments: [ { classId, student, comment, by, at } ],                            // term-level
+staffPins:      { "<teacher name>": "<pin>" }
+```
+
+- **Sessions are derived, never stored.** `sessionsForClass(classId, placements, term)`
+  (in `scheduleLogic.ts`) intersects a class's placement weekdays with the term date range
+  (minus `skipDates`) to produce dated `(classId, date)` sessions. Records key off
+  `classId + date (+ student / quizId)`. Dates are `"YYYY-MM-DD"` strings; weekday is computed
+  TZ-safe via `Date.UTC(...).getUTCDay()` (`weekdayIdOf`) so there are no off-by-one bugs.
+- **⚠️ `normalizeV2()` carry-through is mandatory.** `upgrade()`/`normalizeV2()` runs on every
+  load **and every remote poll** and returns an explicit object — any new field not listed there
+  is silently dropped. Each field has a `clean*` helper (`cleanTerm`, `cleanAttendance`,
+  `cleanQuizzes`, …) that validates and filters orphans (records pointing at deleted classes/quizzes)
+  and de-dupes (keep-last). Tested by `normalizeV2 carries the course-management layer` in
+  `tests/classbook.test.mjs`.
+- **Cascades.** Renaming/removing a student (`saveStudents`) remaps/drops `attendance`,
+  `quizScores`, `reportComments`; deleting a class (`stripClassData`) removes its sessionLogs,
+  attendance, quizzes, quizScores, and comments; deleting a quiz removes its scores; renaming a
+  teacher moves their `staffPins` entry.
+- **Tabs.** `📓 Classbook` (lesson content + homework + attendance/homework-completion per session;
+  responsive card layout on narrow screens via `useIsNarrow`), `📝 Grades` (quiz grid + averages +
+  CSV), `🪪 Report Cards` (per-student aggregation via `buildReportCard`, `🖨 Print` via an injected
+  `@media print` style, CSV export). The Class Library `<aside>` is hidden on these three tabs
+  (they have their own class pickers) — this also gives the Classbook full width on mobile.
+- **Identity (lightweight).** Header **👤 Sign in** picks the current teacher from `teachers`
+  (optional PIN in `staffPins`); stored in `localStorage` (`premier-current-teacher`) and stamped
+  as `by`/`at` on records. **Not** real auth — the anon Supabase key still ships in the bundle.
+- **Known limitation.** Saves are still whole-document last-write-wins on a 30 s poll; two teachers
+  entering grades into the same plan simultaneously can clobber each other. The dirty-revision guard
+  only protects your own unsaved edits from being overwritten by polls. Per-record sync is future work.
+- **Code:** `src/domain/scheduleLogic.ts` (pure: `sessionsForClass`, `attendanceSummary`,
+  `homeworkCompletionRate`, `quizAverage`, `buildReportCard`, `suggestQuizDates`, date utils);
+  `src/components/` (`Classbook.jsx`, `GradesView.jsx`, `ReportCards.jsx`, `TermModal.jsx`,
+  `IdentityModal.jsx`, `classbookUtils.jsx`, and the extracted `uikit.jsx`); wiring in `App.jsx`.
+
+### Shared UI kit (`src/components/uikit.jsx`)
+
+The inline style tokens (`inputStyle`, `btnPrimary`, `thStyle`, …) and shared primitives
+(`Overlay`, `Field`, `FormNotice`, `InlineConfirm`) were extracted from `App.jsx` into
+`uikit.jsx` so the course-management views share the exact same look. `App.jsx` imports them at
+the top; `STUDENT_CLASH_TOKENS` stays imported in `App.jsx` for its inline grid styling.
+
 ---
 
 ## Change log
@@ -543,6 +602,14 @@ app runs exactly as the old browser-only version.
   via `sortCatalogForRosterView()` (earliest time, then name); bold student names.
 - 2026-06-17 — **Roster spreadsheet columns**: click headers to sort any column; drag headers to
   reorder columns (`premier-roster-columns` in localStorage).
+- 2026-06-18 — **Course-management layer**: program `term` → derived dated sessions;
+  `📓 Classbook` (lesson content, homework, attendance, homework completion; mobile card layout),
+  `📝 Grades` (quizzes with suggested Fridays, score grid + averages, CSV), `🪪 Report Cards`
+  (per-student aggregation, print, CSV). New `term/sessionLogs/attendance/quizzes/quizScores/`
+  `reportComments/staffPins` carried through `normalizeV2` with orphan filtering + cascades;
+  lightweight teacher identity (`👤 Sign in`, `premier-current-teacher`, optional PIN). Pure
+  helpers + carry-through covered by `tests/classbook.test.mjs` (**82 tests**). Extracted shared
+  `src/components/uikit.jsx`; new views live under `src/components/`.
 
 ---
 
@@ -550,7 +617,7 @@ app runs exactly as the old browser-only version.
 
 - **Export / print view** — a read-only printable summary of the week's schedule.
 - **TypeScript** — the data model is well-defined; adding types to `App.jsx` is a self-contained change.
-- **Split into components** — `App.jsx` is a single ~5800-line file. `ClassModal`, `RoomModal`, and `Overlay` are already split into functions at the bottom; moving them to separate files under `src/components/` is straightforward.
+- **Split into components (in progress)** — `src/components/` now holds `uikit.jsx` (shared styles + Overlay/Field/FormNotice/InlineConfirm) and the course-management views. The remaining big presentational components still inside `App.jsx` (`ClassModal`, `RoomModal`, `RosterView`, `ClassScheduleView`, `TeacherScheduleView`, `StudentScheduleView`, `WeekOverviewView`) could move out next — they're self-contained and take props.
 - **Build pipeline** — `app.js` is still committed for zero-step GitHub Pages; `vercel.json` already runs `npm run build` on deploy. Could stop committing the bundle if all hosts run esbuild.
 - **Mobile layout** — the grid uses a `<table>` with `overflowX: auto`. A card-based layout for small screens would improve mobile usability.
 

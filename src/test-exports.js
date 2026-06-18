@@ -25,6 +25,17 @@ export {
   ROOM_OVERVIEW_PALETTE,
   studentKey,
   normalizeStudentList,
+  isISODate,
+  weekdayIdOf,
+  formatDateLabel,
+  todayISO,
+  eachDateInRange,
+  sessionsForClass,
+  suggestQuizDates,
+  attendanceSummary,
+  homeworkCompletionRate,
+  quizAverage,
+  buildReportCard,
 } from "./domain/scheduleLogic.ts";
 
 export {

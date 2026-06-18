@@ -26,6 +26,19 @@ An interactive classroom scheduling board for the 2026 Summer program (Jericho).
 | **📒 Roster** | Spreadsheet table — one row per student per class; click column headers to sort, drag headers to reorder columns |
 | **📅 Week Overview** | Read-only week grid (time × Mon–Sat); room-colored blocks; click day header to jump to that day tab |
 
+### Course management (attendance · homework · quizzes · report cards)
+
+Set the program **term** (📅 **Set term** in the header — start/end dates + holidays). The app turns each class's weekdays into concrete **dated sessions**; records hang off `(class, date)`.
+
+| Tab | What it does |
+|-----|----------------|
+| **📓 Classbook** | Pick a class + session date (◀ ▶ navigation). Record the day's **lesson content** and **homework assigned**, then take **attendance** (present/absent/tardy/excused) and **homework completion** (complete/incomplete/late/missing) per student. "Mark all present" shortcut. Tablet/phone-friendly card layout for taking attendance in class. |
+| **📝 Grades** | Per class: create **quizzes** (Friday dates suggested for Mon–Fri classes), enter scores in a students × quizzes grid; per-student and class-wide averages; **Export CSV**. |
+| **🪪 Report Cards** | Per student: attendance rate, homework completion rate, quiz average + per-quiz detail, and a **teacher comment** — aggregated across all their classes. **🖨 Print** a single card or **Export all (CSV)**. |
+
+- **👤 Sign in** (header): pick the teacher recording — entries are stamped with who/when (optional PIN). Lightweight audit, not real authentication.
+- Records ride in the same per-plan Supabase/localStorage envelope and survive reload (carried through `normalizeV2`). Renaming/removing a student or deleting a class cascades into these records.
+
 ### Rosters & conflicts
 
 - **Per-class student roster** (names in class dialog, separate from signed-up `reg` count)
@@ -48,11 +61,14 @@ index.html              # Page shell (loads app.js)
 app.js                  # Committed production bundle (rebuild after src/ edits)
 src/
   main.jsx              # Entry point
-  App.jsx               # Entire UI (~5800 lines)
+  App.jsx               # Scheduler UI + state (catalog, placements, sync)
+  components/           # uikit (shared styles/Overlay/Field) + course-management views
+                        #   Classbook.jsx, GradesView.jsx, ReportCards.jsx,
+                        #   TermModal.jsx, IdentityModal.jsx, classbookUtils.jsx
   planService.js        # v3 multi-plan pack/unpack + Supabase API
   scheduleService.js    # localStorage + sync guard
-  domain/scheduleLogic.ts  # Pure schedule math (conflicts, sort, layout)
-tests/                  # node:test (67 tests)
+  domain/scheduleLogic.ts  # Pure logic (conflicts, sort, layout, sessions, report aggregation)
+tests/                  # node:test (82 tests)
 handoff.md              # Full architecture + changelog (start here for deep dives)
 AGENTS.md               # Condensed rules for AI coding agents
 ```
@@ -61,7 +77,7 @@ AGENTS.md               # Condensed rules for AI coding agents
 
 ```bash
 npm install
-npm run test:ci          # 67 tests + production build
+npm run test:ci          # 82 tests + production build
 npx serve . -l 4180      # http://localhost:4180
 ```
 
@@ -91,6 +107,6 @@ GitHub Pages also works: **Settings → Pages → `main` / root**.
 
 ## Note on data
 
-The shared schedule lives in Supabase (**one row per plan**, jsonb envelope). `localStorage` keys include `premier-active-plan-id`, `premier-plans-v3`, and UI prefs such as `premier-roster-columns` (Roster column order).
+The shared schedule lives in Supabase (**one row per plan**, jsonb envelope) — including the course-management layer (`term`, `sessionLogs`, `attendance`, `quizzes`, `quizScores`, `reportComments`, `staffPins`). `localStorage` keys include `premier-active-plan-id`, `premier-plans-v3`, UI prefs such as `premier-roster-columns`, and `premier-current-teacher` (who's recording, this browser only).
 
 After deploying, ask everyone to refresh open tabs so an old client doesn't write stale data back.
