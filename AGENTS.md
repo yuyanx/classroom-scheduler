@@ -15,7 +15,7 @@ This file contains the practical rules and context you need to make changes that
                   #          --define:process.env.NODE_ENV='"production"'
   ```
 - Commit **both** the source change **and** the updated `app.js` together.
-- Test: `npm run test:ci` (86 tests + build). Open `index.html` or `npx serve .`.
+- Test: `npm run test:ci` (88 tests + build). Open `index.html` or `npx serve .`.
 - Work on a feature branch. Push and let the user decide on merging/PR. **Do not push `main` unless asked.**
 
 ## Branches (as of 2026-06-17)

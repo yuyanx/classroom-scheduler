@@ -10,6 +10,7 @@ import {
   DEFAULT_PROGRAM_LABEL,
   cleanProgramLabel,
   normalizeStudentList,
+  regFromRoster,
   studentKey,
 } from "../dist/test-logic.mjs";
 
@@ -159,10 +160,31 @@ test("normalizeV2 defaults catalog students to empty array", () => {
     placements: [],
   });
   assert.deepEqual(v2.catalog[0].students, []);
+  assert.equal(v2.catalog[0].reg, 0);
   assert.deepEqual(v2.students, []);
+});
+
+test("normalizeV2 sets reg from roster names", () => {
+  const v2 = normalizeV2({
+    version: 2,
+    days: ["mon"],
+    hours: { default: [540, 1020] },
+    rooms: [{ id: "1", cap: 12 }],
+    catalog: [{
+      id: "k1", name: "Bio", teacher: "A", reg: 99, note: "",
+      students: ["Alex Chen", "Jordan Lee", "alex chen"],
+    }],
+    placements: [],
+  });
+  assert.equal(v2.catalog[0].reg, 2);
 });
 
 test("normalizeStudentList dedupes and sorts", () => {
   assert.deepEqual(normalizeStudentList(["Sam", "  alex ", "sam", ""]), ["alex", "Sam"]);
   assert.equal(studentKey("  Alex Chen "), "alex chen");
+});
+
+test("regFromRoster counts deduped roster lines", () => {
+  assert.equal(regFromRoster(["Alex", "alex", "Jordan"]), 2);
+  assert.equal(regFromRoster([]), 0);
 });

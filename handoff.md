@@ -362,7 +362,7 @@ Horizontal scroll inside the white container.
 
 Each catalog entry has a **`students[]`** roster (names, one per line in `ClassModal`; deduped via
 `normalizeStudentList()`). Top-level **`students`** is rebuilt on load as stored list ∪ every name
-on any class roster. **`reg`** (signed-up count) stays separate from roster size.
+on any class roster. **`reg`** (enrolled / signed-up count) equals **`students.length`** (deduped names).
 
 The **🎓 By Student** tab (`tab === "byStudent"`) lists one row per student. Schedule cards run
 left-to-right by earliest meeting time, then class name; cards use room-legend colors and show class,

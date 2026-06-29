@@ -25,6 +25,7 @@ export {
   ROOM_OVERVIEW_PALETTE,
   studentKey,
   normalizeStudentList,
+  regFromRoster,
   isISODate,
   weekdayIdOf,
   formatDateLabel,

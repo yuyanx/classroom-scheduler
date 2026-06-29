@@ -31,6 +31,9 @@ export const normalizeStudentList = (raw: unknown): string[] => {
   return [...seen.values()].sort((a, b) => a.localeCompare(b));
 };
 
+/** Signed-up count follows the class roster (deduped name lines). */
+export const regFromRoster = (raw: unknown) => normalizeStudentList(raw).length;
+
 export const overlaps = (a: { day: string; start: number; end: number }, b: { day: string; start: number; end: number }) =>
   a.day === b.day && a.start < b.end && b.start < a.end;
 

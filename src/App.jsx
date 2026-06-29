@@ -67,6 +67,7 @@ import {
   STUDENT_CLASH_TOKENS,
   studentKey,
   normalizeStudentList,
+  regFromRoster,
   isISODate,
 } from "./domain/scheduleLogic.ts";
 import {
@@ -858,7 +859,7 @@ const LIVE_SEED_TAG = "prod-2026-06-12T21:23";
 // days:       which days the program runs — ordered subset of ALL_DAYS
 // hours:      { default: [startMin, endMin], <day>: [start, end] } scheduling window per day
 // rooms:      [{ id, cap }] — one plain list for the whole week
-// catalog:    one entry per class/cohort — { id, name, teacher, reg, note, students[] }
+// catalog:    one entry per class/cohort — { id, name, teacher, reg, note, students[] }; reg = students.length
 // placements: where a class meets — { id, classId, day, start, end, rooms: ["2","3"] }
 //             rooms is usually one room; several rooms = a combined classroom, and the
 //             class shows on the calendar in every combined room's column
@@ -1003,12 +1004,15 @@ function normalizeV2(raw) {
     if (w) hours[d] = w;
   });
 
-  const catalog = (raw.catalog || []).map(({ cap, students, ...k }) => ({
-    ...k,
-    reg: Math.max(0, parseInt(k.reg, 10) || 0),
-    note: k.note || "",
-    students: normalizeStudentList(students),
-  }));
+  const catalog = (raw.catalog || []).map(({ cap, students, ...k }) => {
+    const roster = normalizeStudentList(students);
+    return {
+      ...k,
+      reg: roster.length,
+      note: k.note || "",
+      students: roster,
+    };
+  });
   const classIds = new Set(catalog.map((k) => k.id));
 
   const placements = [];
@@ -1169,7 +1173,7 @@ const defaultData = () => migrateV1toV2(JSON.parse(JSON.stringify(LIVE_V1_SEED))
 function clearScheduleAndCounts(data) {
   return {
     ...data,
-    catalog: (data.catalog || []).map((k) => ({ ...k, reg: 0 })),
+    catalog: (data.catalog || []).map((k) => ({ ...k, reg: regFromRoster(k.students) })),
     placements: [],
   };
 }
@@ -2225,23 +2229,15 @@ export default function ClassroomScheduler() {
     setResize({ plId: p.id, end: p.end });
   };
 
-  // ── Signed-up count stepper (shared roster: updates every placement of the class) ──
-  const bump = (classId, delta) => {
-    persist((d) => ({
-      ...d,
-      catalog: d.catalog.map((k) =>
-        k.id === classId ? { ...k, reg: Math.max(0, (k.reg || 0) + delta) } : k
-      ),
-    }));
-  };
-
   // ── Save class (add / edit) — form fields plus its full meeting-time list ──
   const saveClass = (form, rows) => {
     let nid = data.nextId || 1000;
     const classId = editing.isNew ? "k" + nid++ : editing.classId;
+    const roster = normalizeStudentList(form.students);
+    const entry = { ...form, students: roster, reg: roster.length };
     const newCatalog = editing.isNew
-      ? [...catalog, { id: classId, ...form }]
-      : catalog.map((k) => (k.id === classId ? { ...k, ...form } : k));
+      ? [...catalog, { id: classId, ...entry }]
+      : catalog.map((k) => (k.id === classId ? { ...k, ...entry } : k));
     const others = placements.filter((p) => p.classId !== classId);
     const mine = rows.map((r) => ({
       id: r.id || "p" + nid++,
@@ -2401,7 +2397,10 @@ export default function ClassroomScheduler() {
         students: (k.students || []).filter((s) => studentKey(s) !== studentKey(oldName)),
       }));
     });
-    nc = nc.map((k) => ({ ...k, students: normalizeStudentList(k.students) }));
+    nc = nc.map((k) => {
+      const students = normalizeStudentList(k.students);
+      return { ...k, students, reg: students.length };
+    });
 
     // Cascade rename/remove into attendance / quiz scores / report comments.
     const renameByKey = {};
@@ -2586,16 +2585,10 @@ export default function ClassroomScheduler() {
           )}
           {h >= regThreshold && (
             <div style={{ minWidth: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: compact ? 1 : 3, minWidth: 0 }}>
-                {!planReadOnly && (
-                  <button onClick={(e) => { e.stopPropagation(); bump(cls.id, -1); }} style={compact ? stepBtnCompact : stepBtn}>−</button>
-                )}
-                <span style={{ fontSize: compact ? 10 : 11, fontWeight: 700, color: col.text, minWidth: 0, flex: 1, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minWidth: 0 }}>
+                <span style={{ fontSize: compact ? 10 : 11, fontWeight: 700, color: col.text, minWidth: 0, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden" }} title="Enrollment = students on class roster">
                   {cls.reg}/{cap}{cls.reg >= cap && cap > 0 ? " · FULL" : ""}
                 </span>
-                {!planReadOnly && (
-                  <button onClick={(e) => { e.stopPropagation(); bump(cls.id, +1); }} style={compact ? stepBtnCompact : stepBtn}>＋</button>
-                )}
               </div>
               <div style={{ height: 4, background: "#e2e8f0", borderRadius: 2, marginTop: 3, overflow: "hidden" }}>
                 <div style={{ width: `${pct}%`, height: "100%", background: col.bar, borderRadius: 2, transition: "width .25s" }} />
@@ -3170,7 +3163,6 @@ export default function ClassroomScheduler() {
                 rooms={rooms}
                 idx={idx}
                 planReadOnly={planReadOnly}
-                onBumpReg={bump}
                 onMoveClass={applyByClassMoves}
                 onFlash={flashMsg}
                 onEditClass={(classId, placementId) => setEditing({ isNew: false, classId, placementId })}
@@ -3550,9 +3542,9 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
   const c = cls || {};
   const [name, setName] = useState(c.name || "");
   const [teacher, setTeacher] = useState(c.teacher || "");
-  const [reg, setReg] = useState(c.reg ?? 0);
   const [note, setNote] = useState(c.note || "");
   const [studentsText, setStudentsText] = useState((c.students || []).join("\n"));
+  const rosterCount = useMemo(() => normalizeStudentList(studentsText.split("\n")).length, [studentsText]);
   const [rows, setRows] = useState(initialRows); // meeting times: {id?, day, start, end, rooms: []}
   const [formError, setFormError] = useState("");
   const [errorRow, setErrorRow] = useState(null);
@@ -3602,7 +3594,7 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
       {
         name: name.trim(),
         teacher: teacher.trim(),
-        reg: Math.max(0, parseInt(reg, 10) || 0),
+        reg: roster.length,
         note: note.trim(),
         students: roster,
       },
@@ -3712,8 +3704,10 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
             <option value="__new__">＋ Add new teacher…</option>
           </select>
         </Field>
-        <Field label="Signed up" style={{ flex: 1, minWidth: 90 }}>
-          <input style={inputStyle} type="number" min="0" value={reg} onChange={(e) => setReg(e.target.value)} />
+        <Field label="Enrolled" style={{ flex: 1, minWidth: 90 }}>
+          <div style={{ ...inputStyle, background: "#f8fafc", color: "#123c3a", fontWeight: 700, display: "flex", alignItems: "center" }}>
+            {rosterCount}
+          </div>
         </Field>
       </div>
       <Field label="Note (optional)">
@@ -3728,7 +3722,7 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
         />
       </Field>
       <p style={{ margin: "-6px 0 10px", fontSize: 11, color: "#94a3b8" }}>
-        Names appear on the 🎓 By Student tab. Signed up count stays separate from roster size.
+        Names appear on the 🎓 By Student tab. Enrolled count updates automatically from this list.
       </p>
 
       <div style={{ margin: "6px 0 8px", fontSize: 13, color: "#475569", fontWeight: 600 }}>
@@ -4326,7 +4320,7 @@ function WeekOverviewView({ days, hours, rooms, placements, idx, planReadOnly, o
 const BY_CLASS_PX_PER_MIN = 1.25;
 const BY_CLASS_ROOM_MIN_W = 148;
 
-function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planReadOnly, onBumpReg, onMoveClass, onFlash, onEditClass }) {
+function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planReadOnly, onMoveClass, onFlash, onEditClass }) {
   const roomOrder = rooms.map((r) => r.id);
   const roomCap = (id) => idx?.roomCapById?.get(id) ?? 12;
   const capOfRooms = (list) => (list || []).reduce((s, id) => s + roomCap(id), 0);
@@ -4666,28 +4660,10 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
         </div>
         {h >= regThreshold && (
           <div style={{ flexShrink: 0, marginTop: 2, minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: laneCount > 1 ? 1 : 3, minWidth: 0 }}>
-              {!planReadOnly && (
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); onBumpReg(cls.id, -1); }}
-                  style={laneCount > 1 ? stepBtnCompact : stepBtn}
-                >
-                  −
-                </button>
-              )}
-              <span style={{ fontSize: laneCount > 1 ? 10 : 11, fontWeight: 700, color: col.text, minWidth: 0, flex: 1, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minWidth: 0 }}>
+              <span style={{ fontSize: laneCount > 1 ? 10 : 11, fontWeight: 700, color: col.text, minWidth: 0, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden" }} title="Enrollment = students on class roster">
                 {cls.reg}/{cap}{cls.reg >= cap && cap > 0 ? " · FULL" : ""}
               </span>
-              {!planReadOnly && (
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); onBumpReg(cls.id, +1); }}
-                  style={laneCount > 1 ? stepBtnCompact : stepBtn}
-                >
-                  ＋
-                </button>
-              )}
             </div>
             <div style={{ height: 4, background: "#e2e8f0", borderRadius: 2, marginTop: 3, overflow: "hidden" }}>
               <div style={{ width: `${pct}%`, height: "100%", background: col.bar, borderRadius: 2, transition: "width .25s" }} />
