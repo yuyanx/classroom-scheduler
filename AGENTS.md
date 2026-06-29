@@ -15,7 +15,7 @@ This file contains the practical rules and context you need to make changes that
                   #          --define:process.env.NODE_ENV='"production"'
   ```
 - Commit **both** the source change **and** the updated `app.js` together.
-- Test: `npm run test:ci` (82 tests + build). Open `index.html` or `npx serve .`.
+- Test: `npm run test:ci` (86 tests + build). Open `index.html` or `npx serve .`.
 - Work on a feature branch. Push and let the user decide on merging/PR. **Do not push `main` unless asked.**
 
 ## Branches (as of 2026-06-17)
@@ -65,6 +65,7 @@ Central hooks in `App.jsx`: `persist`, `flushRemoteSave`, `switchPlan`, `planApi
 - **Roster**: column click-sort, drag-reorder headers, row click → class editor.
 - **Resize test** on By Class / By Teacher (narrow window, horizontal scroll, uniform pill heights).
 - **v3 plans**: switch plans, new plan, delete plan (not Default), archive + restore, Clear schedule vs Reset Data.
+- **Save guards**: Default (id=1) cannot sync with zero classes; each remote save auto-backs up previous server copy to hidden row `10000 + planId` (`scripts/restore-auto-backup.mjs`).
 - **Course management**: set term → Classbook shows dated sessions; record attendance/homework + lesson content, then **reload** and confirm it persists (proves `normalizeV2` carry-through). Grades: add quiz, enter scores, check averages + CSV. Report Cards: aggregation, print, CSV. Mobile (`preview_resize`): Classbook roster becomes cards. Rename/remove a student + delete a class → records cascade.
 
 ## Things Agents Frequently Get Wrong

@@ -20,6 +20,8 @@ import {
   resolvePlanKind,
   isPlanReadOnly,
   isProtectedPlan,
+  shouldBlockEmptyDefaultSave,
+  EMPTY_DEFAULT_SAVE_ERROR,
   getActivePlanId,
   setActivePlanId as storeActivePlanId,
   readScheduleCache,
@@ -1414,25 +1416,30 @@ export default function ClassroomScheduler() {
   const flushRemoteSave = useCallback(async (payload) => {
     if (!REMOTE_ENABLED || isPlanReadOnly(planMetaRef.current.kind)) return;
     const planId = activePlanIdRef.current;
-    const packed = packRowData(payload, planMetaRef.current);
+    const meta = planMetaRef.current;
     remoteRef.current.pendingSave = true;
     try {
-      const ts = await planApi.remoteSavePlan(planId, packed);
+      const ts = await planApi.executeGuardedRemoteSave({ planId, schedule: payload, meta });
       remoteRef.current.lastSyncedAt = ts || new Date().toISOString();
       remoteRef.current.pendingSave = false;
       remoteRef.current.lastSaveFailed = false;
       markRevisionSaved(remoteRef.current);
       clearTimeout(remoteRef.current.retryTimer);
       writeScheduleCache(planId, payload);
-      setStatus(true, `Saved “${planMetaRef.current.name}” for everyone at ${timeLabel()}`);
+      setStatus(true, `Saved “${meta.name}” for everyone at ${timeLabel()}`);
     } catch (e) {
       remoteRef.current.pendingSave = false;
-      remoteRef.current.lastSaveFailed = true;
-      setStatus(false, "Not saved", e?.message || "Network error");
-      clearTimeout(remoteRef.current.retryTimer);
-      remoteRef.current.retryTimer = setTimeout(() => {
-        if (!remoteRef.current.pendingSave) flushRemoteSave(dataRef.current);
-      }, 5000);
+      remoteRef.current.lastSaveFailed = e?.code !== EMPTY_DEFAULT_SAVE_ERROR;
+      const msg = e?.code === EMPTY_DEFAULT_SAVE_ERROR
+        ? "Default can't be saved with no classes — restore from ⟲ Auto-backup or Archive."
+        : (e?.message || "Network error");
+      setStatus(false, "Not saved", msg);
+      if (e?.code !== EMPTY_DEFAULT_SAVE_ERROR) {
+        clearTimeout(remoteRef.current.retryTimer);
+        remoteRef.current.retryTimer = setTimeout(() => {
+          if (!remoteRef.current.pendingSave) flushRemoteSave(dataRef.current);
+        }, 5000);
+      }
     }
   }, []);
 
@@ -1690,10 +1697,9 @@ export default function ClassroomScheduler() {
     if (!trimmed) return;
     const planId = activePlanIdRef.current;
     const meta = { ...planMetaRef.current, name: trimmed };
-    const packed = packRowData(dataRef.current, meta);
     try {
       if (REMOTE_ENABLED) {
-        await planApi.remoteSavePlan(planId, packed);
+        await planApi.executeGuardedRemoteSave({ planId, schedule: dataRef.current, meta });
         const list = await planApi.remoteListPlans();
         setPlans(list.map((p) => (p.id === planId ? { ...p, name: trimmed } : p)));
       } else {
@@ -1756,9 +1762,12 @@ export default function ClassroomScheduler() {
             loadPlanIntoState(planId, next, meta, row.updated_at);
             setStatus(true, `Loaded “${meta.name}” at ${timeLabel()}`);
           } else if (planId === 1) {
+            if (shouldBlockEmptyDefaultSave(1, dataRef.current)) {
+              setStatus(false, "Won't publish empty Default — restore from archive first");
+              return;
+            }
             const meta = { name: "Main schedule", kind: PLAN_KIND.LIVE, createdAt: new Date().toISOString() };
-            const packed = packRowData(dataRef.current, meta);
-            const ts = await planApi.remoteSavePlan(1, packed);
+            const ts = await planApi.executeGuardedRemoteSave({ planId: 1, schedule: dataRef.current, meta });
             if (cancelled) return;
             setPlanMeta(meta);
             setPlans([{ id: 1, name: meta.name, kind: meta.kind, updated_at: ts, planVersion: PLAN_VERSION }]);
@@ -1871,8 +1880,7 @@ export default function ClassroomScheduler() {
         remoteRef.current.timer = null;
       }
       if (REMOTE_ENABLED && !isPlanReadOnly(meta.kind)) {
-        const packed = packRowData(payload, meta);
-        planApi.remoteSavePlan(planId, packed, { keepalive: true }).catch(() => {});
+        planApi.executeGuardedRemoteSave({ planId, schedule: payload, meta, saveOpts: { keepalive: true } }).catch(() => {});
       }
     };
     window.addEventListener("online", onOnline);

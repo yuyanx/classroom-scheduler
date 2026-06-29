@@ -610,6 +610,10 @@ the top; `STUDENT_CLASH_TOKENS` stays imported in `App.jsx` for its inline grid 
   lightweight teacher identity (`👤 Sign in`, `premier-current-teacher`, optional PIN). Pure
   helpers + carry-through covered by `tests/classbook.test.mjs` (**82 tests**). Extracted shared
   `src/components/uikit.jsx`; new views live under `src/components/`.
+- 2026-06-26 — **Save guards + auto-backup**: Default (plan id=1) refuses to sync when `catalog` is
+  empty; every remote save first copies the **previous server row** to a hidden backup (`schedule`
+  row id `10000 + planId`, `⟲ Auto-backup · …`, hidden from 📁 menu). Restore:
+  `node scripts/restore-auto-backup.mjs [planId]`.
 
 ---
 

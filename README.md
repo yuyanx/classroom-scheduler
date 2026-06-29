@@ -77,7 +77,7 @@ AGENTS.md               # Condensed rules for AI coding agents
 
 ```bash
 npm install
-npm run test:ci          # 82 tests + production build
+npm run test:ci          # 86 tests + production build
 npx serve . -l 4180      # http://localhost:4180
 ```
 

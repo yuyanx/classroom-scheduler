@@ -94,6 +94,64 @@ export function isProtectedPlan(plan) {
   return plan.id === 1;
 }
 
+/** Hidden Supabase rows: id = AUTO_BACKUP_ROW_OFFSET + planId (one rolling backup per plan). */
+export const AUTO_BACKUP_ROW_OFFSET = 10000;
+export const EMPTY_DEFAULT_SAVE_ERROR = "EMPTY_DEFAULT_BLOCKED";
+
+export function autoBackupRowId(planId) {
+  return AUTO_BACKUP_ROW_OFFSET + planId;
+}
+
+export function isAutoBackupRow(row) {
+  if (!row) return false;
+  if (row.data?.backupMeta?.ofPlanId != null) return true;
+  const name = row.data?.plan?.name || "";
+  return String(name).startsWith("⟲ Auto-backup");
+}
+
+export function scheduleHasClasses(schedule) {
+  return (schedule?.catalog || []).length > 0;
+}
+
+/** Block syncing an empty class list to Default (id=1) — prevents accidental wipe. */
+export function shouldBlockEmptyDefaultSave(planId, schedule) {
+  return planId === 1 && !scheduleHasClasses(schedule);
+}
+
+export function packAutoBackupData(schedule, { ofPlanId, sourceUpdatedAt }) {
+  const stamp = new Date().toISOString();
+  const label = stamp.slice(0, 16).replace("T", " ");
+  return {
+    planVersion: PLAN_VERSION,
+    plan: {
+      kind: PLAN_KIND.ARCHIVE,
+      name: `⟲ Auto-backup · plan ${ofPlanId} · ${label}`,
+      createdAt: stamp,
+    },
+    schedule: JSON.parse(JSON.stringify(schedule)),
+    backupMeta: { ofPlanId, savedAt: stamp, sourceUpdatedAt: sourceUpdatedAt || null },
+  };
+}
+
+/** Load previous server row, auto-backup if it has classes, then save (or throw on empty Default). */
+export async function executeGuardedRemoteSave(api, { planId, schedule, meta, saveOpts = {} }) {
+  if (shouldBlockEmptyDefaultSave(planId, schedule)) {
+    const err = new Error("Default plan cannot be saved with no classes.");
+    err.code = EMPTY_DEFAULT_SAVE_ERROR;
+    throw err;
+  }
+  try {
+    const previous = await api.remoteLoadPlan(planId);
+    if (previous?.data && scheduleHasClasses(unpackRowData(previous.data).schedule)) {
+      await api.remoteSaveAutoBackup(planId, previous.data, previous.updated_at);
+    }
+  } catch (e) {
+    if (e?.code === EMPTY_DEFAULT_SAVE_ERROR) throw e;
+    /* backup is best-effort — proceed with save */
+  }
+  return api.remoteSavePlan(planId, packRowData(schedule, meta), saveOpts);
+}
+
 export function getActivePlanId() {
   try {
     const raw = window.localStorage.getItem(ACTIVE_PLAN_KEY);
@@ -274,7 +332,7 @@ export function createRemotePlanApi(config) {
     });
     if (!res.ok) throw new Error(`Could not list plans (HTTP ${res.status})`);
     const rows = await res.json();
-    return rows.map(planRowToMeta);
+    return rows.filter((r) => !isAutoBackupRow(r)).map(planRowToMeta);
   }
 
   async function remoteLoadPlan(planId) {
@@ -322,6 +380,19 @@ export function createRemotePlanApi(config) {
     if (!res.ok) throw new Error(`Could not delete plan ${planId} (HTTP ${res.status})`);
   }
 
+  async function remoteSaveAutoBackup(planId, previousPacked, sourceUpdatedAt) {
+    const u = unpackRowData(previousPacked);
+    if (!scheduleHasClasses(u.schedule)) return null;
+    const backupId = autoBackupRowId(planId);
+    const packed = packAutoBackupData(u.schedule, { ofPlanId: planId, sourceUpdatedAt });
+    await remoteSavePlan(backupId, packed);
+    return backupId;
+  }
+
+  async function remoteLoadAutoBackup(planId) {
+    return remoteLoadPlan(autoBackupRowId(planId));
+  }
+
   return {
     remoteListPlans,
     remoteLoadPlan,
@@ -329,5 +400,11 @@ export function createRemotePlanApi(config) {
     remoteSavePlan,
     remoteCreatePlan,
     remoteDeletePlan,
+    remoteSaveAutoBackup,
+    remoteLoadAutoBackup,
+    executeGuardedRemoteSave: (args) => executeGuardedRemoteSave(
+      { remoteLoadPlan, remoteSaveAutoBackup, remoteSavePlan },
+      args,
+    ),
   };
 }

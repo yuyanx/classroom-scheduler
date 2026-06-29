@@ -18,6 +18,13 @@ import {
   renameInLocalStore,
   deleteFromLocalStore,
   pickFallbackPlanId,
+  autoBackupRowId,
+  isAutoBackupRow,
+  scheduleHasClasses,
+  shouldBlockEmptyDefaultSave,
+  packAutoBackupData,
+  EMPTY_DEFAULT_SAVE_ERROR,
+  executeGuardedRemoteSave,
 } from "../src/planService.js";
 
 const sampleSchedule = {
@@ -108,6 +115,47 @@ test("local plan store create, list, rename, delete", () => {
   assert.equal(listPlansFromLocalStore(deleted).length, 1);
   assert.throws(() => deleteFromLocalStore(deleted, 1), /last plan/);
   assert.equal(pickFallbackPlanId(listed, 2), 1);
+});
+
+test("shouldBlockEmptyDefaultSave only for Default with no classes", () => {
+  const empty = { ...sampleSchedule, catalog: [] };
+  assert.equal(shouldBlockEmptyDefaultSave(1, empty), true);
+  assert.equal(shouldBlockEmptyDefaultSave(1, sampleSchedule), false);
+  assert.equal(shouldBlockEmptyDefaultSave(999, empty), false);
+});
+
+test("autoBackupRowId and isAutoBackupRow", () => {
+  assert.equal(autoBackupRowId(1), 10001);
+  assert.equal(isAutoBackupRow({ id: 10001, data: packAutoBackupData(sampleSchedule, { ofPlanId: 1 }) }), true);
+  assert.equal(isAutoBackupRow({ id: 1, data: packRowData(sampleSchedule, { name: "Main", kind: PLAN_KIND.LIVE }) }), false);
+});
+
+test("executeGuardedRemoteSave blocks empty Default", async () => {
+  const api = {
+    remoteLoadPlan: async () => null,
+    remoteSaveAutoBackup: async () => null,
+    remoteSavePlan: async () => "2026-01-01",
+  };
+  await assert.rejects(
+    () => executeGuardedRemoteSave(api, { planId: 1, schedule: { ...sampleSchedule, catalog: [] }, meta: { name: "Main", kind: PLAN_KIND.LIVE } }),
+    (e) => e.code === EMPTY_DEFAULT_SAVE_ERROR,
+  );
+});
+
+test("executeGuardedRemoteSave backups then saves", async () => {
+  let backed = false;
+  let saved = false;
+  const prev = packRowData(sampleSchedule, { name: "Main", kind: PLAN_KIND.LIVE });
+  const api = {
+    remoteLoadPlan: async () => ({ data: prev, updated_at: "2026-06-01" }),
+    remoteSaveAutoBackup: async () => { backed = true; },
+    remoteSavePlan: async () => { saved = true; return "2026-06-02"; },
+  };
+  const next = { ...sampleSchedule, catalog: [{ ...sampleSchedule.catalog[0], reg: 6 }] };
+  const ts = await executeGuardedRemoteSave(api, { planId: 1, schedule: next, meta: { name: "Main", kind: PLAN_KIND.LIVE } });
+  assert.equal(backed, true);
+  assert.equal(saved, true);
+  assert.equal(ts, "2026-06-02");
 });
 
 test("defaultPlanName, defaultRestoredPlanName, and kindLabel", () => {
