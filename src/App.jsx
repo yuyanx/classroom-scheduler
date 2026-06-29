@@ -1939,6 +1939,7 @@ export default function ClassroomScheduler() {
   const capOfRooms = (list) => list.reduce((s, id) => s + roomCap(id), 0);
 
   const classOfId = (id) => idx.catalogById.get(id);
+  const enrolledOf = (cls) => regFromRoster(cls?.students);
   const placementsOf = (classId) => idx.placementsByClassId.get(classId) || [];
 
   const roomConflictsFor = (cand, opts = {}) => roomConflictsIndexed(idx, cand, opts);
@@ -1961,7 +1962,7 @@ export default function ClassroomScheduler() {
       `${cls?.name || "Class"} (${DAY_SHORT[placement.day]} ${fmtRange(placement.start, placement.end)} · Rm ${placement.rooms.join("+")})`
     ))];
 
-  const totalReg = useMemo(() => catalog.reduce((s, k) => s + (k.reg || 0), 0), [catalog]);
+  const totalReg = useMemo(() => catalog.reduce((s, k) => s + enrolledOf(k), 0), [catalog]);
   const noTeacherCount = useMemo(() => catalog.filter((k) => !teacherKey(k.teacher)).length, [catalog]);
   const rosterRowCount = useMemo(
     () => catalog.reduce((n, k) => n + Math.max(1, (k.students || []).length), 0),
@@ -1976,7 +1977,7 @@ export default function ClassroomScheduler() {
     [idx, isDayTab, tab]
   );
   const tabReg = useMemo(
-    () => tabPls.reduce((s, p) => s + ((classOfId(p.classId) || {}).reg || 0), 0),
+    () => tabPls.reduce((s, p) => s + enrolledOf(classOfId(p.classId)), 0),
     [tabPls, idx]
   );
   const tabBlockMeta = useMemo(
@@ -2485,8 +2486,9 @@ export default function ClassroomScheduler() {
     const { lane, lanes } = laneInfo || { lane: 0, lanes: 1 };
     const combined = p.rooms.length > 1;
     const cap = capOfRooms(p.rooms);
-    const col = ratioColor(cls.reg, cap);
-    const pct = cap ? Math.min(100, Math.round((cls.reg / cap) * 100)) : 0;
+    const enrolled = enrolledOf(cls);
+    const col = ratioColor(enrolled, cap);
+    const pct = cap ? Math.min(100, Math.round((enrolled / cap) * 100)) : 0;
     const cached = resize?.plId === p.id ? null : tabBlockMeta.get(p.id);
     const roomClashes = cached
       ? cached.roomClashes
@@ -2587,7 +2589,7 @@ export default function ClassroomScheduler() {
             <div style={{ minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minWidth: 0 }}>
                 <span style={{ fontSize: compact ? 10 : 11, fontWeight: 700, color: col.text, minWidth: 0, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden" }} title="Enrollment = students on class roster">
-                  {cls.reg}/{cap}{cls.reg >= cap && cap > 0 ? " · FULL" : ""}
+                  {enrolled}/{cap}{enrolled >= cap && cap > 0 ? " · FULL" : ""}
                 </span>
               </div>
               <div style={{ height: 4, background: "#e2e8f0", borderRadius: 2, marginTop: 3, overflow: "hidden" }}>
@@ -3006,7 +3008,7 @@ export default function ClassroomScheduler() {
                       </div>
                       <div style={{ fontSize: 12, color: "#475569" }}>
                         {k.teacher || <i style={{ color: "#b45309" }}>Teacher TBD</i>}
-                        <b style={{ marginLeft: 8, color: "#123c3a" }}>{k.reg} signed up</b>
+                        <b style={{ marginLeft: 8, color: "#123c3a" }}>{regFromRoster(k.students)} enrolled</b>
                       </div>
                       {teacherConflicts.length > 0 && (
                         <div
@@ -3976,8 +3978,9 @@ function WeekOverviewClassDetailCard({ classId, placementId, placements, rooms, 
   const primaryRoom = primaryRoomForPlacement(placement.rooms, roomOrder);
   const rc = roomOverviewColor(primaryRoom, roomOrder);
   const cap = placement.rooms.reduce((s, id) => s + (idx.roomCapById.get(id) ?? 12), 0);
-  const col = ratioColor(cls.reg, cap);
-  const pct = cap ? Math.min(100, Math.round((cls.reg / cap) * 100)) : 0;
+  const enrolled = regFromRoster(cls.students);
+  const col = ratioColor(enrolled, cap);
+  const pct = cap ? Math.min(100, Math.round((enrolled / cap) * 100)) : 0;
   const groups = classScheduleGroups(placements, classId);
   const rmLabel = overviewRoomLabel(placement.rooms);
 
@@ -4027,7 +4030,7 @@ function WeekOverviewClassDetailCard({ classId, placementId, placements, rooms, 
         </div>
         <div>
           <div style={{ ...metaStyle, fontWeight: 700, marginBottom: 3 }}>
-            Enrolled {cls.reg}/{cap}{cls.reg >= cap && cap > 0 ? " · FULL" : ""}
+            Enrolled {enrolled}/{cap}{enrolled >= cap && cap > 0 ? " · FULL" : ""}
           </div>
           <div style={{ height: 5, background: "rgba(255,255,255,.55)", borderRadius: 3, overflow: "hidden" }}>
             <div style={{ width: `${pct}%`, height: "100%", background: col.bar, borderRadius: 3 }} />
@@ -4567,8 +4570,9 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
     const top = (start - gridStart) * BY_CLASS_PX_PER_MIN;
     const h = Math.max(14, (end - start) * BY_CLASS_PX_PER_MIN - 6);
     const cap = capOfRooms(blockRooms);
-    const col = ratioColor(cls.reg, cap);
-    const pct = cap ? Math.min(100, Math.round((cls.reg / cap) * 100)) : 0;
+    const enrolled = regFromRoster(cls.students);
+    const col = ratioColor(enrolled, cap);
+    const pct = cap ? Math.min(100, Math.round((enrolled / cap) * 100)) : 0;
     const rc = roomOverviewColor(colorRoomId, roomOrder);
     const { roomClash, teacherClash } = classClash(cls);
     const singleGroup = groups.length === 1;
@@ -4662,7 +4666,7 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
           <div style={{ flexShrink: 0, marginTop: 2, minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minWidth: 0 }}>
               <span style={{ fontSize: laneCount > 1 ? 10 : 11, fontWeight: 700, color: col.text, minWidth: 0, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden" }} title="Enrollment = students on class roster">
-                {cls.reg}/{cap}{cls.reg >= cap && cap > 0 ? " · FULL" : ""}
+                {enrolled}/{cap}{enrolled >= cap && cap > 0 ? " · FULL" : ""}
               </span>
             </div>
             <div style={{ height: 4, background: "#e2e8f0", borderRadius: 2, marginTop: 3, overflow: "hidden" }}>
