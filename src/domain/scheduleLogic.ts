@@ -34,6 +34,25 @@ export const normalizeStudentList = (raw: unknown): string[] => {
 /** Signed-up count follows the class roster (deduped name lines). */
 export const regFromRoster = (raw: unknown) => normalizeStudentList(raw).length;
 
+/** Group classes vs private lessons in the catalog. */
+export const COURSE_KIND = { CLASS: "class", PRIVATE: "private" } as const;
+export const CALENDAR_SHOW = { BOTH: "both", CLASS: "class", PRIVATE: "private" } as const;
+
+export const cleanCourseKind = (raw: unknown) =>
+  raw === COURSE_KIND.PRIVATE ? COURSE_KIND.PRIVATE : COURSE_KIND.CLASS;
+
+export const courseKindOf = (cls?: { courseKind?: string }) =>
+  cleanCourseKind(cls?.courseKind);
+
+export const matchesCalendarShow = (
+  cls: { courseKind?: string } | null | undefined,
+  show: string,
+) => {
+  if (show === CALENDAR_SHOW.BOTH) return true;
+  if (!cls) return false;
+  return courseKindOf(cls) === show;
+};
+
 export const overlaps = (a: { day: string; start: number; end: number }, b: { day: string; start: number; end: number }) =>
   a.day === b.day && a.start < b.end && b.start < a.end;
 

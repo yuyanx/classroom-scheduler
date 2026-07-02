@@ -12,6 +12,11 @@ import {
   normalizeStudentList,
   regFromRoster,
   studentKey,
+  cleanCourseKind,
+  courseKindOf,
+  matchesCalendarShow,
+  COURSE_KIND,
+  CALENDAR_SHOW,
 } from "../dist/test-logic.mjs";
 
 const tinyV1 = {
@@ -187,4 +192,37 @@ test("normalizeStudentList dedupes and sorts", () => {
 test("regFromRoster counts deduped roster lines", () => {
   assert.equal(regFromRoster(["Alex", "alex", "Jordan"]), 2);
   assert.equal(regFromRoster([]), 0);
+});
+
+test("normalizeV2 defaults catalog courseKind to class", () => {
+  const v2 = normalizeV2({
+    version: 2,
+    days: ["mon"],
+    hours: { default: [540, 1020] },
+    rooms: [{ id: "1", cap: 12 }],
+    catalog: [{ id: "k1", name: "Bio", teacher: "A", reg: 0, note: "" }],
+    placements: [],
+  });
+  assert.equal(v2.catalog[0].courseKind, COURSE_KIND.CLASS);
+});
+
+test("normalizeV2 preserves private courseKind", () => {
+  const v2 = normalizeV2({
+    version: 2,
+    days: ["mon"],
+    hours: { default: [540, 1020] },
+    rooms: [{ id: "1", cap: 12 }],
+    catalog: [{ id: "k9", name: "Piano", teacher: "Linda", reg: 1, note: "", courseKind: "private", students: ["Sam"] }],
+    placements: [],
+  });
+  assert.equal(v2.catalog[0].courseKind, COURSE_KIND.PRIVATE);
+  assert.equal(courseKindOf(v2.catalog[0]), COURSE_KIND.PRIVATE);
+});
+
+test("matchesCalendarShow filters by course kind", () => {
+  const cls = { courseKind: COURSE_KIND.PRIVATE };
+  assert.equal(matchesCalendarShow(cls, CALENDAR_SHOW.BOTH), true);
+  assert.equal(matchesCalendarShow(cls, CALENDAR_SHOW.PRIVATE), true);
+  assert.equal(matchesCalendarShow(cls, CALENDAR_SHOW.CLASS), false);
+  assert.equal(cleanCourseKind("bogus"), COURSE_KIND.CLASS);
 });

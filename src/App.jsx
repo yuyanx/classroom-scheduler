@@ -68,6 +68,11 @@ import {
   studentKey,
   normalizeStudentList,
   regFromRoster,
+  COURSE_KIND,
+  CALENDAR_SHOW,
+  courseKindOf,
+  cleanCourseKind,
+  matchesCalendarShow,
   isISODate,
 } from "./domain/scheduleLogic.ts";
 import {
@@ -859,7 +864,9 @@ const LIVE_SEED_TAG = "prod-2026-06-12T21:23";
 // days:       which days the program runs — ordered subset of ALL_DAYS
 // hours:      { default: [startMin, endMin], <day>: [start, end] } scheduling window per day
 // rooms:      [{ id, cap }] — one plain list for the whole week
-// catalog:    one entry per class/cohort — { id, name, teacher, reg, note, students[] }; reg = students.length
+// catalog:    one entry per class/cohort — { id, name, teacher, reg, note, students[], courseKind? }
+//             courseKind "class" (default) | "private" — private lessons use the Private Library
+//             reg = students.length
 // placements: where a class meets — { id, classId, day, start, end, rooms: ["2","3"] }
 //             rooms is usually one room; several rooms = a combined classroom, and the
 //             class shows on the calendar in every combined room's column
@@ -1004,13 +1011,14 @@ function normalizeV2(raw) {
     if (w) hours[d] = w;
   });
 
-  const catalog = (raw.catalog || []).map(({ cap, students, ...k }) => {
+  const catalog = (raw.catalog || []).map(({ cap, students, courseKind, ...k }) => {
     const roster = normalizeStudentList(students);
     return {
       ...k,
       reg: roster.length,
       note: k.note || "",
       students: roster,
+      courseKind: cleanCourseKind(courseKind),
     };
   });
   const classIds = new Set(catalog.map((k) => k.id));
@@ -1338,6 +1346,19 @@ export default function ClassroomScheduler() {
       return v;
     });
   const [libQuery, setLibQuery] = useState("");
+  const [privateLibQuery, setPrivateLibQuery] = useState("");
+  const [calendarShow, setCalendarShowState] = useState(() => {
+    try {
+      const v = window.localStorage.getItem("premier-calendar-show");
+      return v === CALENDAR_SHOW.CLASS || v === CALENDAR_SHOW.PRIVATE ? v : CALENDAR_SHOW.BOTH;
+    } catch (e) {
+      return CALENDAR_SHOW.BOTH;
+    }
+  });
+  const setCalendarShow = (v) => {
+    setCalendarShowState(v);
+    try { window.localStorage.setItem("premier-calendar-show", v); } catch (e) { /* ignore */ }
+  };
   const [conflictPanelOpen, setConflictPanelOpen] = useState(false);
   const [undoToast, setUndoToast] = useState(null);
   const undoSnapshot = useRef(null);
@@ -1973,8 +1994,8 @@ export default function ClassroomScheduler() {
   const isDayTab = days.includes(tab);
   const winCfg = (isDayTab && hours[tab]) || hours.default;
   const tabPls = useMemo(
-    () => (isDayTab ? (idx.placementsByDay.get(tab) || []) : []),
-    [idx, isDayTab, tab]
+    () => (isDayTab ? (idx.placementsByDay.get(tab) || []).filter((p) => matchesCalendarShow(classOfId(p.classId), calendarShow)) : []),
+    [idx, isDayTab, tab, calendarShow]
   );
   const tabReg = useMemo(
     () => tabPls.reduce((s, p) => s + enrolledOf(classOfId(p.classId)), 0),
@@ -2152,7 +2173,13 @@ export default function ClassroomScheduler() {
       const rect = e.currentTarget.getBoundingClientRect();
       let start = gridStart + Math.round((e.clientY - rect.top) / PX_PER_MIN / SNAP) * SNAP;
       start = Math.max(gridStart, Math.min(start, gridEnd - SNAP));
-      setEditing({ isNew: true, day: tab, start, room: roomId });
+      setEditing({
+        isNew: true,
+        day: tab,
+        start,
+        room: roomId,
+        courseKind: calendarShow === CALENDAR_SHOW.PRIVATE ? COURSE_KIND.PRIVATE : COURSE_KIND.CLASS,
+      });
     },
   });
 
@@ -2235,7 +2262,10 @@ export default function ClassroomScheduler() {
     let nid = data.nextId || 1000;
     const classId = editing.isNew ? "k" + nid++ : editing.classId;
     const roster = normalizeStudentList(form.students);
-    const entry = { ...form, students: roster, reg: roster.length };
+    const kind = editing.isNew
+      ? cleanCourseKind(editing.courseKind)
+      : courseKindOf(classOfId(classId));
+    const entry = { ...form, students: roster, reg: roster.length, courseKind: kind };
     const newCatalog = editing.isNew
       ? [...catalog, { id: classId, ...entry }]
       : catalog.map((k) => (k.id === classId ? { ...k, ...entry } : k));
@@ -2301,7 +2331,7 @@ export default function ClassroomScheduler() {
       const nid = d.nextId || 1000;
       return {
         ...d,
-        catalog: [...d.catalog, { ...k, id: "k" + nid, name: k.name + " (copy)" }],
+        catalog: [...d.catalog, { ...k, id: "k" + nid, name: k.name + " (copy)", courseKind: courseKindOf(k) }],
         nextId: nid + 1,
       };
     });
@@ -2465,15 +2495,24 @@ export default function ClassroomScheduler() {
 
   // ── Library list (filtered; same sort as By Class: unscheduled first, letter, earliest time) ──
   const q = libQuery.trim().toLowerCase();
-  const libList = useMemo(() => {
-    const filtered = catalog.filter(
+  const classCatalog = useMemo(() => catalog.filter((k) => courseKindOf(k) === COURSE_KIND.CLASS), [catalog]);
+  const privateCatalog = useMemo(() => catalog.filter((k) => courseKindOf(k) === COURSE_KIND.PRIVATE), [catalog]);
+  const filterLib = (list, query) => {
+    const q = query.trim().toLowerCase();
+    const filtered = list.filter(
       (k) => !q || k.name.toLowerCase().includes(q) || (k.teacher || "").toLowerCase().includes(q)
     );
     return sortCatalogForByClassView(filtered, placements);
-  }, [catalog, q, placements]);
+  };
+  const libList = useMemo(() => filterLib(classCatalog, libQuery), [classCatalog, libQuery, placements]);
+  const privateLibList = useMemo(() => filterLib(privateCatalog, privateLibQuery), [privateCatalog, privateLibQuery, placements]);
   const unscheduledCount = useMemo(
-    () => catalog.filter((k) => !idx.scheduledClassIds.has(k.id)).length,
-    [catalog, idx.scheduledClassIds]
+    () => classCatalog.filter((k) => !idx.scheduledClassIds.has(k.id)).length,
+    [classCatalog, idx.scheduledClassIds]
+  );
+  const privateUnscheduledCount = useMemo(
+    () => privateCatalog.filter((k) => !idx.scheduledClassIds.has(k.id)).length,
+    [privateCatalog, idx.scheduledClassIds]
   );
 
   // ── One scheduled card on the day grid (layout matches By Class tab; enrollment colors) ──
@@ -2487,6 +2526,7 @@ export default function ClassroomScheduler() {
     const combined = p.rooms.length > 1;
     const cap = capOfRooms(p.rooms);
     const enrolled = enrolledOf(cls);
+    const isPrivate = courseKindOf(cls) === COURSE_KIND.PRIVATE;
     const col = ratioColor(enrolled, cap);
     const pct = cap ? Math.min(100, Math.round((enrolled / cap) * 100)) : 0;
     const cached = resize?.plId === p.id ? null : tabBlockMeta.get(p.id);
@@ -2547,13 +2587,15 @@ export default function ClassroomScheduler() {
           width: `calc(${100 / lanes}% - 8px)`,
           boxSizing: "border-box",
           zIndex: 1,
-          background: col.bg,
-          border: hasRoomClash ? "2px solid #dc2626" : hasTeacherConflict ? "2px solid #d97706" : "1px solid #d6dad4",
+          background: isPrivate ? "#faf5ff" : col.bg,
+          border: hasRoomClash ? "2px solid #dc2626" : hasTeacherConflict ? "2px solid #d97706" : isPrivate ? "1px solid #a78bfa" : "1px solid #d6dad4",
           boxShadow: hasRoomClash
             ? "0 0 0 3px rgba(220,38,38,.12)"
             : hasTeacherConflict
               ? "0 0 0 3px rgba(217,119,6,.12)"
-              : "none",
+              : isPrivate
+                ? "0 0 0 2px rgba(124,58,237,.1)"
+                : "none",
           borderRadius: 8,
           padding: compact ? "3px 5px 2px" : "4px 7px 2px",
           overflow: "hidden",
@@ -2566,6 +2608,7 @@ export default function ClassroomScheduler() {
       >
         <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column", gap: compact ? 1 : 2 }}>
           <div style={{ fontWeight: 700, fontSize: compact ? 11 : 12.5, lineHeight: 1.2, overflowWrap: "anywhere", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: compact ? 1 : 2, WebkitBoxOrient: "vertical" }}>
+            {isPrivate && <span style={{ fontSize: 9, fontWeight: 800, color: "#6d28d9", marginRight: 4 }}>PVT</span>}
             {cls.name}{(hasRoomClash || hasTeacherConflict) ? " ⚠" : ""}
           </div>
           {h >= 32 && (
@@ -2892,13 +2935,13 @@ export default function ClassroomScheduler() {
       )}
 
       <div style={{ width: "100%", boxSizing: "border-box", padding: "16px 12px 40px", display: "flex", gap: 12, alignItems: "flex-start" }}>
-        {/* Class Library */}
-        <aside style={{ display: ["classbook", "grades", "reports"].includes(tab) ? "none" : undefined, flex: `0 0 ${libOpen ? 240 : 46}px`, width: libOpen ? 240 : 46, position: "sticky", top: 16, alignSelf: "flex-start" }}>
+        {/* Class + Private libraries */}
+        <aside style={{ display: ["classbook", "grades", "reports"].includes(tab) ? "none" : undefined, flex: `0 0 ${libOpen ? 260 : 46}px`, width: libOpen ? 260 : 46, position: "sticky", top: 16, alignSelf: "flex-start" }}>
           {!libOpen && (
             <div
               {...trayHandlers}
               onClick={() => setLibOpen(true)}
-              title="Show the Class Library"
+              title="Show libraries"
               style={{
                 background: dragOver === "tray" ? "#fff7ed" : "#fff",
                 border: "1px solid #d6dad4", borderRadius: 10,
@@ -2908,133 +2951,91 @@ export default function ClassroomScheduler() {
               }}
             >
               <span style={{ fontSize: 14, color: "#123c3a" }}>▸</span>
-              <span style={{ writingMode: "vertical-rl", fontSize: 13, fontWeight: 700, color: "#123c3a", letterSpacing: "0.03em" }}>
-                Class Library
+              <span style={{ writingMode: "vertical-rl", fontSize: 12, fontWeight: 700, color: "#123c3a", letterSpacing: "0.03em" }}>
+                Libraries
               </span>
-              <span style={{ fontSize: 11, color: "#64748b", fontWeight: 700 }}>{catalog.length}</span>
+              <span style={{ fontSize: 10, color: "#64748b", fontWeight: 700, writingMode: "vertical-rl" }}>
+                {classCatalog.length} class · {privateCatalog.length} pvt
+              </span>
               {drag?.type === "pl" && (
                 <span style={{ writingMode: "vertical-rl", fontSize: 11, color: "#b45309", fontWeight: 700 }}>
-                  ⤓ drop here to unschedule
+                  ⤓ drop to unschedule
                 </span>
               )}
             </div>
           )}
           {libOpen && (
-          <div style={{ background: "#fff", border: "1px solid #d6dad4", borderRadius: 10, height: "calc(100vh - 112px)", minHeight: 420, maxHeight: 780, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-            <div style={{ padding: "12px 14px", borderBottom: libOpen ? "1px solid #eceeea" : "none" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <button
-                  onClick={() => setLibOpen((o) => !o)}
-                  style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 14, fontWeight: 700, color: "#123c3a", padding: 0, textAlign: "left" }}
-                >
-                  {libOpen ? "▾" : "▸"} Class Library
-                </button>
-                <span style={{ marginLeft: "auto", fontSize: 12, color: "#64748b", whiteSpace: "nowrap" }}>
-                  {catalog.length} total
-                </span>
-              </div>
-              <div style={{ marginTop: 3, fontSize: 12, color: "#64748b" }}>
-                {unscheduledCount} unscheduled
-              </div>
-              {libOpen && (
-                <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                  <input
-                    style={{ ...inputStyle, minWidth: 0, flex: 1, padding: "6px 8px", fontSize: 13 }}
-                    placeholder="Search class or teacher…"
-                    value={libQuery}
-                    onChange={(e) => setLibQuery(e.target.value)}
-                  />
-                  <button style={{ ...btnPrimary, padding: "7px 9px", fontSize: 13, flexShrink: 0 }} onClick={() => setEditing({ isNew: true })}>
-                    ＋ New
-                  </button>
-                </div>
-              )}
-            </div>
-            {libOpen && (
-              <div
-                {...trayHandlers}
-                style={{
-                  padding: "10px", display: "flex", flexDirection: "column", gap: 8, minHeight: 0, flex: 1, alignItems: "stretch",
-                  overflowY: "auto", overscrollBehavior: "contain",
-                  background: dragOver === "tray" ? "#fff7ed" : "transparent",
-                  outline: drag?.type === "pl" ? "2px dashed #d97706" : "none",
-                  outlineOffset: -5, borderRadius: "0 0 10px 10px",
-                }}
+          <div
+            {...trayHandlers}
+            style={{
+              background: dragOver === "tray" ? "#fff7ed" : "#fff",
+              border: "1px solid #d6dad4", borderRadius: 10,
+              height: "calc(100vh - 112px)", minHeight: 420, maxHeight: 780,
+              display: "flex", flexDirection: "column", overflow: "hidden",
+              outline: drag?.type === "pl" ? "2px dashed #d97706" : "none", outlineOffset: -4,
+            }}
+          >
+            <div style={{ padding: "10px 12px", borderBottom: "1px solid #eceeea", flexShrink: 0 }}>
+              <button
+                onClick={() => setLibOpen((o) => !o)}
+                style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 700, color: "#123c3a", padding: 0 }}
               >
-                {drag?.type === "pl" && (
-                  <span style={{ fontSize: 12, color: "#b45309", fontWeight: 600 }}>
-                    ⤓ Release here to unschedule
-                  </span>
-                )}
-                {libList.map((k) => {
-                  const chips = placementChips(k.id);
-                  const teacherConflicts = teacherConflictLabels(
-                    placementsOf(k.id).flatMap((p) => teacherConflictsForPlacement(p))
-                  );
-                  return (
-                    <div
-                      key={k.id}
-                      draggable
-                      onDragStart={(e) => {
-                        e.dataTransfer.setData("text/plain", "lib:" + k.id);
-                        e.dataTransfer.effectAllowed = "copyMove";
-                        e.dataTransfer.setDragImage(emptyDragImage(), 0, 0);
-                        setDrag({
-                          type: "lib", id: k.id, dur: durationFor(k.id), grabOffset: 0,
-                          className: k.name, teacher: k.teacher, classId: k.id,
-                        });
-                      }}
-                      onDragEnd={() => { setDrag(null); setGhost(null); ghostRef.current = null; setDragOver(null); }}
-                      onClick={() => setEditing({ isNew: false, classId: k.id })}
-                      title="Drag onto the calendar to schedule (the same class can be placed on several days) · click to edit details & meeting times"
-                      style={{
-                        border: "1px solid #d6dad4", borderRadius: 8,
-                        background: chips.length ? "#fff" : "#fffbeb",
-                        padding: "7px 9px", width: "100%", boxSizing: "border-box", cursor: "grab",
-                        opacity: drag?.type === "lib" && drag.id === k.id ? 0.35 : 1,
-                        display: "flex", flexDirection: "column", gap: 4,
-                      }}
-                    >
-                      <div style={{ display: "flex", alignItems: "flex-start", gap: 4 }}>
-                        <div style={{ fontWeight: 700, fontSize: 13, lineHeight: 1.25, flex: 1 }}>{k.name}</div>
-                        <button
-                          style={miniBtn} title="Duplicate (for a second cohort of the same course)"
-                          onClick={(e) => { e.stopPropagation(); duplicateClass(k); }}
-                        >⧉</button>
-                        <button
-                          style={{ ...miniBtn, color: "#b91c1c" }} title="Delete class"
-                          onClick={(e) => { e.stopPropagation(); deleteClass(k.id); }}
-                        >✕</button>
-                      </div>
-                      <div style={{ fontSize: 12, color: "#475569" }}>
-                        {k.teacher || <i style={{ color: "#b45309" }}>Teacher TBD</i>}
-                        <b style={{ marginLeft: 8, color: "#123c3a" }}>{regFromRoster(k.students)} enrolled</b>
-                      </div>
-                      {teacherConflicts.length > 0 && (
-                        <div
-                          style={teacherWarningStyle}
-                          title={"Same teacher also assigned to " + teacherConflicts.join(", ")}
-                        >
-                          ⚠ Teacher overlap
-                        </div>
-                      )}
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                        {chips.length === 0 ? (
-                          <span style={{ ...chipStyle, background: "#fef3c7", color: "#b45309" }}>unscheduled</span>
-                        ) : (
-                          chips.map((c) => <span key={c.id} style={chipStyle}>{c.label}</span>)
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-                {libList.length === 0 && (
-                  <span style={{ fontSize: 13, color: "#94a3b8" }}>
-                    {catalog.length === 0 ? "No classes yet — click ＋ New." : "No classes match the search."}
-                  </span>
-                )}
-              </div>
-            )}
+                ▾ Libraries
+              </button>
+            </div>
+            <LibraryPanel
+              title="Class Library"
+              courseKind={COURSE_KIND.CLASS}
+              list={libList}
+              totalCount={classCatalog.length}
+              unscheduledCount={unscheduledCount}
+              query={libQuery}
+              setQuery={setLibQuery}
+              onNew={() => setEditing({ isNew: true, courseKind: COURSE_KIND.CLASS })}
+              trayHandlers={{}}
+              drag={drag}
+              setDrag={setDrag}
+              setGhost={setGhost}
+              ghostRef={ghostRef}
+              setDragOver={setDragOver}
+              durationFor={durationFor}
+              emptyDragImage={emptyDragImage}
+              placementChips={placementChips}
+              placementsOf={placementsOf}
+              teacherConflictsForPlacement={teacherConflictsForPlacement}
+              teacherConflictLabels={teacherConflictLabels}
+              duplicateClass={duplicateClass}
+              deleteClass={deleteClass}
+              setEditing={setEditing}
+              emptyHint={classCatalog.length === 0 ? "No classes yet — click ＋ New." : "No classes match the search."}
+            />
+            <div style={{ borderTop: "2px solid #eceeea", flexShrink: 0 }} />
+            <LibraryPanel
+              title="Private Library"
+              courseKind={COURSE_KIND.PRIVATE}
+              list={privateLibList}
+              totalCount={privateCatalog.length}
+              unscheduledCount={privateUnscheduledCount}
+              query={privateLibQuery}
+              setQuery={setPrivateLibQuery}
+              onNew={() => setEditing({ isNew: true, courseKind: COURSE_KIND.PRIVATE })}
+              trayHandlers={{}}
+              drag={drag}
+              setDrag={setDrag}
+              setGhost={setGhost}
+              ghostRef={ghostRef}
+              setDragOver={setDragOver}
+              durationFor={durationFor}
+              emptyDragImage={emptyDragImage}
+              placementChips={placementChips}
+              placementsOf={placementsOf}
+              teacherConflictsForPlacement={teacherConflictsForPlacement}
+              teacherConflictLabels={teacherConflictLabels}
+              duplicateClass={duplicateClass}
+              deleteClass={deleteClass}
+              setEditing={setEditing}
+              emptyHint={privateCatalog.length === 0 ? "No private lessons yet — click ＋ New." : "No private lessons match the search."}
+            />
           </div>
           )}
         </aside>
@@ -3091,25 +3092,55 @@ export default function ClassroomScheduler() {
                 {v.label}
               </button>
             ))}
-            <span style={{ marginLeft: "auto", alignSelf: "center", fontSize: 13, color: "#64748b" }}>
-              {tab === "byTeacher"
-                ? `${(teachers || []).length} teachers · ${noTeacherCount} classes need a teacher`
-                : tab === "byStudent"
-                  ? `${(students || []).length} students · ${catalog.filter((k) => (k.students || []).length > 0).length} classes with rosters`
-                  : tab === "roster"
-                    ? `${rosterRowCount} rows · ${catalog.length} classes`
-                    : tab === "byClass"
-                  ? `${catalog.length} classes · ${unscheduledCount} unscheduled`
-                  : tab === "weekOverview"
-                    ? `${placements.length} meetings · ${days.length} days`
-                  : tab === "classbook"
-                    ? `${term ? "term set" : "no term yet"} · ${catalog.length} classes`
-                  : tab === "grades"
-                    ? `${(data.quizzes || []).length} quizzes · ${catalog.length} classes`
-                  : tab === "reports"
-                    ? `${(students || []).length} students`
-                    : `${tabPls.length} classes · ${tabReg} students on ${DAY_LABEL[tab] || "this day"}`}
-            </span>
+            <div style={{ marginLeft: "auto", alignSelf: "center", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              {(isDayTab || tab === "weekOverview" || tab === "byClass") && (
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <span style={{ fontSize: 12, color: "#94a3b8" }}>Show</span>
+                  {[
+                    { id: CALENDAR_SHOW.BOTH, label: "Both" },
+                    { id: CALENDAR_SHOW.CLASS, label: "Class" },
+                    { id: CALENDAR_SHOW.PRIVATE, label: "Private" },
+                  ].map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => setCalendarShow(opt.id)}
+                      style={{
+                        padding: "4px 9px",
+                        fontSize: 12,
+                        fontWeight: calendarShow === opt.id ? 700 : 500,
+                        borderRadius: 6,
+                        border: calendarShow === opt.id ? "1px solid #123c3a" : "1px solid #d6dad4",
+                        background: calendarShow === opt.id ? "#ecfdf5" : "#fff",
+                        color: calendarShow === opt.id ? "#123c3a" : "#64748b",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <span style={{ fontSize: 13, color: "#64748b" }}>
+                {tab === "byTeacher"
+                  ? `${(teachers || []).length} teachers · ${noTeacherCount} classes need a teacher`
+                  : tab === "byStudent"
+                    ? `${(students || []).length} students · ${catalog.filter((k) => (k.students || []).length > 0).length} classes with rosters`
+                    : tab === "roster"
+                      ? `${rosterRowCount} rows · ${catalog.length} classes`
+                      : tab === "byClass"
+                        ? `${classCatalog.length} class · ${privateCatalog.length} private · ${unscheduledCount} unscheduled`
+                        : tab === "weekOverview"
+                          ? `${placements.filter((p) => matchesCalendarShow(classOfId(p.classId), calendarShow)).length} meetings · ${days.length} days`
+                          : tab === "classbook"
+                            ? `${term ? "term set" : "no term yet"} · ${catalog.length} classes`
+                            : tab === "grades"
+                              ? `${(data.quizzes || []).length} quizzes · ${catalog.length} classes`
+                              : tab === "reports"
+                                ? `${(students || []).length} students`
+                                : `${tabPls.length} on grid · ${tabReg} students on ${DAY_LABEL[tab] || "this day"}`}
+              </span>
+            </div>
           </nav>
 
           {flash && (
@@ -3164,6 +3195,7 @@ export default function ClassroomScheduler() {
                 hours={hours}
                 rooms={rooms}
                 idx={idx}
+                calendarShow={calendarShow}
                 planReadOnly={planReadOnly}
                 onMoveClass={applyByClassMoves}
                 onFlash={flashMsg}
@@ -3176,6 +3208,7 @@ export default function ClassroomScheduler() {
                 rooms={rooms}
                 placements={placements}
                 idx={idx}
+                calendarShow={calendarShow}
                 planReadOnly={planReadOnly}
                 onGoToDay={setTab}
                 onEditClass={(classId, placementId) => setEditing({ isNew: false, classId, placementId })}
@@ -3266,7 +3299,7 @@ export default function ClassroomScheduler() {
                       <div
                         key={room.id}
                         {...colHandlers(room.id)}
-                        title="Click an empty time to add a class here — or drag a card from the Class Library"
+                        title="Click an empty time to add a lesson — or drag from Class or Private Library"
                         style={{ flex: 1, minWidth: DAY_ROOM_MIN_W, position: "relative", height: gridH, boxSizing: "border-box", borderLeft: "1px solid #eceeea", zIndex: 1 }}
                       >
                         {colPls.map((p) => renderBlock(p, lanes.get(p.id)))}
@@ -3374,7 +3407,9 @@ export default function ClassroomScheduler() {
           contextLabel={
             editing.room != null
               ? `${DAY_LABEL[editing.day]} · ${fmtAmPm(editing.start)} · Room ${editing.room}`
-              : "Class Library"
+              : (editing.courseKind === COURSE_KIND.PRIVATE || courseKindOf(classOfId(editing.classId)) === COURSE_KIND.PRIVATE)
+                ? "Private Library"
+                : "Class Library"
           }
           onSave={saveClass}
           onDelete={() => deleteClass(editing.classId)}
@@ -3539,9 +3574,137 @@ export default function ClassroomScheduler() {
   );
 }
 
+// ───────────────────────── Library panel (Class or Private) ─────────────────────────
+function LibraryPanel({
+  title, courseKind, list, totalCount, unscheduledCount, query, setQuery, onNew,
+  trayHandlers, drag, setDrag, setGhost, ghostRef, setDragOver, durationFor, emptyDragImage,
+  placementChips, placementsOf, teacherConflictsForPlacement, teacherConflictLabels,
+  duplicateClass, deleteClass, setEditing, emptyHint,
+}) {
+  const isPrivate = courseKind === COURSE_KIND.PRIVATE;
+  const accent = isPrivate ? "#6d28d9" : "#123c3a";
+  const unscheduledBg = isPrivate ? "#f5f3ff" : "#fffbeb";
+  const scheduledBg = isPrivate ? "#faf5ff" : "#fff";
+  const cardBorder = isPrivate ? "#ddd6fe" : "#d6dad4";
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}>
+      <div style={{ padding: "10px 12px", borderBottom: "1px solid #eceeea", flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: accent }}>{title}</span>
+          <span style={{ marginLeft: "auto", fontSize: 11, color: "#64748b", whiteSpace: "nowrap" }}>
+            {totalCount} total
+          </span>
+        </div>
+        <div style={{ marginTop: 2, fontSize: 11, color: "#64748b" }}>
+          {unscheduledCount} unscheduled
+        </div>
+        <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+          <input
+            style={{ ...inputStyle, minWidth: 0, flex: 1, padding: "6px 8px", fontSize: 12 }}
+            placeholder={isPrivate ? "Search private or teacher…" : "Search class or teacher…"}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <button
+            style={{ ...btnPrimary, padding: "6px 8px", fontSize: 12, flexShrink: 0, background: isPrivate ? "#6d28d9" : undefined }}
+            onClick={onNew}
+          >
+            ＋ New
+          </button>
+        </div>
+      </div>
+      <div
+        {...trayHandlers}
+        style={{
+          padding: "8px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 6,
+          minHeight: 0,
+          flex: 1,
+          overflowY: "auto",
+          overscrollBehavior: "contain",
+        }}
+      >
+        {drag?.type === "pl" && (
+          <span style={{ fontSize: 11, color: "#b45309", fontWeight: 600 }}>
+            ⤓ Release here to unschedule
+          </span>
+        )}
+        {list.map((k) => {
+          const chips = placementChips(k.id);
+          const teacherConflicts = teacherConflictLabels(
+            placementsOf(k.id).flatMap((p) => teacherConflictsForPlacement(p))
+          );
+          return (
+            <div
+              key={k.id}
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.setData("text/plain", "lib:" + k.id);
+                e.dataTransfer.effectAllowed = "copyMove";
+                e.dataTransfer.setDragImage(emptyDragImage(), 0, 0);
+                setDrag({
+                  type: "lib", id: k.id, dur: durationFor(k.id), grabOffset: 0,
+                  className: k.name, teacher: k.teacher, classId: k.id,
+                });
+              }}
+              onDragEnd={() => { setDrag(null); setGhost(null); ghostRef.current = null; setDragOver(null); }}
+              onClick={() => setEditing({ isNew: false, classId: k.id })}
+              title="Drag onto the calendar to schedule · click to edit"
+              style={{
+                border: `1px solid ${cardBorder}`,
+                borderRadius: 8,
+                background: chips.length ? scheduledBg : unscheduledBg,
+                padding: "6px 8px",
+                width: "100%",
+                boxSizing: "border-box",
+                cursor: "grab",
+                opacity: drag?.type === "lib" && drag.id === k.id ? 0.35 : 1,
+                display: "flex",
+                flexDirection: "column",
+                gap: 3,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 4 }}>
+                <div style={{ fontWeight: 700, fontSize: 12.5, lineHeight: 1.25, flex: 1, color: accent }}>{k.name}</div>
+                <button style={miniBtn} title="Duplicate" onClick={(e) => { e.stopPropagation(); duplicateClass(k); }}>⧉</button>
+                <button style={{ ...miniBtn, color: "#b91c1c" }} title="Delete" onClick={(e) => { e.stopPropagation(); deleteClass(k.id); }}>✕</button>
+              </div>
+              <div style={{ fontSize: 11, color: "#475569" }}>
+                {k.teacher || <i style={{ color: "#b45309" }}>Teacher TBD</i>}
+                <b style={{ marginLeft: 6, color: accent }}>{regFromRoster(k.students)} enrolled</b>
+              </div>
+              {teacherConflicts.length > 0 && (
+                <div style={teacherWarningStyle} title={"Same teacher also assigned to " + teacherConflicts.join(", ")}>
+                  ⚠ Teacher overlap
+                </div>
+              )}
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+                {chips.length === 0 ? (
+                  <span style={{ ...chipStyle, background: isPrivate ? "#ede9fe" : "#fef3c7", color: isPrivate ? "#5b21b6" : "#b45309" }}>unscheduled</span>
+                ) : (
+                  chips.map((c) => <span key={c.id} style={chipStyle}>{c.label}</span>)
+                )}
+              </div>
+            </div>
+          );
+        })}
+        {list.length === 0 && (
+          <span style={{ fontSize: 12, color: "#94a3b8" }}>{emptyHint}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ───────────────────────── Class edit modal ─────────────────────────
 function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultDay, occupiedBy, freeRoomsAt, teacherConflictsAt, studentConflictsAt, contextLabel, onSave, onDelete, onClose }) {
   const c = cls || {};
+  const isPrivate = editing.isNew
+    ? editing.courseKind === COURSE_KIND.PRIVATE
+    : courseKindOf(c) === COURSE_KIND.PRIVATE;
   const [name, setName] = useState(c.name || "");
   const [teacher, setTeacher] = useState(c.teacher || "");
   const [note, setNote] = useState(c.note || "");
@@ -3673,7 +3836,9 @@ function ClassModal({ editing, cls, initialRows, days, rooms, teachers, defaultD
 
   return (
     <Overlay onClose={onClose} wide>
-      <h3 style={{ marginTop: 0, marginBottom: 4 }}>{editing.isNew ? "Add class" : "Edit class"}</h3>
+      <h3 style={{ marginTop: 0, marginBottom: 4 }}>
+        {editing.isNew ? (isPrivate ? "Add private lesson" : "Add class") : (isPrivate ? "Edit private lesson" : "Edit class")}
+      </h3>
       <p style={{ margin: "0 0 16px", fontSize: 13, color: "#64748b" }}>{contextLabel}</p>
       {formError && (
         <FormNotice tone="error" title="Can't save yet">
@@ -4086,7 +4251,7 @@ function WeekOverviewClassDetailCard({ classId, placementId, placements, rooms, 
 }
 
 // ───────────────────────── Week overview (time × days, room-colored) ─────────────────────────
-function WeekOverviewView({ days, hours, rooms, placements, idx, planReadOnly, onGoToDay, onEditClass }) {
+function WeekOverviewView({ days, hours, rooms, placements, idx, calendarShow, planReadOnly, onGoToDay, onEditClass }) {
   const [classDetail, setClassDetail] = useState(null); // { classId, placementId, left, top, pinned }
   const detailOpenTimer = useRef(null);
   const detailCloseTimer = useRef(null);
@@ -4235,7 +4400,7 @@ function WeekOverviewView({ days, hours, rooms, placements, idx, planReadOnly, o
             ))}
           </div>
           {days.map((d) => {
-            const dayPls = idx.placementsByDay.get(d) || [];
+            const dayPls = (idx.placementsByDay.get(d) || []).filter((p) => matchesCalendarShow(idx.catalogById.get(p.classId), calendarShow));
             return (
               <div
                 key={d}
@@ -4250,6 +4415,7 @@ function WeekOverviewView({ days, hours, rooms, placements, idx, planReadOnly, o
                 {dayPls.map((p) => {
                   const cls = idx.catalogById.get(p.classId);
                   if (!cls) return null;
+                  const isPrivate = courseKindOf(cls) === COURSE_KIND.PRIVATE;
                   const laneInfo = lanesByDay.get(d)?.get(p.id) || { lane: 0, lanes: 1 };
                   const { lane, lanes } = laneInfo;
                   const top = (p.start - gridStart) * pxPerMin;
@@ -4277,8 +4443,8 @@ function WeekOverviewView({ days, hours, rooms, placements, idx, planReadOnly, o
                         boxSizing: "border-box",
                         zIndex: 1,
                         maxWidth: "100%",
-                        background: roomClash ? "#fee2e2" : teacherClash ? "#fffbeb" : rc.bg,
-                        border: roomClash ? "2px solid #dc2626" : teacherClash ? "2px solid #d97706" : `1px solid ${rc.border}`,
+                        background: roomClash ? "#fee2e2" : teacherClash ? "#fffbeb" : isPrivate ? "#faf5ff" : rc.bg,
+                        border: roomClash ? "2px solid #dc2626" : teacherClash ? "2px solid #d97706" : isPrivate ? "1px solid #a78bfa" : `1px solid ${rc.border}`,
                         borderRadius: 6,
                         padding: "3px 5px",
                         overflow: "hidden",
@@ -4288,6 +4454,7 @@ function WeekOverviewView({ days, hours, rooms, placements, idx, planReadOnly, o
                       }}
                     >
                       <div style={{ fontWeight: 700, fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {isPrivate && <span style={{ color: "#6d28d9", marginRight: 3 }}>PVT</span>}
                         {cls.name}{(roomClash || teacherClash) ? " ⚠" : ""}
                       </div>
                       <div style={{ fontSize: 10, opacity: 0.9, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -4323,7 +4490,7 @@ function WeekOverviewView({ days, hours, rooms, placements, idx, planReadOnly, o
 const BY_CLASS_PX_PER_MIN = 1.25;
 const BY_CLASS_ROOM_MIN_W = 148;
 
-function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planReadOnly, onMoveClass, onFlash, onEditClass }) {
+function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, calendarShow, planReadOnly, onMoveClass, onFlash, onEditClass }) {
   const roomOrder = rooms.map((r) => r.id);
   const roomCap = (id) => idx?.roomCapById?.get(id) ?? 12;
   const capOfRooms = (list) => (list || []).reduce((s, id) => s + roomCap(id), 0);
@@ -4340,7 +4507,7 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
 
   const classBlocks = useMemo(() => {
     return sortCatalogForByClassView(catalog, placements)
-      .filter((k) => idx.scheduledClassIds?.has(k.id))
+      .filter((k) => idx.scheduledClassIds?.has(k.id) && matchesCalendarShow(k, calendarShow))
       .map((cls) => {
         const groups = classScheduleGroups(placements, cls.id);
         if (!groups.length) return null;
@@ -4351,7 +4518,7 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
         return { classId: cls.id, cls, start, end, roomId, rooms: allRooms, groups };
       })
       .filter(Boolean);
-  }, [catalog, placements, idx.scheduledClassIds, roomOrder]);
+  }, [catalog, placements, idx.scheduledClassIds, roomOrder, calendarShow]);
 
   const roomGrid = useMemo(() => {
     const singleByRoom = new Map();
@@ -4571,6 +4738,7 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
     const h = Math.max(14, (end - start) * BY_CLASS_PX_PER_MIN - 6);
     const cap = capOfRooms(blockRooms);
     const enrolled = regFromRoster(cls.students);
+    const isPrivate = courseKindOf(cls) === COURSE_KIND.PRIVATE;
     const col = ratioColor(enrolled, cap);
     const pct = cap ? Math.min(100, Math.round((enrolled / cap) * 100)) : 0;
     const rc = roomOverviewColor(colorRoomId, roomOrder);
@@ -4611,8 +4779,8 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
           boxSizing: "border-box",
           zIndex: geom ? 2 : 1,
           opacity: isDragging ? 0.45 : 1,
-          background: roomClash ? "#fee2e2" : teacherClash ? "#fffbeb" : rc.bg,
-          border: roomClash ? "2px solid #dc2626" : teacherClash ? "2px solid #d97706" : `1px solid ${rc.border}`,
+          background: roomClash ? "#fee2e2" : teacherClash ? "#fffbeb" : isPrivate ? "#faf5ff" : rc.bg,
+          border: roomClash ? "2px solid #dc2626" : teacherClash ? "2px solid #d97706" : isPrivate ? "1px solid #a78bfa" : `1px solid ${rc.border}`,
           boxShadow: roomClash
             ? "0 0 0 3px rgba(220,38,38,.12)"
             : teacherClash
@@ -4631,6 +4799,7 @@ function ClassScheduleView({ catalog, placements, days, hours, rooms, idx, planR
         <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column", gap: compact ? 1 : 2 }}>
           <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column", gap: compact ? 1 : 2 }}>
             <div style={{ fontWeight: 700, fontSize: compact ? 11 : 12.5, lineHeight: 1.2, overflowWrap: "anywhere", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: compact ? 1 : 2, WebkitBoxOrient: "vertical" }}>
+              {isPrivate && <span style={{ fontSize: 9, fontWeight: 800, color: "#6d28d9", marginRight: 3 }}>PVT</span>}
               {cls.name}{(roomClash || teacherClash) ? " ⚠" : ""}
             </div>
             {singleGroup ? (

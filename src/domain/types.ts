@@ -9,6 +9,8 @@ export type ClassRecord = {
   reg: number;
   note: string;
   students?: string[];
+  /** "class" (default) or "private" — private lessons live in the Private Library. */
+  courseKind?: "class" | "private";
 };
 
 export type Placement = {
