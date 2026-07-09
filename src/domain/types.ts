@@ -101,6 +101,7 @@ export type ScheduleData = {
   quizzes?: Quiz[];
   quizScores?: QuizScore[];
   reportComments?: ReportComment[];
+  /** Legacy PIN map; no longer written by UI (kept for normalizeV2 carry-through). */
   staffPins?: Record<string, string>;
 };
 

@@ -2467,19 +2467,16 @@ export default function ClassroomScheduler() {
     setTermOpen(false);
   };
 
-  // ── Lightweight teacher identity (stamps records with who recorded them) ──
-  const signInTeacher = (name) => {
+  // ── Who's recording (audit label only — stamps by/at on Classbook/Grades/Report Cards) ──
+  const setRecordingAs = (name) => {
     setCurrentTeacher(name);
     try { localStorage.setItem("premier-current-teacher", name); } catch (e) { /* ignore */ }
     setIdentityOpen(false);
   };
-  const signOutTeacher = () => {
+  const clearRecordingAs = () => {
     setCurrentTeacher("");
     try { localStorage.removeItem("premier-current-teacher"); } catch (e) { /* ignore */ }
     setIdentityOpen(false);
-  };
-  const saveStaffPin = (name, pin) => {
-    persist((d) => ({ ...d, staffPins: { ...(d.staffPins || {}), [name]: pin } }));
   };
 
   const resettingDefaultPlan = activePlanId === 1;
@@ -2850,9 +2847,9 @@ export default function ClassroomScheduler() {
             <button
               onClick={() => setIdentityOpen(true)}
               style={btnGhost}
-              title="Set who's recording attendance & grades"
+              title="Set whose name is stamped on attendance & grade entries (audit only, not a login)"
             >
-              👤 {currentTeacher || "Sign in"}
+              👤 {currentTeacher ? `Recording as ${currentTeacher}` : "Who's recording"}
             </button>
             <button onClick={() => setRoomMgrOpen(true)} style={btnGhost} disabled={planReadOnly}>Manage Rooms</button>
             <button
@@ -3472,11 +3469,9 @@ export default function ClassroomScheduler() {
       {identityOpen && (
         <IdentityModal
           teachers={teachers || []}
-          staffPins={data.staffPins || {}}
           current={currentTeacher}
-          onSignIn={signInTeacher}
-          onSavePin={saveStaffPin}
-          onSignOut={signOutTeacher}
+          onSelect={setRecordingAs}
+          onClear={clearRecordingAs}
           onClose={() => setIdentityOpen(false)}
         />
       )}

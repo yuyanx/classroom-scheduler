@@ -447,7 +447,7 @@ attendance:     [ { classId, date, student, status, homework, note, by, at } ], 
 quizzes:        [ { id, classId, date, title, maxScore, kind } ],
 quizScores:     [ { quizId, student, score, note, by, at } ],
 reportComments: [ { classId, student, comment, by, at } ],                            // term-level
-staffPins:      { "<teacher name>": "<pin>" }
+staffPins:      { "<teacher name>": "<pin>" }   // legacy; no longer written by UI (PIN removed)
 ```
 
 - **Sessions are derived, never stored.** `sessionsForClass(classId, placements, term)`
@@ -464,15 +464,16 @@ staffPins:      { "<teacher name>": "<pin>" }
 - **Cascades.** Renaming/removing a student (`saveStudents`) remaps/drops `attendance`,
   `quizScores`, `reportComments`; deleting a class (`stripClassData`) removes its sessionLogs,
   attendance, quizzes, quizScores, and comments; deleting a quiz removes its scores; renaming a
-  teacher moves their `staffPins` entry.
+  teacher still remaps legacy `staffPins` entries if present.
 - **Tabs.** `📓 Classbook` (lesson content + homework + attendance/homework-completion per session;
   responsive card layout on narrow screens via `useIsNarrow`), `📝 Grades` (quiz grid + averages +
   CSV), `🪪 Report Cards` (per-student aggregation via `buildReportCard`, `🖨 Print` via an injected
   `@media print` style, CSV export). The Class Library `<aside>` is hidden on these three tabs
   (they have their own class pickers) — this also gives the Classbook full width on mobile.
-- **Identity (lightweight).** Header **👤 Sign in** picks the current teacher from `teachers`
-  (optional PIN in `staffPins`); stored in `localStorage` (`premier-current-teacher`) and stamped
-  as `by`/`at` on records. **Not** real auth — the anon Supabase key still ships in the bundle.
+- **Who's recording (audit label only).** Header **👤 Who's recording** / **Recording as …** picks
+  the current teacher from `teachers`; stored in `localStorage` (`premier-current-teacher`) and
+  stamped as `by`/`at` on Classbook / Grades / Report Card records. **Not** a login — no PIN,
+  no auth. The anon Supabase key still ships in the bundle; anyone with the URL can edit.
 - **Known limitation.** Saves are still whole-document last-write-wins on a 30 s poll; two teachers
   entering grades into the same plan simultaneously can clobber each other. The dirty-revision guard
   only protects your own unsaved edits from being overwritten by polls. Per-record sync is future work.
@@ -614,6 +615,9 @@ the top; `STUDENT_CLASH_TOKENS` stays imported in `App.jsx` for its inline grid 
   empty; every remote save first copies the **previous server row** to a hidden backup (`schedule`
   row id `10000 + planId`, `⟲ Auto-backup · …`, hidden from 📁 menu). Restore:
   `node scripts/restore-auto-backup.mjs [planId]`.
+- 2026-07-09 — **Who's recording (no fake login)**: header **👤 Sign in** + optional PIN replaced by
+  **Who's recording** / **Recording as …** — audit label only (`premier-current-teacher` → `by`/`at`).
+  PIN UI removed; legacy `staffPins` still carried through `normalizeV2` but not written.
 
 ---
 

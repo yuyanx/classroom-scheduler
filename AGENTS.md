@@ -37,7 +37,7 @@ Local preview: `npx serve . -l 4180` → http://localhost:4180
   - `students[]` — deduped master list (union of class rosters); separate from `reg` signed-up count.
   - `placements[]` — scheduling entries (`classId, day, start, end, rooms[]`).
   - Multi-placement classes share one catalog entry (one roster).
-  - **Course-management layer**: `term`, `sessionLogs[]`, `attendance[]`, `quizzes[]`, `quizScores[]`, `reportComments[]`, `staffPins{}`. Sessions are **derived** from `term` + `placements` (`sessionsForClass`), not stored. ⚠️ **Any new top-level field MUST be carried through `normalizeV2()`** (runs on every load + poll) via a `clean*` helper, or it is silently dropped. Renames/deletes must cascade (see `saveStudents`, `stripClassData`).
+  - **Course-management layer**: `term`, `sessionLogs[]`, `attendance[]`, `quizzes[]`, `quizScores[]`, `reportComments[]`; legacy `staffPins{}` is still carried through `normalizeV2` but no longer written (PIN UI removed). **Who's recording** (header) is a per-browser audit label (`premier-current-teacher` → stamps `by`/`at`) — not a login. Sessions are **derived** from `term` + `placements` (`sessionsForClass`), not stored. ⚠️ **Any new top-level field MUST be carried through `normalizeV2()`** (runs on every load + poll) via a `clean*` helper, or it is silently dropped. Renames/deletes must cascade (see `saveStudents`, `stripClassData`).
 - **Coordinated views** (grid, 📋 By Class, 👤 By Teacher, 🎓 By Student, 📒 Roster) + 📅 Week Overview — pill/card design must stay consistent. Course-management tabs: 📓 Classbook, 📝 Grades, 🪪 Report Cards (Class Library `<aside>` is hidden on these three).
 - **Styling rule**: Inline styles only. Reuse the tokens in `src/components/uikit.jsx` (imported into `App.jsx`).
 
