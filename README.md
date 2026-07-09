@@ -2,7 +2,7 @@
 
 An interactive classroom scheduling board for the 2026 Summer program (Jericho).
 
-**Live app:** https://classroom-scheduler-ruddy.vercel.app  
+**Live app:** https://classroom-scheduler-premier.vercel.app  
 (Vercel redeploys automatically on every push to `main`.)
 
 ## Features
@@ -37,7 +37,7 @@ Set the program **term** (📅 **Set term** in the header — start/end dates + 
 | **🪪 Report Cards** | Per student: attendance rate, homework completion rate, quiz average + per-quiz detail, and a **teacher comment** — aggregated across all their classes. **🖨 Print** a single card or **Export all (CSV)**. |
 
 - **👤 Who's recording** (header): pick whose name is stamped on attendance/grade entries (`by`/`at`). Audit label only — not a login.
-- **Volunteer entry page**: share `?entry=1` (e.g. `https://classroom-scheduler-ruddy.vercel.app/?entry=1`) — volunteers type their name, then use Classbook + Grades only (always the **Default** live plan). No schedule editing. Still not a login — anyone with the link can write.
+- **Volunteer entry page**: share `?entry=1` (e.g. `https://classroom-scheduler-premier.vercel.app/?entry=1`) — volunteers type their name, then use Classbook + Grades only (always the **Default** live plan). No schedule editing. Still not a login — anyone with the link can write.
 - Records ride in the same per-plan Supabase/localStorage envelope and survive reload (carried through `normalizeV2`). Renaming/removing a student or deleting a class cascades into these records.
 
 ### Rosters & conflicts

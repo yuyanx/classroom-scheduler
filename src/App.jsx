@@ -1194,7 +1194,7 @@ function clearScheduleAndCounts(data) {
 const SUPABASE_URL = "https://zbvedbwbxdzcsnftvyph.supabase.co";
 const SUPABASE_KEY = "sb_publishable_cDEmeJDF7lwuafg8ZYKF4Q_Sl_fUSTE";
 // Legacy alias; Vercel production hostname can change — prefer VERCEL_ENV at build time.
-const PRODUCTION_HOST = "classroom-scheduler-ruddy.vercel.app";
+const PRODUCTION_HOST = "classroom-scheduler-premier.vercel.app";
 // Inlined at build time via scripts/build.mjs (--define process.env.VERCEL_ENV).
 const VERCEL_ENV = process.env.VERCEL_ENV || "";
 

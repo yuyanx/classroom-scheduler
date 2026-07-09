@@ -12,7 +12,7 @@ State syncs through Supabase (project `zbvedbwbxdzcsnftvyph`, table `public.sche
 
 | | URL |
 |---|---|
-| Production | https://classroom-scheduler-ruddy.vercel.app |
+| Production | https://classroom-scheduler-premier.vercel.app |
 | Vercel dashboard | https://vercel.com/yuyanxs-projects/classroom-scheduler |
 | GitHub repo | https://github.com/yuyanx/classroom-scheduler |
 

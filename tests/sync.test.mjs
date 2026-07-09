@@ -11,7 +11,7 @@ import {
 test("isLocalDevHost recognizes localhost", () => {
   assert.equal(isLocalDevHost("localhost"), true);
   assert.equal(isLocalDevHost("127.0.0.1"), true);
-  assert.equal(isLocalDevHost("classroom-scheduler-ruddy.vercel.app"), false);
+  assert.equal(isLocalDevHost("classroom-scheduler-premier.vercel.app"), false);
 });
 
 test("isPreviewHost gates Vercel preview but not production", () => {
