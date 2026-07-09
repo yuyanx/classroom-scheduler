@@ -629,9 +629,9 @@ the top; `STUDENT_CLASH_TOKENS` stays imported in `App.jsx` for its inline grid 
 - 2026-07-09 — **Volunteer entry page**: `?entry=1` (or `?mode=entry`) opens `VolunteerApp` —
   name gate + Classbook/Grades only, fixed Default plan. Share the production URL + query with
   volunteers. Sources: `src/entryMode.js`, `src/VolunteerApp.jsx`, `src/main.jsx`.
-- 2026-07-09 — **Quiz sheet template**: `templates/PremierPlus_Quiz_Sheet_Template.xlsx` (simple
-  English: Instructions + Score grid + Import long table) and sample
-  `templates/PremierPlus_Quiz_Import_Long.csv` for future Grades CSV import.
+- 2026-07-09 — **Quiz sheet template**: `templates/PremierPlus_Quiz_Sheet_Template.xlsx` (English;
+  Instructions + Classes index + one score tab per live class with roster names pre-filled from
+  Default plan Supabase row). Also `templates/PremierPlus_Class_Rosters.csv` roster dump.
 
 ---
 

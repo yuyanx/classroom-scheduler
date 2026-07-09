@@ -1,0 +1,204 @@
+class_name,teacher,student
+5/6th Math,Thomas,Ali Khawaja
+5/6th Math,Thomas,Ashely Ko
+5/6th Math,Thomas,Cruz Song
+5/6th Math,Thomas,Joanna Sun
+5/6th Math,Thomas,Joyce Sun
+5/6th Math,Thomas,Stephen Ng
+Alg2,Linda,Austin Chin
+Alg2,Linda,Ava Li
+Alg2,Linda,Beren Aktas
+Alg2,Linda,Daisy Huang
+Alg2,Linda,Darren Lin
+Alg2,Linda,Eric Chen
+Alg2,Linda,Ethan Li
+Alg2,Linda,Kyle Lee
+Alg2,Linda,Queenie Chen
+Alg2,Linda,Stephy Xia
+Alg2,Linda,Vincent Lin
+G7/8 ELA,Matthew M,Arisha Syed
+G7/8 ELA,Matthew M,Bang Xiao
+G7/8 ELA,Matthew M,Giovanna Khawaja
+G7/8 ELA,Matthew M,Ivy Cai
+G7/8 ELA,Matthew M,Jacob Yan
+G7/8 ELA,Matthew M,Kaitlyn Cho
+G7/8 ELA,Matthew M,Kimmy Chen
+G7/8 ELA,Matthew M,Lucas Shao
+G7/8 ELA,Matthew M,Samara Ali
+G7/8 ELA,Matthew M,Sophia Liu
+G7/8 ELA,Matthew M,Victoria Lin
+G7/8 ELA,Matthew M,William Ng
+Geo,James,Aiden Kim
+Geo,James,Alicia Ko
+Geo,James,Brayden Resrick
+Geo,James,Chloe Tuo
+Geo,James,Chole Kim
+Geo,James,Jessica Kim
+Geo,James,Landon Lee
+Geo,James,Lucia Jin
+Geo,James,Michael Wu
+Geo,James,Sophia Chen
+SAT ELA,Joshua,Chloe Cai
+SAT ELA,Joshua,Chloe DeTurris
+SAT ELA,Joshua,Ellie An
+SAT ELA,Joshua,Ethan Cho
+SAT ELA,Joshua,Geoffrey Chin
+SAT ELA,Joshua,Gloria Gao
+SAT ELA,Joshua,Jade Li
+SAT ELA,Joshua,Jason Sun
+SAT ELA,Joshua,Jing Han Lin
+SAT ELA,Joshua,Joseph Feng
+SAT ELA,Joshua,Joseph Kim
+SAT ELA,Joshua,Kayden Yu
+SAT ELA,Joshua,Kristin Chen
+SAT ELA,Joshua,Lorenzo Gamez
+SAT ELA,Joshua,Matteo Davi
+SAT ELA,Joshua,Matteo Gamez
+SAT ELA,Joshua,Matthew Gao
+SAT ELA,Joshua,Osmar Gao
+SAT ELA,Joshua,Rayana Shi
+SAT ELA,Joshua,Ruiyi Yang
+SAT ELA,Joshua,Shirely Dong
+SAT ELA,Joshua,Sophia Mum
+SAT ELA,Joshua,Tengke Qiu (Chilton)
+SAT ELA,Joshua,Winston Zuo
+5/6th ELA,Rebecca,Ali Khawaja
+5/6th ELA,Rebecca,Ashely Ko
+5/6th ELA,Rebecca,Cruz Song
+5/6th ELA,Rebecca,Joanna Sun
+5/6th ELA,Rebecca,Joyce Sun
+5/6th ELA,Rebecca,Stephen Ng
+G7 Math,Thomas,Giovanna Khawaja
+G7 Math,Thomas,Lucas Shao
+G7 Math,Thomas,Samara Ali
+G8 Math,Linda,Arisha Syed
+G8 Math,Linda,Bang Xiao
+G8 Math,Linda,Ethan Ching
+G8 Math,Linda,Ivy Cai
+G8 Math,Linda,Jacob Yan
+G8 Math,Linda,Kaitlyn Cho
+G8 Math,Linda,Kayden Li
+G8 Math,Linda,Kimmy Chen
+G8 Math,Linda,Oscar Lin
+G8 Math,Linda,Sophia Liu
+G8 Math,Linda,Victoria Lin
+G8 Math,Linda,William Ng
+PSAT,Joshua,Austin Chin
+PSAT,Joshua,Ava Li
+PSAT,Joshua,Daisy Huang
+PSAT,Joshua,Darren Lin
+PSAT,Joshua,Derrick Cheung
+PSAT,Joshua,Eric Chen
+PSAT,Joshua,Ethan Li
+PSAT,Joshua,Justin Jiang
+PSAT,Joshua,Kaylee Feng
+PSAT,Joshua,Kyle Lee
+PSAT,Joshua,Lucia Jin
+PSAT,Joshua,Queenie Chen
+PSAT,Joshua,Stephy Xia
+PSAT,Joshua,Vincent Lin
+PSAT,Daniel,Aiden Kim
+PSAT,Daniel,Alicia Ko
+PSAT,Daniel,Brayden Qu
+PSAT,Daniel,Brayden Resrick
+PSAT,Daniel,Chole Kim
+PSAT,Daniel,Elysia Qu
+PSAT,Daniel,Jessica Kim
+PSAT,Daniel,Landon Lee
+PSAT,Daniel,Michael Wu
+PSAT,Daniel,Sophia Chen
+SAT Math,Herrick,Chelsea Ching
+SAT Math,Herrick,Chloe Cai
+SAT Math,Herrick,Chloe DeTurris
+SAT Math,Herrick,Ellie An
+SAT Math,Herrick,Ethan Cho
+SAT Math,Herrick,Geoffrey Chin
+SAT Math,Herrick,Gloria Gao
+SAT Math,Herrick,Jade Li
+SAT Math,Herrick,Jason Sun
+SAT Math,Herrick,Joseph Feng
+SAT Math,Herrick,Joseph Kim
+SAT Math,Herrick,Kayden Yu
+SAT Math,Herrick,Kristin Chen
+SAT Math,Herrick,Lorenzo Gamez
+SAT Math,Herrick,Matteo Davi
+SAT Math,Herrick,Matteo Gamez
+SAT Math,Herrick,Matthew Gao
+SAT Math,Herrick,Osmar Gao
+SAT Math,Herrick,Rachel Lam
+SAT Math,Herrick,Rayana Shi
+SAT Math,Herrick,Ruiyi Yang
+SAT Math,Herrick,Shirely Dong
+SAT Math,Herrick,Sophia Mum
+SAT Math,Herrick,Tengke Qiu (Chilton)
+SAT Math,Herrick,Winston Zuo
+AMC 10,James,Aiden Liu
+AMC 10,James,Chloe Tuo
+AMC 10,James,Dhruv
+AMC 10,James,Justin Jiang
+AMC 10,James,Lucia Hu
+AMC 10,James,Nicole L
+AMC 10,James,Tiffany Hu
+Earth Science,Linda,Kayden Li
+Earth Science,Linda,Oscar Lin
+HS English,Matt C,Alyssa Wu
+HS English,Matt C,Austin Zhao
+HS English,Matt C,Eric Lin
+HS English,Matt C,Ethan Ching
+HS English,Matt C,Jake Bahk
+HS English,Matt C,Jonathan Kil
+HS English,Matt C,Minghao Yu
+HS English,Matt C,Savannah Weng
+HS English,Matt C,Sophia Wu
+HS English,Matt C,Vincent Zhao
+HS English,Matt C,Wesley Wu
+Python,AN,Derek Xia
+Python,AN,Jonathan Tong
+Python,AN,Kathy Jiang
+Python,AN,Samara Ali
+SAT ELA Afternoon,Joshua,Anderson Hou
+SAT ELA Afternoon,Joshua,Andrew Yan
+SAT ELA Afternoon,Joshua,Benjamin Zheng
+SAT ELA Afternoon,Joshua,Chelsea Ching
+SAT ELA Afternoon,Joshua,Chris Chun
+SAT ELA Afternoon,Joshua,Derick Ye
+SAT ELA Afternoon,Joshua,Ethan Xu
+SAT ELA Afternoon,Joshua,Fiona Wang
+SAT ELA Afternoon,Joshua,Jasper Weng
+SAT ELA Afternoon,Joshua,Jovan Chow
+SAT ELA Afternoon,Joshua,Quinton You
+SAT ELA Afternoon,Joshua,Rachel Lam
+SAT ELA Afternoon,Joshua,Stanley Zhao
+Biology,Linda,Alyssa Wu
+Biology,Linda,Benjamin Zheng
+Biology,Linda,Minghao Yu
+Biology,Linda,Sophia Wu
+Biology,Linda,Tiffany Hu
+Debate,Rebecca,Derek Xia
+Debate,Rebecca,Dhruv
+Debate,Rebecca,Irvan Yang
+Debate,Rebecca,Jonathan Tong
+Geo Afternoon,Thomas,Austin Zhao
+Geo Afternoon,Thomas,Jake Bahk
+Geo Afternoon,Thomas,Jonathan Kil
+Geo Afternoon,Thomas,Vincent Zhao
+Geo Afternoon,Thomas,Wesley Wu
+NYT G3-5,Rebecca,Calix Chen
+NYT G3-5,Rebecca,Claire Chow
+NYT G3-5,Rebecca,Kevin Xiao
+NYT G3-5,Rebecca,Winson Chen
+SAT Math Afternoon,Herrick,Anderson Hou
+SAT Math Afternoon,Herrick,Andrew Yan
+SAT Math Afternoon,Herrick,Chris Chun
+SAT Math Afternoon,Herrick,Ethan Xu
+SAT Math Afternoon,Herrick,Jovan Chow
+SAT Math Afternoon,Herrick,Stanley Zhao
+Scholastic Writing,Joshua,Austin WANG
+Scholastic Writing,Joshua,Chloe Tuo
+Scholastic Writing,Joshua,Dhruv
+Scholastic Writing,Joshua,Ian Chow
+Scholastic Writing,Joshua,Kaylee Feng
+Scholastic Writing,Joshua,Lulu Bi
+Scholastic Writing,Joshua,Siwoo Jang
+Scholastic Writing,Joshua,Sophia Mun
+Scholastic Writing,Joshua,Yangyang Bi

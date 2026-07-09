@@ -38,7 +38,7 @@ Set the program **term** (📅 **Set term** in the header — start/end dates + 
 
 - **👤 Who's recording** (header): pick whose name is stamped on attendance/grade entries (`by`/`at`). Audit label only — not a login.
 - **Volunteer entry page**: share `?entry=1` (e.g. `https://classroom-scheduler-premier.vercel.app/?entry=1`) — volunteers type their name, then use Classbook + Grades only (always the **Default** live plan). No schedule editing. Still not a login — anyone with the link can write.
-- **Quiz sheet template** (simple English sheet for first-pass scores → later import): [`templates/PremierPlus_Quiz_Sheet_Template.xlsx`](./templates/PremierPlus_Quiz_Sheet_Template.xlsx) — upload to Google Drive → open with Google Sheets. Optional long CSV: [`templates/PremierPlus_Quiz_Import_Long.csv`](./templates/PremierPlus_Quiz_Import_Long.csv).
+- **Quiz sheet template** (English; pre-filled class rosters from live Default plan): [`templates/PremierPlus_Quiz_Sheet_Template.xlsx`](./templates/PremierPlus_Quiz_Sheet_Template.xlsx) — one score tab per class. Roster dump: [`templates/PremierPlus_Class_Rosters.csv`](./templates/PremierPlus_Class_Rosters.csv). Upload the xlsx to Google Drive → open with Google Sheets.
 - Records ride in the same per-plan Supabase/localStorage envelope and survive reload (carried through `normalizeV2`). Renaming/removing a student or deleting a class cascades into these records.
 
 ### Rosters & conflicts
