@@ -60,3 +60,5 @@ export {
   DEFAULT_PROGRAM_LABEL,
   cleanProgramLabel,
 } from "./App.jsx";
+
+export { isEntryMode } from "./entryMode.js";

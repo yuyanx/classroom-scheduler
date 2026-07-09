@@ -44,7 +44,9 @@ classroom-scheduler/
 ├── app.js                # Committed production bundle (do not hand-edit)
 ├── package.json          # Dependencies: react, react-dom, esbuild
 ├── src/
-│   ├── main.jsx          # Entry point — ReactDOM.createRoot → <ClassroomScheduler />
+│   ├── main.jsx          # Entry — ?entry=1 → <VolunteerApp />, else <ClassroomScheduler />
+│   ├── entryMode.js      # isEntryMode() URL helper
+│   ├── VolunteerApp.jsx  # Volunteer Classbook/Grades shell (always Default plan id=1)
 │   ├── planService.js    # v3 multi-plan pack/unpack, local store, Supabase plan API
 │   ├── scheduleService.js # localStorage + dirty-revision sync guard
 │   ├── domain/
@@ -474,6 +476,12 @@ staffPins:      { "<teacher name>": "<pin>" }   // legacy; no longer written by 
   the current teacher from `teachers`; stored in `localStorage` (`premier-current-teacher`) and
   stamped as `by`/`at` on Classbook / Grades / Report Card records. **Not** a login — no PIN,
   no auth. The anon Supabase key still ships in the bundle; anyone with the URL can edit.
+- **Volunteer entry page (`?entry=1`).** Shareable link for helpers who should not use the full
+  scheduler. `main.jsx` branches on `isEntryMode()` → `VolunteerApp`: free-text name
+  (`premier-entry-name`), then **📓 Attendance & homework** + **📝 Quizzes** only (reuses
+  `Classbook` / `GradesView`). Always loads **Default plan id=1** (does not follow the staff
+  active-plan id). No term editor / class editor / schedule drag. Same Supabase last-write-wins
+  sync as the main app. Local preview: `http://localhost:4180/?entry=1`.
 - **Known limitation.** Saves are still whole-document last-write-wins on a 30 s poll; two teachers
   entering grades into the same plan simultaneously can clobber each other. The dirty-revision guard
   only protects your own unsaved edits from being overwritten by polls. Per-record sync is future work.
@@ -618,6 +626,9 @@ the top; `STUDENT_CLASH_TOKENS` stays imported in `App.jsx` for its inline grid 
 - 2026-07-09 — **Who's recording (no fake login)**: header **👤 Sign in** + optional PIN replaced by
   **Who's recording** / **Recording as …** — audit label only (`premier-current-teacher` → `by`/`at`).
   PIN UI removed; legacy `staffPins` still carried through `normalizeV2` but not written.
+- 2026-07-09 — **Volunteer entry page**: `?entry=1` (or `?mode=entry`) opens `VolunteerApp` —
+  name gate + Classbook/Grades only, fixed Default plan. Share the production URL + query with
+  volunteers. Sources: `src/entryMode.js`, `src/VolunteerApp.jsx`, `src/main.jsx`.
 
 ---
 

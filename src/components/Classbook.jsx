@@ -161,7 +161,11 @@ export default function Classbook({ data, persist, currentTeacher, planReadOnly,
       {!term ? (
         <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: 16, color: "#92400e", fontSize: 14 }}>
           <b>Set the term first.</b> The Classbook turns each class's weekdays into dated sessions using the program term.
-          <div style={{ marginTop: 10 }}><button style={btnPrimary} onClick={onSetTerm}>Set term dates</button></div>
+          {onSetTerm ? (
+            <div style={{ marginTop: 10 }}><button style={btnPrimary} onClick={onSetTerm}>Set term dates</button></div>
+          ) : (
+            <div style={{ marginTop: 8, fontSize: 13 }}>Ask a staff member to set term dates on the main scheduler.</div>
+          )}
         </div>
       ) : !sessionDates.length ? (
         <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: 16, color: "#64748b", fontSize: 14 }}>

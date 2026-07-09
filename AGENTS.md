@@ -30,7 +30,8 @@ Local preview: `npx serve . -l 4180` → http://localhost:4180
 ## Core Architecture (must internalize)
 
 - **Scheduler UI + state**: `src/App.jsx` (the main `ClassroomScheduler` component owns `data` + `persist`).
-- **Component modules** (`src/components/`): `uikit.jsx` (shared inline-style tokens + `Overlay`/`Field`/`FormNotice`/`InlineConfirm`), and the course-management views `Classbook.jsx`, `GradesView.jsx`, `ReportCards.jsx`, `TermModal.jsx`, `IdentityModal.jsx`, plus `classbookUtils.jsx`. New views receive `data`/`persist`/`currentTeacher`/`planReadOnly` as props — they must **not** import `App.jsx` (cycle). Keep scheduler state in `App.jsx`.
+- **Volunteer entry**: `src/main.jsx` routes `?entry=1` / `?mode=entry` → `src/VolunteerApp.jsx` (Default plan only + Classbook/Grades). `src/entryMode.js` is pure URL parsing.
+- **Component modules** (`src/components/`): `uikit.jsx` (shared inline-style tokens + `Overlay`/`Field`/`FormNotice`/`InlineConfirm`), and the course-management views `Classbook.jsx`, `GradesView.jsx`, `ReportCards.jsx`, `TermModal.jsx`, `IdentityModal.jsx`, plus `classbookUtils.jsx`. New views receive `data`/`persist`/`currentTeacher`/`planReadOnly` as props — they must **not** import `App.jsx` (cycle). Keep scheduler state in `App.jsx`. (`VolunteerApp` may import named helpers from `App.jsx`.)
 - **Allowed helper modules**: `src/planService.js` (v3 plans), `src/scheduleService.js` (localStorage + sync guard), `src/domain/scheduleLogic.ts` (pure schedule math + sessions/aggregation).
 - **Data model** (see handoff.md):
   - `catalog[]` — one record per class/cohort (`id, name, teacher, reg, note, students[]`).

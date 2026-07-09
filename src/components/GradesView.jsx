@@ -110,7 +110,11 @@ export default function GradesView({ data, persist, currentTeacher, planReadOnly
       {!term ? (
         <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: 16, color: "#92400e", fontSize: 14 }}>
           <b>Set the term first</b> so quiz dates line up with the program calendar.
-          <div style={{ marginTop: 10 }}><button style={btnPrimary} onClick={onSetTerm}>Set term dates</button></div>
+          {onSetTerm ? (
+            <div style={{ marginTop: 10 }}><button style={btnPrimary} onClick={onSetTerm}>Set term dates</button></div>
+          ) : (
+            <div style={{ marginTop: 8, fontSize: 13 }}>Ask a staff member to set term dates on the main scheduler.</div>
+          )}
         </div>
       ) : (
         <>

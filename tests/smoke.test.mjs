@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { isEntryMode } from "../dist/test-logic.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const appSrc = readFileSync(join(root, "src/App.jsx"), "utf8");
@@ -25,4 +26,25 @@ test("test exports are wired for schedule helpers", () => {
 test("production bundle exists and references ClassroomScheduler", () => {
   const bundle = readFileSync(join(root, "app.js"), "utf8");
   assert.ok(bundle.length > 100_000, "app.js looks too small — rebuild after src edits");
+});
+
+test("isEntryMode recognizes volunteer entry query flags", () => {
+  assert.equal(isEntryMode(""), false);
+  assert.equal(isEntryMode("?tab=mon"), false);
+  assert.equal(isEntryMode("?entry"), true);
+  assert.equal(isEntryMode("?entry=1"), true);
+  assert.equal(isEntryMode("?entry=true"), true);
+  assert.equal(isEntryMode("?entry=0"), false);
+  assert.equal(isEntryMode("?mode=entry"), true);
+  assert.equal(isEntryMode("?mode=scheduler"), false);
+});
+
+test("entry mode sources exist", () => {
+  const main = readFileSync(join(root, "src/main.jsx"), "utf8");
+  assert.match(main, /VolunteerApp/);
+  assert.match(main, /isEntryMode/);
+  const vol = readFileSync(join(root, "src/VolunteerApp.jsx"), "utf8");
+  assert.match(vol, /DEFAULT_PLAN_ID\s*=\s*1/);
+  assert.match(vol, /Classbook/);
+  assert.match(vol, /GradesView/);
 });
