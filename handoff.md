@@ -469,8 +469,9 @@ staffPins:      { "<teacher name>": "<pin>" }   // legacy; no longer written by 
   teacher still remaps legacy `staffPins` entries if present.
 - **Tabs.** `📓 Classbook` (lesson content + homework + attendance/homework-completion per session;
   responsive card layout on narrow screens via `useIsNarrow`), `📝 Grades` (quiz grid + averages +
-  CSV), `🪪 Report Cards` (per-student aggregation via `buildReportCard`, `🖨 Print` via an injected
-  `@media print` style, CSV export). The Class Library `<aside>` is hidden on these three tabs
+  CSV), `🪪 Report Cards` (aggregation via `buildReportCard`; toggle **🎓 By Student** vs
+  **📋 By Class** roster walk-through; `🖨 Print` via an injected `@media print` style; CSV export
+  for all students or the selected class). The Class Library `<aside>` is hidden on these three tabs
   (they have their own class pickers) — this also gives the Classbook full width on mobile.
 - **Who's recording (audit label only).** Header **👤 Who's recording** / **Recording as …** picks
   the current teacher from `teachers`; stored in `localStorage` (`premier-current-teacher`) and
@@ -632,6 +633,10 @@ the top; `STUDENT_CLASH_TOKENS` stays imported in `App.jsx` for its inline grid 
 - 2026-07-09 — **Quiz sheet template**: `templates/PremierPlus_Quiz_Sheet_Template.xlsx` (English;
   Instructions + Classes index + one score tab per live class; **Import** tab formula-maps every
   class sheet → long rows for CSV export). `templates/PremierPlus_Class_Rosters.csv` roster dump.
+- 2026-07-14 — **Report Cards · By Class**: `🪪 Report Cards` gains a **🎓 By Student** /
+  **📋 By Class** toggle. By Class picks a class (same sorted catalog as Classbook/Grades), walks
+  that roster with ◀ ▶, and shows only that class’s section on each student’s card. CSV export
+  scopes to the selected class when in By Class mode. Source: `src/components/ReportCards.jsx`.
 
 ---
 
