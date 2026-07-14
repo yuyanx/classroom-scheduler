@@ -1,9 +1,11 @@
 // 🪪 Report Cards — per student: attendance, homework completion, quiz scores,
 // and teacher comments. View by student (all classes) or by class (roster walk-through).
+// Optional Quiz only filter shows scores without attendance/homework/comments.
 // Printable + CSV export.
 import React, { useState, useMemo, useEffect } from "react";
 import {
   buildReportCard,
+  classQuizAverages,
   formatDateLabel,
   studentKey,
   sortCatalogForRosterView,
@@ -45,7 +47,14 @@ function StatTile({ label, value, sub, tone }) {
   );
 }
 
-function ClassSection({ c, student, planReadOnly, saveComment }) {
+function ClassSection({ c, student, planReadOnly, saveComment, quizOnly, classAvg }) {
+  const classAvgPct = classAvg?.avgPct ?? null;
+  const classAvgByQuiz = useMemo(() => {
+    const m = new Map();
+    (classAvg?.byQuiz || []).forEach((q) => m.set(q.quizId, q));
+    return m;
+  }, [classAvg]);
+
   return (
     <div style={{ marginBottom: 22, breakInside: "avoid" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 6 }}>
@@ -54,63 +63,86 @@ function ClassSection({ c, student, planReadOnly, saveComment }) {
       </div>
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", margin: "10px 0" }}>
-        <StatTile
-          label="Attendance"
-          value={fmtPct(c.attendance.rate)}
-          sub={`${c.attendance.present} present · ${c.attendance.absent} absent · ${c.attendance.tardy} tardy`}
-          tone={c.attendance.rate != null && c.attendance.rate < 0.8 ? "#b45309" : "#0f766e"}
-        />
-        <StatTile
-          label="Homework"
-          value={fmtPct(c.homework.rate)}
-          sub={`${c.homework.complete} complete · ${c.homework.missing} missing`}
-          tone={c.homework.rate != null && c.homework.rate < 0.7 ? "#b45309" : "#0f766e"}
-        />
+        {!quizOnly && (
+          <>
+            <StatTile
+              label="Attendance"
+              value={fmtPct(c.attendance.rate)}
+              sub={`${c.attendance.present} present · ${c.attendance.absent} absent · ${c.attendance.tardy} tardy`}
+              tone={c.attendance.rate != null && c.attendance.rate < 0.8 ? "#b45309" : "#0f766e"}
+            />
+            <StatTile
+              label="Homework"
+              value={fmtPct(c.homework.rate)}
+              sub={`${c.homework.complete} complete · ${c.homework.missing} missing`}
+              tone={c.homework.rate != null && c.homework.rate < 0.7 ? "#b45309" : "#0f766e"}
+            />
+          </>
+        )}
         <StatTile
           label="Quiz average"
           value={fmtPctNum(c.quiz.avgPct)}
           sub={`${c.quiz.count} quiz${c.quiz.count === 1 ? "" : "zes"}`}
           tone={c.quiz.avgPct != null && c.quiz.avgPct < 60 ? "#b91c1c" : "#0f766e"}
         />
+        <StatTile
+          label="Class average"
+          value={fmtPctNum(classAvgPct)}
+          sub={classAvg?.studentCount
+            ? `${classAvg.studentCount} student${classAvg.studentCount === 1 ? "" : "s"} with scores`
+            : "no scores yet"}
+          tone="#475569"
+        />
       </div>
 
-      {c.quiz.detail.length > 0 && (
-        <table style={{ borderCollapse: "collapse", width: "100%", maxWidth: 480, marginBottom: 10 }}>
+      {c.quiz.detail.length > 0 ? (
+        <table style={{ borderCollapse: "collapse", width: "100%", maxWidth: quizOnly ? 620 : 540, marginBottom: 10 }}>
           <thead>
             <tr>
               <th style={{ ...thStyle, textAlign: "left", padding: "5px 8px" }}>Quiz</th>
               <th style={{ ...thStyle, padding: "5px 8px" }}>Date</th>
               <th style={{ ...thStyle, padding: "5px 8px" }}>Score</th>
               <th style={{ ...thStyle, padding: "5px 8px" }}>%</th>
+              <th style={{ ...thStyle, padding: "5px 8px" }}>Class %</th>
             </tr>
           </thead>
           <tbody>
-            {c.quiz.detail.map((q) => (
-              <tr key={q.quizId}>
-                <td style={{ ...tdStyle, padding: "5px 8px" }}>{q.title}</td>
-                <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center", color: "#64748b" }}>{q.date ? formatDateLabel(q.date) : "—"}</td>
-                <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center" }}>{q.score}{q.maxScore ? ` / ${q.maxScore}` : ""}</td>
-                <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center", fontWeight: 700 }}>{fmtPctNum(q.pct)}</td>
-              </tr>
-            ))}
+            {c.quiz.detail.map((q) => {
+              const ca = classAvgByQuiz.get(q.quizId);
+              return (
+                <tr key={q.quizId}>
+                  <td style={{ ...tdStyle, padding: "5px 8px" }}>{q.title}</td>
+                  <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center", color: "#64748b" }}>{q.date ? formatDateLabel(q.date) : "—"}</td>
+                  <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center" }}>{q.score}{q.maxScore ? ` / ${q.maxScore}` : ""}</td>
+                  <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center", fontWeight: 700 }}>{fmtPctNum(q.pct)}</td>
+                  <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center", color: "#64748b" }}>{fmtPctNum(ca?.avgPct ?? null)}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
+      ) : (
+        quizOnly && (
+          <p style={{ margin: "0 0 10px", fontSize: 13, color: "#94a3b8" }}>No quiz scores recorded yet.</p>
+        )
       )}
 
-      <div>
-        <div style={{ fontSize: 12, fontWeight: 600, color: "#475569", marginBottom: 4 }}>Teacher comment</div>
-        {planReadOnly ? (
-          <p style={{ margin: 0, fontSize: 13, color: c.comment ? "#334155" : "#cbd5d1", whiteSpace: "pre-wrap" }}>{c.comment || "—"}</p>
-        ) : (
-          <textarea
-            key={`${c.classId}|${student}`}
-            style={{ ...inputStyle, minHeight: 54, resize: "vertical", fontFamily: "inherit", fontSize: 13 }}
-            defaultValue={c.comment}
-            placeholder={`Comment on ${student}'s progress in ${c.className}…`}
-            onBlur={(e) => { if (e.target.value !== c.comment) saveComment(c.classId, e.target.value); }}
-          />
-        )}
-      </div>
+      {!quizOnly && (
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "#475569", marginBottom: 4 }}>Teacher comment</div>
+          {planReadOnly ? (
+            <p style={{ margin: 0, fontSize: 13, color: c.comment ? "#334155" : "#cbd5d1", whiteSpace: "pre-wrap" }}>{c.comment || "—"}</p>
+          ) : (
+            <textarea
+              key={`${c.classId}|${student}`}
+              style={{ ...inputStyle, minHeight: 54, resize: "vertical", fontFamily: "inherit", fontSize: 13 }}
+              defaultValue={c.comment}
+              placeholder={`Comment on ${student}'s progress in ${c.className}…`}
+              onBlur={(e) => { if (e.target.value !== c.comment) saveComment(c.classId, e.target.value); }}
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -118,6 +150,7 @@ function ClassSection({ c, student, planReadOnly, saveComment }) {
 export default function ReportCards({ data, persist, currentTeacher, planReadOnly }) {
   const { students = [], catalog = [], placements = [], programLabel, term } = data;
   const [mode, setMode] = useState("student"); // "student" | "class"
+  const [quizOnly, setQuizOnly] = useState(false);
   const classes = useMemo(() => sortCatalogForRosterView(catalog, placements), [catalog, placements]);
   const [selectedClassId, setSelectedClassId] = useState(classes[0]?.id || "");
   const [student, setStudent] = useState(students[0] || "");
@@ -168,6 +201,15 @@ export default function ReportCards({ data, persist, currentTeacher, planReadOnl
     return fullCard.classes.filter((c) => c.classId === selectedClassId);
   }, [mode, fullCard.classes, selectedClassId]);
 
+  // Class-wide quiz averages keyed by classId (roster mean + per-quiz means).
+  const classAvgById = useMemo(() => {
+    const m = new Map();
+    (catalog || []).forEach((k) => {
+      m.set(k.id, classQuizAverages(data.quizzes, data.quizScores, k.id, k.students || []));
+    });
+    return m;
+  }, [catalog, data.quizzes, data.quizScores]);
+
   const saveComment = (classId, comment) => {
     if (planReadOnly) return;
     persist((d) => {
@@ -179,23 +221,63 @@ export default function ReportCards({ data, persist, currentTeacher, planReadOnl
   };
 
   const exportAll = () => {
-    const header = ["Student", "Class", "Teacher", "Attendance %", "Present", "Absent", "Tardy", "Excused", "HW completion %", "Quiz avg %"];
-    const rows = [];
     const sourceStudents = mode === "class" ? classRoster : students;
+    const scopeTag = mode === "class" && selectedClass
+      ? selectedClass.name.replace(/[^\w\-]+/g, "_")
+      : "all";
+
+    if (quizOnly) {
+      // One row per student × quiz (detail scores), not just averages.
+      const header = ["Student", "Class", "Teacher", "Quiz", "Date", "Score", "Max", "%", "Quiz avg %", "Class avg %", "Class quiz %"];
+      const rows = [];
+      sourceStudents.forEach((s) => {
+        buildReportCard(s, data).classes.forEach((c) => {
+          if (mode === "class" && c.classId !== selectedClassId) return;
+          const avg = c.quiz.avgPct == null ? "" : Math.round(c.quiz.avgPct);
+          const ca = classAvgById.get(c.classId);
+          const classAvg = ca?.avgPct == null ? "" : Math.round(ca.avgPct);
+          const byQuiz = new Map((ca?.byQuiz || []).map((q) => [q.quizId, q]));
+          if (!c.quiz.detail.length) {
+            rows.push([s, c.className, c.teacher, "", "", "", "", "", avg, classAvg, ""]);
+            return;
+          }
+          c.quiz.detail.forEach((q) => {
+            const cq = byQuiz.get(q.quizId);
+            rows.push([
+              s, c.className, c.teacher, q.title,
+              q.date || "",
+              q.score == null ? "" : q.score,
+              q.maxScore == null ? "" : q.maxScore,
+              q.pct == null ? "" : Math.round(q.pct),
+              avg,
+              classAvg,
+              cq?.avgPct == null ? "" : Math.round(cq.avgPct),
+            ]);
+          });
+        });
+      });
+      downloadCSV(`quiz-scores-${scopeTag}.csv`, [header, ...rows]);
+      return;
+    }
+
+    const header = ["Student", "Class", "Teacher", "Attendance %", "Present", "Absent", "Tardy", "Excused", "HW completion %", "Quiz avg %", "Class quiz avg %"];
+    const rows = [];
     sourceStudents.forEach((s) => {
       buildReportCard(s, data).classes.forEach((c) => {
         if (mode === "class" && c.classId !== selectedClassId) return;
+        const ca = classAvgById.get(c.classId);
         rows.push([
           s, c.className, c.teacher,
           c.attendance.rate == null ? "" : Math.round(c.attendance.rate * 100),
           c.attendance.present, c.attendance.absent, c.attendance.tardy, c.attendance.excused,
           c.homework.rate == null ? "" : Math.round(c.homework.rate * 100),
           c.quiz.avgPct == null ? "" : Math.round(c.quiz.avgPct),
+          ca?.avgPct == null ? "" : Math.round(ca.avgPct),
         ]);
       });
     });
     const name = mode === "class" && selectedClass
-      ? `report-cards-${selectedClass.name.replace(/[^\w\-]+/g, "_")}.csv`
+      ? `report-cards-${scopeTag}.csv`
       : "report-cards.csv";
     downloadCSV(name, [header, ...rows]);
   };
@@ -245,10 +327,25 @@ export default function ReportCards({ data, persist, currentTeacher, planReadOnl
           </select>
         )}
 
+        <button
+          type="button"
+          style={{
+            ...MODE_BTN,
+            ...(quizOnly ? MODE_BTN_ACTIVE : {}),
+            borderRadius: 8,
+          }}
+          aria-pressed={quizOnly}
+          title={quizOnly ? "Showing quiz scores only — click for full report card" : "Show quiz scores only (hide attendance, homework, comments)"}
+          onClick={() => setQuizOnly((v) => !v)}
+        >
+          📝 Quiz only
+        </button>
+
         <span style={{ marginLeft: "auto", fontSize: 12, color: "#94a3b8" }}>
           {mode === "class"
             ? `${classRoster.length} students in class`
             : `${fullCard.classes.length} classes`}
+          {quizOnly ? " · quiz scores" : ""}
         </span>
       </div>
 
@@ -279,7 +376,9 @@ export default function ReportCards({ data, persist, currentTeacher, planReadOnl
             </button>
             <button style={btnPrimary} onClick={() => window.print()}>🖨 Print</button>
             <button style={{ ...btnSecondary, fontSize: 13 }} onClick={exportAll}>
-              ⬇ {mode === "class" ? "Export class (CSV)" : "Export all (CSV)"}
+              ⬇ {quizOnly
+                ? (mode === "class" ? "Export quizzes (CSV)" : "Export all quizzes (CSV)")
+                : (mode === "class" ? "Export class (CSV)" : "Export all (CSV)")}
             </button>
             {mode === "class" && studentList.length > 0 && (
               <span style={{ fontSize: 12, color: "#94a3b8" }}>
@@ -299,6 +398,7 @@ export default function ReportCards({ data, persist, currentTeacher, planReadOnl
           <div style={{ borderBottom: "2px solid #123c3a", paddingBottom: 12, marginBottom: 18 }}>
             <div style={{ fontSize: 12, color: "#64748b", fontWeight: 600 }}>
               {programLabel || "Report Card"}
+              {quizOnly ? " · Quiz scores" : ""}
               {mode === "class" && selectedClass ? ` · ${selectedClass.name}` : ""}
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
@@ -315,7 +415,15 @@ export default function ReportCards({ data, persist, currentTeacher, planReadOnl
             </p>
           ) : (
             displayClasses.map((c) => (
-              <ClassSection key={c.classId} c={c} student={student} planReadOnly={planReadOnly} saveComment={saveComment} />
+              <ClassSection
+                key={c.classId}
+                c={c}
+                student={student}
+                planReadOnly={planReadOnly}
+                saveComment={saveComment}
+                quizOnly={quizOnly}
+                classAvg={classAvgById.get(c.classId) || null}
+              />
             ))
           )}
           <div style={{ marginTop: 16, fontSize: 11, color: "#94a3b8" }}>Generated {new Date().toLocaleDateString()}</div>

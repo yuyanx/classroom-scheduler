@@ -873,6 +873,60 @@ export function quizAverage(
   return { detail, avgPct, avgScore, count: detail.length };
 }
 
+/**
+ * Class-wide quiz averages for a roster.
+ * - `avgPct`: mean of each roster student's personal quiz avg % (students with ≥1 scored quiz).
+ * - `byQuiz`: per-quiz mean % across roster members who have a score for that quiz.
+ */
+export function classQuizAverages(
+  quizzes: QuizLike[] | undefined,
+  quizScores: QuizScoreLike[] | undefined,
+  classId: string,
+  roster: string[],
+) {
+  const classQuizzes = (quizzes || []).filter((q) => q.classId === classId);
+  const scoreByKey = new Map<string, number>();
+  (quizScores || []).forEach((s) => {
+    const score = Number(s.score);
+    if (!Number.isFinite(score)) return;
+    scoreByKey.set(`${s.quizId}|${studentKey(s.student)}`, score);
+  });
+
+  const byQuiz: { quizId: string; title: string; date: string; avgPct: number | null; n: number }[] = [];
+  classQuizzes.forEach((q) => {
+    const max = Number(q.maxScore) > 0 ? Number(q.maxScore) : null;
+    if (!max) {
+      byQuiz.push({ quizId: q.id, title: q.title || "Quiz", date: q.date || "", avgPct: null, n: 0 });
+      return;
+    }
+    const pcts: number[] = [];
+    (roster || []).forEach((s) => {
+      const score = scoreByKey.get(`${q.id}|${studentKey(s)}`);
+      if (score == null) return;
+      pcts.push((score / max) * 100);
+    });
+    byQuiz.push({
+      quizId: q.id,
+      title: q.title || "Quiz",
+      date: q.date || "",
+      avgPct: pcts.length ? pcts.reduce((a, b) => a + b, 0) / pcts.length : null,
+      n: pcts.length,
+    });
+  });
+  byQuiz.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+
+  const studentAvgs: number[] = [];
+  (roster || []).forEach((s) => {
+    const avg = quizAverage(quizzes, quizScores, classId, s).avgPct;
+    if (avg != null) studentAvgs.push(avg);
+  });
+  const avgPct = studentAvgs.length
+    ? studentAvgs.reduce((a, b) => a + b, 0) / studentAvgs.length
+    : null;
+
+  return { avgPct, studentCount: studentAvgs.length, byQuiz };
+}
+
 type ReportData = {
   catalog?: { id: string; name: string; teacher?: string; students?: string[] }[];
   placements?: SessionPlacement[];

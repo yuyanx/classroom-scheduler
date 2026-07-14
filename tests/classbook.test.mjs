@@ -10,6 +10,7 @@ import {
   attendanceSummary,
   homeworkCompletionRate,
   quizAverage,
+  classQuizAverages,
   buildReportCard,
   normalizeV2,
 } from "../dist/test-logic.mjs";
@@ -129,6 +130,29 @@ test("quizAverage ignores scores for quizzes in other classes", () => {
   const r = quizAverage(quizzes, [{ quizId: "qX", student: "Alex", score: 99 }], "k1", "Alex");
   assert.equal(r.count, 0);
   assert.equal(r.avgPct, null);
+});
+
+test("classQuizAverages means student avgs and per-quiz roster means", () => {
+  const scores = [
+    { quizId: "q1", student: "Alex", score: 80 },   // 80%
+    { quizId: "q2", student: "Alex", score: 45 },   // 90% → Alex avg 85
+    { quizId: "q1", student: "Bailey", score: 60 }, // 60%
+    { quizId: "q2", student: "Bailey", score: 40 }, // 80% → Bailey avg 70
+  ];
+  const r = classQuizAverages(quizzes, scores, "k1", ["Alex", "Bailey", "Casey"]);
+  assert.equal(r.studentCount, 2); // Casey has no scores
+  assert.equal(r.avgPct, 77.5); // (85+70)/2
+  assert.equal(r.byQuiz.length, 2);
+  assert.equal(r.byQuiz[0].avgPct, 70); // (80+60)/2
+  assert.equal(r.byQuiz[0].n, 2);
+  assert.equal(r.byQuiz[1].avgPct, 85); // (90+80)/2
+});
+
+test("classQuizAverages returns nulls with no scores", () => {
+  const r = classQuizAverages(quizzes, [], "k1", ["Alex"]);
+  assert.equal(r.avgPct, null);
+  assert.equal(r.studentCount, 0);
+  assert.equal(r.byQuiz[0].avgPct, null);
 });
 
 // ── Report card aggregation ──

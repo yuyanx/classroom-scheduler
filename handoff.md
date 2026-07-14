@@ -470,9 +470,11 @@ staffPins:      { "<teacher name>": "<pin>" }   // legacy; no longer written by 
 - **Tabs.** `📓 Classbook` (lesson content + homework + attendance/homework-completion per session;
   responsive card layout on narrow screens via `useIsNarrow`), `📝 Grades` (quiz grid + averages +
   CSV), `🪪 Report Cards` (aggregation via `buildReportCard`; toggle **🎓 By Student** vs
-  **📋 By Class** roster walk-through; `🖨 Print` via an injected `@media print` style; CSV export
-  for all students or the selected class). The Class Library `<aside>` is hidden on these three tabs
-  (they have their own class pickers) — this also gives the Classbook full width on mobile.
+  **📋 By Class** roster walk-through; optional **📝 Quiz only** filter for scores without
+  attendance/homework/comments; `🖨 Print` via an injected `@media print` style; CSV export
+  for all students or the selected class, with quiz-detail rows when Quiz only is on). The Class
+  Library `<aside>` is hidden on these three tabs (they have their own class pickers) — this also
+  gives the Classbook full width on mobile.
 - **Who's recording (audit label only).** Header **👤 Who's recording** / **Recording as …** picks
   the current teacher from `teachers`; stored in `localStorage` (`premier-current-teacher`) and
   stamped as `by`/`at` on Classbook / Grades / Report Card records. **Not** a login — no PIN,
@@ -637,6 +639,12 @@ the top; `STUDENT_CLASH_TOKENS` stays imported in `App.jsx` for its inline grid 
   **📋 By Class** toggle. By Class picks a class (same sorted catalog as Classbook/Grades), walks
   that roster with ◀ ▶, and shows only that class’s section on each student’s card. CSV export
   scopes to the selected class when in By Class mode. Source: `src/components/ReportCards.jsx`.
+- 2026-07-14 — **Report Cards · Quiz only**: toolbar toggle **📝 Quiz only** hides attendance,
+  homework, and teacher comments; card shows quiz average + per-quiz score table. CSV exports
+  one row per student × quiz with score/max/% when Quiz only is on.
+- 2026-07-14 — **Report Cards · Class average**: each class section shows a **Class average**
+  tile (mean of roster students’ quiz avgs) and a **Class %** column per quiz via
+  `classQuizAverages` in `scheduleLogic.ts`. CSV includes class avg columns.
 
 ---
 

@@ -41,6 +41,7 @@ export {
   attendanceSummary,
   homeworkCompletionRate,
   quizAverage,
+  classQuizAverages,
   buildReportCard,
 } from "./domain/scheduleLogic.ts";
 
