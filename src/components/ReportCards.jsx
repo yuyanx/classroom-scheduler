@@ -47,6 +47,15 @@ function StatTile({ label, value, sub, tone }) {
   );
 }
 
+/** Color a student % relative to the class average (not absolute grade thresholds). */
+function toneVsClass(studentPct, classPct) {
+  if (studentPct == null || classPct == null) return "#123c3a";
+  const delta = studentPct - classPct;
+  if (delta >= 0) return "#0f766e"; // at or above class average
+  if (delta > -10) return "#b45309"; // a little below
+  return "#b91c1c"; // well below class average
+}
+
 function ClassSection({ c, student, planReadOnly, saveComment, quizOnly, classAvg }) {
   const classAvgPct = classAvg?.avgPct ?? null;
   const classAvgByQuiz = useMemo(() => {
@@ -83,7 +92,7 @@ function ClassSection({ c, student, planReadOnly, saveComment, quizOnly, classAv
           label="Quiz average"
           value={fmtPctNum(c.quiz.avgPct)}
           sub={`${c.quiz.count} quiz${c.quiz.count === 1 ? "" : "zes"}`}
-          tone={c.quiz.avgPct != null && c.quiz.avgPct < 60 ? "#b91c1c" : "#0f766e"}
+          tone={toneVsClass(c.quiz.avgPct, classAvgPct)}
         />
         <StatTile
           label="Class average"
@@ -109,12 +118,13 @@ function ClassSection({ c, student, planReadOnly, saveComment, quizOnly, classAv
           <tbody>
             {c.quiz.detail.map((q) => {
               const ca = classAvgByQuiz.get(q.quizId);
+              const pctTone = toneVsClass(q.pct, ca?.avgPct ?? null);
               return (
                 <tr key={q.quizId}>
                   <td style={{ ...tdStyle, padding: "5px 8px" }}>{q.title}</td>
                   <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center", color: "#64748b" }}>{q.date ? formatDateLabel(q.date) : "—"}</td>
                   <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center" }}>{q.score}{q.maxScore ? ` / ${q.maxScore}` : ""}</td>
-                  <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center", fontWeight: 700 }}>{fmtPctNum(q.pct)}</td>
+                  <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center", fontWeight: 700, color: pctTone }}>{fmtPctNum(q.pct)}</td>
                   <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center", color: "#64748b" }}>{fmtPctNum(ca?.avgPct ?? null)}</td>
                 </tr>
               );
