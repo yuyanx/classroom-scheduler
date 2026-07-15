@@ -645,6 +645,9 @@ the top; `STUDENT_CLASH_TOKENS` stays imported in `App.jsx` for its inline grid 
 - 2026-07-14 — **Report Cards · Class average**: each class section shows a **Class average**
   tile (mean of roster students’ quiz avgs) and a **Class %** column per quiz via
   `classQuizAverages` in `scheduleLogic.ts`. CSV includes class avg columns.
+- 2026-07-15 — **Report Cards · SAT combined total**: pairs **SAT Math** + **SAT ELA** (and
+  Afternoon variants on their own track) by practice date+title; shows Math/ELA/Total and
+  class average total via `buildSatTotals` / `satSubjectOf`. PSAT is not paired.
 
 ---
 

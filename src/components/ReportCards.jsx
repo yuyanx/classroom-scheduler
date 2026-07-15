@@ -5,13 +5,17 @@
 import React, { useState, useMemo, useEffect } from "react";
 import {
   buildReportCard,
+  buildSatTotals,
   classQuizAverages,
   formatDateLabel,
   studentKey,
+  satSubjectOf,
   sortCatalogForRosterView,
 } from "../domain/scheduleLogic.ts";
 import { inputStyle, selStyle, btnPrimary, btnSecondary, thStyle, tdStyle } from "./uikit.jsx";
 import { fmtPct, fmtPctNum, downloadCSV } from "./classbookUtils.jsx";
+
+const fmtScore = (n) => (n == null || !Number.isFinite(n) ? "—" : `${Math.round(n)}`);
 
 const PRINT_CSS = `@media print {
   body * { visibility: hidden !important; }
@@ -54,6 +58,115 @@ function toneVsClass(studentPct, classPct) {
   if (delta >= 0) return "#0f766e"; // at or above class average
   if (delta > -10) return "#b45309"; // a little below
   return "#b91c1c"; // well below class average
+}
+
+/** Color a raw SAT total relative to class average total (points, not %). */
+function toneVsClassScore(studentScore, classScore) {
+  if (studentScore == null || classScore == null) return "#123c3a";
+  const delta = studentScore - classScore;
+  if (delta >= 0) return "#0f766e";
+  if (delta > -50) return "#b45309"; // within ~50 pts
+  return "#b91c1c";
+}
+
+function SatTotalsSection({ tracks }) {
+  if (!tracks?.length) return null;
+  return (
+    <>
+      {tracks.map((t) => {
+        const quizDates = [...new Set(t.pairs.map((p) => p.date).filter(Boolean))];
+        return (
+          <div
+            key={t.track}
+            style={{
+              marginTop: 8,
+              marginBottom: 8,
+              breakInside: "avoid",
+              border: "1px solid #c7e0dc",
+              borderRadius: 12,
+              padding: 16,
+              background: "#f4faf9",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 6, marginBottom: 4 }}>
+              <h3 style={{ margin: 0, color: "#123c3a", fontSize: 18 }}>{t.label} · Combined total</h3>
+              <div style={{ fontSize: 12, color: "#64748b" }}>
+                {t.mathClassName} + {t.elaClassName}
+              </div>
+            </div>
+            <div style={{ fontSize: 12, color: "#64748b", marginBottom: 10 }}>
+              Math + ELA section scores (each typically /800 → total /1600)
+              {quizDates.length > 0 && (
+                <span>
+                  {" · "}
+                  Quiz date{quizDates.length === 1 ? "" : "s"}:{" "}
+                  <b style={{ color: "#334155", fontWeight: 700 }}>
+                    {quizDates.map((d) => formatDateLabel(d)).join(", ")}
+                  </b>
+                </span>
+              )}
+            </div>
+
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", margin: "10px 0" }}>
+              <StatTile label="Math avg" value={fmtScore(t.avgMath)} sub={t.mathClassName} tone="#123c3a" />
+              <StatTile label="ELA avg" value={fmtScore(t.avgEla)} sub={t.elaClassName} tone="#123c3a" />
+              <StatTile
+                label="Total avg"
+                value={fmtScore(t.avgTotal)}
+                sub={t.classAvgTotal != null ? `class ${fmtScore(t.classAvgTotal)}` : "need both sections"}
+                tone={toneVsClassScore(t.avgTotal, t.classAvgTotal)}
+              />
+            </div>
+
+            {t.pairs.length > 0 ? (
+              <table style={{ borderCollapse: "collapse", width: "100%", maxWidth: 640, marginBottom: 4 }}>
+                <thead>
+                  <tr>
+                    <th style={{ ...thStyle, textAlign: "left", padding: "5px 8px" }}>Quiz date</th>
+                    <th style={{ ...thStyle, textAlign: "left", padding: "5px 8px" }}>Practice</th>
+                    <th style={{ ...thStyle, padding: "5px 8px" }}>Math</th>
+                    <th style={{ ...thStyle, padding: "5px 8px" }}>ELA</th>
+                    <th style={{ ...thStyle, padding: "5px 8px" }}>Total</th>
+                    <th style={{ ...thStyle, padding: "5px 8px" }}>Class total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {t.pairs.map((p) => {
+                    const totalTone = toneVsClassScore(p.total, p.classAvgTotal);
+                    return (
+                      <tr key={p.key}>
+                        <td style={{ ...tdStyle, padding: "5px 8px", fontWeight: 700, color: "#334155" }}>
+                          {p.date ? formatDateLabel(p.date) : "—"}
+                        </td>
+                        <td style={{ ...tdStyle, padding: "5px 8px" }}>{p.title}</td>
+                        <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center" }}>
+                          {fmtScore(p.math?.score ?? null)}
+                          {p.math?.maxScore ? <span style={{ color: "#94a3b8", fontSize: 11 }}> / {p.math.maxScore}</span> : null}
+                        </td>
+                        <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center" }}>
+                          {fmtScore(p.ela?.score ?? null)}
+                          {p.ela?.maxScore ? <span style={{ color: "#94a3b8", fontSize: 11 }}> / {p.ela.maxScore}</span> : null}
+                        </td>
+                        <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center", fontWeight: 800, color: totalTone }}>
+                          {fmtScore(p.total)}
+                          {p.total != null && p.maxTotal ? <span style={{ color: "#94a3b8", fontWeight: 600, fontSize: 11 }}> / {p.maxTotal}</span> : null}
+                        </td>
+                        <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center", color: "#64748b" }}>
+                          {fmtScore(p.classAvgTotal)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            ) : (
+              <p style={{ margin: 0, fontSize: 13, color: "#94a3b8" }}>No SAT practice scores recorded yet.</p>
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
 }
 
 function ClassSection({ c, student, planReadOnly, saveComment, quizOnly, classAvg }) {
@@ -219,6 +332,20 @@ export default function ReportCards({ data, persist, currentTeacher, planReadOnl
     });
     return m;
   }, [catalog, data.quizzes, data.quizScores]);
+
+  // SAT Math + ELA combined totals for the current student.
+  const satTracksAll = useMemo(
+    () => (student ? buildSatTotals(student, data) : []),
+    [student, data],
+  );
+  // In By Class mode, only show the SAT track that includes the selected class.
+  const satTracks = useMemo(() => {
+    if (mode !== "class") return satTracksAll;
+    if (!selectedClassId) return [];
+    const sub = satSubjectOf(selectedClass?.name || "");
+    if (!sub) return [];
+    return satTracksAll.filter((t) => t.track === sub.track);
+  }, [mode, satTracksAll, selectedClassId, selectedClass]);
 
   const saveComment = (classId, comment) => {
     if (planReadOnly) return;
@@ -417,7 +544,7 @@ export default function ReportCards({ data, persist, currentTeacher, planReadOnl
             </div>
           </div>
 
-          {displayClasses.length === 0 ? (
+          {displayClasses.length === 0 && satTracks.length === 0 ? (
             <p style={{ color: "#94a3b8", fontSize: 14 }}>
               {mode === "class"
                 ? `${student} has no report data for this class yet.`
@@ -436,6 +563,10 @@ export default function ReportCards({ data, persist, currentTeacher, planReadOnl
               />
             ))
           )}
+
+          {/* SAT combined total sits at the bottom, under per-class sections */}
+          {satTracks.length > 0 && <SatTotalsSection tracks={satTracks} />}
+
           <div style={{ marginTop: 16, fontSize: 11, color: "#94a3b8" }}>Generated {new Date().toLocaleDateString()}</div>
         </div>
       )}

@@ -11,6 +11,8 @@ import {
   homeworkCompletionRate,
   quizAverage,
   classQuizAverages,
+  satSubjectOf,
+  buildSatTotals,
   buildReportCard,
   normalizeV2,
 } from "../dist/test-logic.mjs";
@@ -153,6 +155,73 @@ test("classQuizAverages returns nulls with no scores", () => {
   assert.equal(r.avgPct, null);
   assert.equal(r.studentCount, 0);
   assert.equal(r.byQuiz[0].avgPct, null);
+});
+
+// ── SAT combined totals ──
+test("satSubjectOf classifies Math/ELA tracks and skips PSAT", () => {
+  assert.deepEqual(satSubjectOf("SAT Math"), { kind: "math", track: "sat", label: "SAT" });
+  assert.deepEqual(satSubjectOf("SAT ELA"), { kind: "ela", track: "sat", label: "SAT" });
+  assert.equal(satSubjectOf("SAT Math Afternoon")?.track, "sat-afternoon");
+  assert.equal(satSubjectOf("PSAT"), null);
+  assert.equal(satSubjectOf("G8 Math"), null);
+});
+
+test("buildSatTotals sums Math + ELA for the same practice test", () => {
+  const data = {
+    catalog: [
+      { id: "sm", name: "SAT Math", teacher: "H", students: ["Alex", "Bailey"] },
+      { id: "se", name: "SAT ELA", teacher: "J", students: ["Alex", "Bailey"] },
+      { id: "g8", name: "G8 Math", teacher: "L", students: ["Alex"] },
+    ],
+    quizzes: [
+      { id: "qm1", classId: "sm", date: "2026-07-10", title: "Quiz 1", maxScore: 800 },
+      { id: "qe1", classId: "se", date: "2026-07-10", title: "Quiz 1", maxScore: 800 },
+    ],
+    quizScores: [
+      { quizId: "qm1", student: "Alex", score: 700 },
+      { quizId: "qe1", student: "Alex", score: 650 },
+      { quizId: "qm1", student: "Bailey", score: 600 },
+      { quizId: "qe1", student: "Bailey", score: 620 },
+    ],
+  };
+  const tracks = buildSatTotals("Alex", data);
+  assert.equal(tracks.length, 1);
+  assert.equal(tracks[0].label, "SAT");
+  assert.equal(tracks[0].pairs.length, 1);
+  assert.equal(tracks[0].pairs[0].total, 1350);
+  assert.equal(tracks[0].pairs[0].maxTotal, 1600);
+  assert.equal(tracks[0].avgTotal, 1350);
+  // Class avg total = (1350 + 1220) / 2
+  assert.equal(tracks[0].pairs[0].classAvgTotal, 1285);
+});
+
+test("buildSatTotals keeps afternoon track separate", () => {
+  const data = {
+    catalog: [
+      { id: "sm", name: "SAT Math", students: ["Alex"] },
+      { id: "se", name: "SAT ELA", students: ["Alex"] },
+      { id: "sma", name: "SAT Math Afternoon", students: ["Alex"] },
+      { id: "sea", name: "SAT ELA Afternoon", students: ["Alex"] },
+    ],
+    quizzes: [
+      { id: "qm", classId: "sm", date: "2026-07-10", title: "Quiz 1", maxScore: 800 },
+      { id: "qe", classId: "se", date: "2026-07-10", title: "Quiz 1", maxScore: 800 },
+      { id: "qma", classId: "sma", date: "2026-07-10", title: "Quiz 1", maxScore: 800 },
+      { id: "qea", classId: "sea", date: "2026-07-10", title: "Quiz 1", maxScore: 800 },
+    ],
+    quizScores: [
+      { quizId: "qm", student: "Alex", score: 700 },
+      { quizId: "qe", student: "Alex", score: 650 },
+      { quizId: "qma", student: "Alex", score: 500 },
+      { quizId: "qea", student: "Alex", score: 510 },
+    ],
+  };
+  const tracks = buildSatTotals("Alex", data);
+  assert.equal(tracks.length, 2);
+  const am = tracks.find((t) => t.track === "sat");
+  const pm = tracks.find((t) => t.track === "sat-afternoon");
+  assert.equal(am.pairs[0].total, 1350);
+  assert.equal(pm.pairs[0].total, 1010);
 });
 
 // ── Report card aggregation ──
