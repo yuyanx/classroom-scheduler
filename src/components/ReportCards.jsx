@@ -60,15 +60,6 @@ function toneVsClass(studentPct, classPct) {
   return "#b91c1c"; // well below class average
 }
 
-/** Color a raw SAT total relative to class average total (points, not %). */
-function toneVsClassScore(studentScore, classScore) {
-  if (studentScore == null || classScore == null) return "#123c3a";
-  const delta = studentScore - classScore;
-  if (delta >= 0) return "#0f766e";
-  if (delta > -50) return "#b45309"; // within ~50 pts
-  return "#b91c1c";
-}
-
 function SatTotalsSection({ tracks }) {
   if (!tracks?.length) return null;
   return (
@@ -113,13 +104,13 @@ function SatTotalsSection({ tracks }) {
               <StatTile
                 label="Total avg"
                 value={fmtScore(t.avgTotal)}
-                sub={t.classAvgTotal != null ? `class ${fmtScore(t.classAvgTotal)}` : "need both sections"}
-                tone={toneVsClassScore(t.avgTotal, t.classAvgTotal)}
+                sub={t.avgTotal == null ? "need both sections" : undefined}
+                tone="#123c3a"
               />
             </div>
 
             {t.pairs.length > 0 ? (
-              <table style={{ borderCollapse: "collapse", width: "100%", maxWidth: 640, marginBottom: 4 }}>
+              <table style={{ borderCollapse: "collapse", width: "100%", maxWidth: 560, marginBottom: 4 }}>
                 <thead>
                   <tr>
                     <th style={{ ...thStyle, textAlign: "left", padding: "5px 8px" }}>Quiz date</th>
@@ -127,36 +118,29 @@ function SatTotalsSection({ tracks }) {
                     <th style={{ ...thStyle, padding: "5px 8px" }}>Math</th>
                     <th style={{ ...thStyle, padding: "5px 8px" }}>ELA</th>
                     <th style={{ ...thStyle, padding: "5px 8px" }}>Total</th>
-                    <th style={{ ...thStyle, padding: "5px 8px" }}>Class total</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {t.pairs.map((p) => {
-                    const totalTone = toneVsClassScore(p.total, p.classAvgTotal);
-                    return (
-                      <tr key={p.key}>
-                        <td style={{ ...tdStyle, padding: "5px 8px", fontWeight: 700, color: "#334155" }}>
-                          {p.date ? formatDateLabel(p.date) : "—"}
-                        </td>
-                        <td style={{ ...tdStyle, padding: "5px 8px" }}>{p.title}</td>
-                        <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center" }}>
-                          {fmtScore(p.math?.score ?? null)}
-                          {p.math?.maxScore ? <span style={{ color: "#94a3b8", fontSize: 11 }}> / {p.math.maxScore}</span> : null}
-                        </td>
-                        <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center" }}>
-                          {fmtScore(p.ela?.score ?? null)}
-                          {p.ela?.maxScore ? <span style={{ color: "#94a3b8", fontSize: 11 }}> / {p.ela.maxScore}</span> : null}
-                        </td>
-                        <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center", fontWeight: 800, color: totalTone }}>
-                          {fmtScore(p.total)}
-                          {p.total != null && p.maxTotal ? <span style={{ color: "#94a3b8", fontWeight: 600, fontSize: 11 }}> / {p.maxTotal}</span> : null}
-                        </td>
-                        <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center", color: "#64748b" }}>
-                          {fmtScore(p.classAvgTotal)}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {t.pairs.map((p) => (
+                    <tr key={p.key}>
+                      <td style={{ ...tdStyle, padding: "5px 8px", fontWeight: 700, color: "#334155" }}>
+                        {p.date ? formatDateLabel(p.date) : "—"}
+                      </td>
+                      <td style={{ ...tdStyle, padding: "5px 8px" }}>{p.title}</td>
+                      <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center" }}>
+                        {fmtScore(p.math?.score ?? null)}
+                        {p.math?.maxScore ? <span style={{ color: "#94a3b8", fontSize: 11 }}> / {p.math.maxScore}</span> : null}
+                      </td>
+                      <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center" }}>
+                        {fmtScore(p.ela?.score ?? null)}
+                        {p.ela?.maxScore ? <span style={{ color: "#94a3b8", fontSize: 11 }}> / {p.ela.maxScore}</span> : null}
+                      </td>
+                      <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center", fontWeight: 800, color: "#123c3a" }}>
+                        {fmtScore(p.total)}
+                        {p.total != null && p.maxTotal ? <span style={{ color: "#94a3b8", fontWeight: 600, fontSize: 11 }}> / {p.maxTotal}</span> : null}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             ) : (
@@ -170,12 +154,14 @@ function SatTotalsSection({ tracks }) {
 }
 
 function ClassSection({ c, student, planReadOnly, saveComment, quizOnly, classAvg }) {
-  const classAvgPct = classAvg?.avgPct ?? null;
+  // SAT classes: student scores only — no class average / Class % comparison.
+  const isSat = !!satSubjectOf(c.className);
+  const classAvgPct = isSat ? null : (classAvg?.avgPct ?? null);
   const classAvgByQuiz = useMemo(() => {
     const m = new Map();
-    (classAvg?.byQuiz || []).forEach((q) => m.set(q.quizId, q));
+    if (!isSat) (classAvg?.byQuiz || []).forEach((q) => m.set(q.quizId, q));
     return m;
-  }, [classAvg]);
+  }, [classAvg, isSat]);
 
   return (
     <div style={{ marginBottom: 22, breakInside: "avoid" }}>
@@ -205,40 +191,44 @@ function ClassSection({ c, student, planReadOnly, saveComment, quizOnly, classAv
           label="Quiz average"
           value={fmtPctNum(c.quiz.avgPct)}
           sub={`${c.quiz.count} quiz${c.quiz.count === 1 ? "" : "zes"}`}
-          tone={toneVsClass(c.quiz.avgPct, classAvgPct)}
+          tone={isSat ? "#123c3a" : toneVsClass(c.quiz.avgPct, classAvgPct)}
         />
-        <StatTile
-          label="Class average"
-          value={fmtPctNum(classAvgPct)}
-          sub={classAvg?.studentCount
-            ? `${classAvg.studentCount} student${classAvg.studentCount === 1 ? "" : "s"} with scores`
-            : "no scores yet"}
-          tone="#475569"
-        />
+        {!isSat && (
+          <StatTile
+            label="Class average"
+            value={fmtPctNum(classAvgPct)}
+            sub={classAvg?.studentCount
+              ? `${classAvg.studentCount} student${classAvg.studentCount === 1 ? "" : "s"} with scores`
+              : "no scores yet"}
+            tone="#475569"
+          />
+        )}
       </div>
 
       {c.quiz.detail.length > 0 ? (
-        <table style={{ borderCollapse: "collapse", width: "100%", maxWidth: quizOnly ? 620 : 540, marginBottom: 10 }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", maxWidth: quizOnly ? (isSat ? 480 : 620) : (isSat ? 420 : 540), marginBottom: 10 }}>
           <thead>
             <tr>
               <th style={{ ...thStyle, textAlign: "left", padding: "5px 8px" }}>Quiz</th>
               <th style={{ ...thStyle, padding: "5px 8px" }}>Date</th>
               <th style={{ ...thStyle, padding: "5px 8px" }}>Score</th>
               <th style={{ ...thStyle, padding: "5px 8px" }}>%</th>
-              <th style={{ ...thStyle, padding: "5px 8px" }}>Class %</th>
+              {!isSat && <th style={{ ...thStyle, padding: "5px 8px" }}>Class %</th>}
             </tr>
           </thead>
           <tbody>
             {c.quiz.detail.map((q) => {
               const ca = classAvgByQuiz.get(q.quizId);
-              const pctTone = toneVsClass(q.pct, ca?.avgPct ?? null);
+              const pctTone = isSat ? "#123c3a" : toneVsClass(q.pct, ca?.avgPct ?? null);
               return (
                 <tr key={q.quizId}>
                   <td style={{ ...tdStyle, padding: "5px 8px" }}>{q.title}</td>
                   <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center", color: "#64748b" }}>{q.date ? formatDateLabel(q.date) : "—"}</td>
                   <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center" }}>{q.score}{q.maxScore ? ` / ${q.maxScore}` : ""}</td>
                   <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center", fontWeight: 700, color: pctTone }}>{fmtPctNum(q.pct)}</td>
-                  <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center", color: "#64748b" }}>{fmtPctNum(ca?.avgPct ?? null)}</td>
+                  {!isSat && (
+                    <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center", color: "#64748b" }}>{fmtPctNum(ca?.avgPct ?? null)}</td>
+                  )}
                 </tr>
               );
             })}
@@ -338,13 +328,15 @@ export default function ReportCards({ data, persist, currentTeacher, planReadOnl
     () => (student ? buildSatTotals(student, data) : []),
     [student, data],
   );
-  // In By Class mode, only show the SAT track that includes the selected class.
+  // In By Class mode, show any combined-total table that includes this class
+  // (works for same-session tracks and cross-session AM Math + PM ELA merges).
   const satTracks = useMemo(() => {
     if (mode !== "class") return satTracksAll;
     if (!selectedClassId) return [];
-    const sub = satSubjectOf(selectedClass?.name || "");
-    if (!sub) return [];
-    return satTracksAll.filter((t) => t.track === sub.track);
+    if (!satSubjectOf(selectedClass?.name || "")) return [];
+    return satTracksAll.filter(
+      (t) => t.mathClassId === selectedClassId || t.elaClassId === selectedClassId,
+    );
   }, [mode, satTracksAll, selectedClassId, selectedClass]);
 
   const saveComment = (classId, comment) => {

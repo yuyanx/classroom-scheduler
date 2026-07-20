@@ -191,11 +191,9 @@ test("buildSatTotals sums Math + ELA for the same practice test", () => {
   assert.equal(tracks[0].pairs[0].total, 1350);
   assert.equal(tracks[0].pairs[0].maxTotal, 1600);
   assert.equal(tracks[0].avgTotal, 1350);
-  // Class avg total = (1350 + 1220) / 2
-  assert.equal(tracks[0].pairs[0].classAvgTotal, 1285);
 });
 
-test("buildSatTotals keeps afternoon track separate", () => {
+test("buildSatTotals keeps afternoon track separate when student is on both full programs", () => {
   const data = {
     catalog: [
       { id: "sm", name: "SAT Math", students: ["Alex"] },
@@ -222,6 +220,37 @@ test("buildSatTotals keeps afternoon track separate", () => {
   const pm = tracks.find((t) => t.track === "sat-afternoon");
   assert.equal(am.pairs[0].total, 1350);
   assert.equal(pm.pairs[0].total, 1010);
+});
+
+test("buildSatTotals merges morning Math + afternoon ELA into one table", () => {
+  const data = {
+    catalog: [
+      { id: "sm", name: "SAT Math", students: ["Alex"] },
+      { id: "se", name: "SAT ELA", students: ["Bailey"] },
+      { id: "sma", name: "SAT Math Afternoon", students: ["Bailey"] },
+      { id: "sea", name: "SAT ELA Afternoon", students: ["Alex"] },
+    ],
+    quizzes: [
+      { id: "qm", classId: "sm", date: "2026-07-10", title: "Quiz 1", maxScore: 800 },
+      { id: "qe", classId: "se", date: "2026-07-10", title: "Quiz 1", maxScore: 800 },
+      { id: "qma", classId: "sma", date: "2026-07-10", title: "Quiz 1", maxScore: 800 },
+      { id: "qea", classId: "sea", date: "2026-07-10", title: "Quiz 1", maxScore: 800 },
+    ],
+    quizScores: [
+      { quizId: "qm", student: "Alex", score: 720 },
+      { quizId: "qea", student: "Alex", score: 640 },
+    ],
+  };
+  const tracks = buildSatTotals("Alex", data);
+  assert.equal(tracks.length, 1);
+  assert.equal(tracks[0].label, "SAT");
+  assert.equal(tracks[0].mathClassName, "SAT Math");
+  assert.equal(tracks[0].elaClassName, "SAT ELA Afternoon");
+  assert.equal(tracks[0].pairs.length, 1);
+  assert.equal(tracks[0].pairs[0].math?.score, 720);
+  assert.equal(tracks[0].pairs[0].ela?.score, 640);
+  assert.equal(tracks[0].pairs[0].total, 1360);
+  assert.equal(tracks[0].avgTotal, 1360);
 });
 
 // ── Report card aggregation ──

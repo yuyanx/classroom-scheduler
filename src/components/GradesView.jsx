@@ -7,6 +7,7 @@ import {
   studentKey,
   quizAverage,
   sortCatalogForRosterView,
+  satSubjectOf,
 } from "../domain/scheduleLogic.ts";
 import { inputStyle, selStyle, btnPrimary, btnSecondary, miniBtn, thStyle, tdStyle } from "./uikit.jsx";
 import { fmtPctNum, downloadCSV } from "./classbookUtils.jsx";
@@ -23,6 +24,8 @@ export default function GradesView({ data, persist, currentTeacher, planReadOnly
 
   const cls = catalog.find((k) => k.id === selectedClassId) || null;
   const roster = cls?.students || [];
+  // SAT classes: hide class-average row (student scores + combined total only on Report Cards).
+  const isSatClass = !!satSubjectOf(cls?.name || "");
 
   const quizzes = useMemo(
     () => (data.quizzes || []).filter((q) => q.classId === selectedClassId).slice().sort((a, b) => String(a.date).localeCompare(String(b.date))),
@@ -190,11 +193,13 @@ export default function GradesView({ data, persist, currentTeacher, planReadOnly
                       </tr>
                     );
                   })}
-                  <tr>
-                    <td style={{ ...tdStyle, fontWeight: 700, color: "#64748b", position: "sticky", left: 0, background: "#fafaf8" }}>Class avg</td>
-                    {quizzes.map((q) => { const a = classAvgForQuiz(q); return <td key={q.id} style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: "#64748b", background: "#fafaf8" }}>{fmtPctNum(a)}</td>; })}
-                    <td style={{ ...tdStyle, background: "#fafaf8" }} />
-                  </tr>
+                  {!isSatClass && (
+                    <tr>
+                      <td style={{ ...tdStyle, fontWeight: 700, color: "#64748b", position: "sticky", left: 0, background: "#fafaf8" }}>Class avg</td>
+                      {quizzes.map((q) => { const a = classAvgForQuiz(q); return <td key={q.id} style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: "#64748b", background: "#fafaf8" }}>{fmtPctNum(a)}</td>; })}
+                      <td style={{ ...tdStyle, background: "#fafaf8" }} />
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
