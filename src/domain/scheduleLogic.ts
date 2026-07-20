@@ -938,8 +938,9 @@ type ReportData = {
 };
 
 /**
- * Classify SAT subject classes (Math vs ELA). PSAT is excluded (name contains "SAT").
- * Afternoon variants share a separate track so they pair with each other only.
+ * Classify SAT subject classes (Math vs ELA). PSAT is excluded.
+ * Afternoon variants use a separate session track so full AM + full PM programs stay separate;
+ * cross-session students (e.g. AM Math + PM ELA) are merged in buildSatTotals.
  */
 export function satSubjectOf(className: string): { kind: "math" | "ela"; track: string; label: string } | null {
   const name = String(className || "").trim();
@@ -964,11 +965,107 @@ type SatQuizSide = {
   score: number | null;
 };
 
+type SatPair = {
+  key: string;
+  title: string;
+  date: string;
+  math: SatQuizSide | null;
+  ela: SatQuizSide | null;
+  total: number | null;
+  maxTotal: number | null;
+};
+
+type SatTrackResult = {
+  track: string;
+  label: string;
+  mathClassId: string | null;
+  elaClassId: string | null;
+  mathClassName: string;
+  elaClassName: string;
+  pairs: SatPair[];
+  avgMath: number | null;
+  avgEla: number | null;
+  avgTotal: number | null;
+};
+
+/** Prefer a quiz that has a score; otherwise keep the first. */
+function pickBestSide(list: SatQuizSide[]): SatQuizSide | null {
+  if (!list.length) return null;
+  const withScore = list.find((q) => q.score != null);
+  return withScore || list[0];
+}
+
+function pairMathEla(mathQ: SatQuizSide[], elaQ: SatQuizSide[]): SatPair[] {
+  const mathByKey = new Map<string, SatQuizSide[]>();
+  mathQ.forEach((q) => {
+    const pk = satPairKey(q.date, q.title);
+    if (!mathByKey.has(pk)) mathByKey.set(pk, []);
+    mathByKey.get(pk)!.push(q);
+  });
+  const elaByKey = new Map<string, SatQuizSide[]>();
+  elaQ.forEach((q) => {
+    const pk = satPairKey(q.date, q.title);
+    if (!elaByKey.has(pk)) elaByKey.set(pk, []);
+    elaByKey.get(pk)!.push(q);
+  });
+  const allKeys = new Set([...mathByKey.keys(), ...elaByKey.keys()]);
+
+  return [...allKeys]
+    .map((pk) => {
+      const math = pickBestSide(mathByKey.get(pk) || []);
+      const ela = pickBestSide(elaByKey.get(pk) || []);
+      const title = math?.title || ela?.title || "Quiz";
+      const date = math?.date || ela?.date || "";
+      const mScore = math?.score ?? null;
+      const eScore = ela?.score ?? null;
+      const total = mScore != null && eScore != null ? mScore + eScore : null;
+      const maxTotal =
+        math?.maxScore != null && ela?.maxScore != null
+          ? math.maxScore + ela.maxScore
+          : math?.maxScore != null
+            ? math.maxScore
+            : ela?.maxScore != null
+              ? ela.maxScore
+              : null;
+      return { key: pk, title, date, math, ela, total, maxTotal };
+    })
+    .filter((p) => p.math || p.ela)
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)) || a.title.localeCompare(b.title));
+}
+
+function summarizeSatTrack(
+  track: string,
+  label: string,
+  mathSide: { classId: string; className: string } | null,
+  elaSide: { classId: string; className: string } | null,
+  pairs: SatPair[],
+): SatTrackResult {
+  const mathScores = pairs.map((p) => p.math?.score).filter((n): n is number => n != null);
+  const elaScores = pairs.map((p) => p.ela?.score).filter((n): n is number => n != null);
+  const totals = pairs.map((p) => p.total).filter((n): n is number => n != null);
+  return {
+    track,
+    label,
+    mathClassId: mathSide?.classId || null,
+    elaClassId: elaSide?.classId || null,
+    mathClassName: mathSide?.className || "SAT Math",
+    elaClassName: elaSide?.className || "SAT ELA",
+    pairs,
+    avgMath: mathScores.length ? mathScores.reduce((a, b) => a + b, 0) / mathScores.length : null,
+    avgEla: elaScores.length ? elaScores.reduce((a, b) => a + b, 0) / elaScores.length : null,
+    avgTotal: totals.length ? totals.reduce((a, b) => a + b, 0) / totals.length : null,
+  };
+}
+
 /**
- * Pair SAT Math + SAT ELA quizzes (same track, same date+title) and sum into a total
+ * Pair SAT Math + SAT ELA quizzes (same practice date+title) into a combined total
  * (section scores typically /800 → total /1600).
+ *
+ * - Full same-session programs (AM Math+ELA, PM Math+ELA) stay as separate tables.
+ * - Cross-session students (e.g. morning SAT Math + afternoon SAT ELA) merge into one table.
+ * - No class-average totals are computed (student scores only).
  */
-export function buildSatTotals(student: string, data: ReportData) {
+export function buildSatTotals(student: string, data: ReportData): SatTrackResult[] {
   const catalog = data.catalog || [];
   const quizzes = data.quizzes || [];
   const quizScores = data.quizScores || [];
@@ -1018,122 +1115,74 @@ export function buildSatTotals(student: string, data: ReportData) {
       .sort((a, b) => String(a.date).localeCompare(String(b.date)) || a.title.localeCompare(b.title));
   };
 
-  const results: {
-    track: string;
-    label: string;
-    mathClassId: string | null;
-    elaClassId: string | null;
-    mathClassName: string;
-    elaClassName: string;
-    pairs: {
-      key: string;
-      title: string;
-      date: string;
-      math: SatQuizSide | null;
-      ela: SatQuizSide | null;
-      total: number | null;
-      maxTotal: number | null;
-      classAvgTotal: number | null;
-      classN: number;
-    }[];
-    avgMath: number | null;
-    avgEla: number | null;
-    avgTotal: number | null;
-    classAvgTotal: number | null;
-  }[] = [];
+  const studentTouches = (side: Side | undefined): boolean => {
+    if (!side) return false;
+    if ((side.roster || []).some((s) => studentKey(s) === key)) return true;
+    return quizzes.some((q) => q.classId === side.classId && scoreAt(q.id, student) != null);
+  };
+
+  type PartialSide = { trackId: string; label: string; side: Side };
+  const complete: { trackId: string; label: string; math: Side; ela: Side }[] = [];
+  const mathOnly: PartialSide[] = [];
+  const elaOnly: PartialSide[] = [];
 
   tracks.forEach((t, trackId) => {
     if (!t.math && !t.ela) return;
-    const mathQ = t.math ? sideQuizzes(t.math.classId, student) : [];
-    const elaQ = t.ela ? sideQuizzes(t.ela.classId, student) : [];
-    const mathByKey = new Map(mathQ.map((q) => [satPairKey(q.date, q.title), q]));
-    const elaByKey = new Map(elaQ.map((q) => [satPairKey(q.date, q.title), q]));
-    const allKeys = new Set([...mathByKey.keys(), ...elaByKey.keys()]);
-
-    // Union of rosters for class-average totals (students who might take both).
-    const rosterSet = new Map<string, string>();
-    [...(t.math?.roster || []), ...(t.ela?.roster || [])].forEach((s) => {
-      const sk = studentKey(s);
-      if (sk && !rosterSet.has(sk)) rosterSet.set(sk, s);
-    });
-
-    const pairs = [...allKeys]
-      .map((pk) => {
-        const math = mathByKey.get(pk) || null;
-        const ela = elaByKey.get(pk) || null;
-        const title = math?.title || ela?.title || "Quiz";
-        const date = math?.date || ela?.date || "";
-        const mScore = math?.score ?? null;
-        const eScore = ela?.score ?? null;
-        const total = mScore != null && eScore != null ? mScore + eScore : null;
-        const maxTotal =
-          math?.maxScore != null && ela?.maxScore != null
-            ? math.maxScore + ela.maxScore
-            : math?.maxScore != null
-              ? math.maxScore
-              : ela?.maxScore != null
-                ? ela.maxScore
-                : null;
-
-        // Class average total for this practice test (students with both section scores).
-        let classAvgTotal: number | null = null;
-        let classN = 0;
-        if (math && ela) {
-          const totals: number[] = [];
-          rosterSet.forEach((who) => {
-            const ms = scoreAt(math.quizId, who);
-            const es = scoreAt(ela.quizId, who);
-            if (ms != null && es != null) totals.push(ms + es);
-          });
-          classN = totals.length;
-          classAvgTotal = totals.length ? totals.reduce((a, b) => a + b, 0) / totals.length : null;
-        }
-
-        return {
-          key: pk,
-          title,
-          date,
-          math,
-          ela,
-          total,
-          maxTotal,
-          classAvgTotal,
-          classN,
-        };
-      })
-      .filter((p) => p.math || p.ela)
-      .sort((a, b) => String(a.date).localeCompare(String(b.date)) || a.title.localeCompare(b.title));
-
-    // Only emit a track if this student has any score on either side (or is on a roster — still show empty?).
-    // Prefer showing when student has at least one section score or is on either roster.
-    const onRoster =
-      (t.math && (t.math.roster || []).some((s) => studentKey(s) === key)) ||
-      (t.ela && (t.ela.roster || []).some((s) => studentKey(s) === key));
-    const hasAnyScore = pairs.some((p) => (p.math?.score != null) || (p.ela?.score != null));
-    if (!onRoster && !hasAnyScore) return;
-    if (!pairs.length && !onRoster) return;
-
-    const mathScores = pairs.map((p) => p.math?.score).filter((n): n is number => n != null);
-    const elaScores = pairs.map((p) => p.ela?.score).filter((n): n is number => n != null);
-    const totals = pairs.map((p) => p.total).filter((n): n is number => n != null);
-    const classTotals = pairs.map((p) => p.classAvgTotal).filter((n): n is number => n != null);
-
-    results.push({
-      track: trackId,
-      label: t.label,
-      mathClassId: t.math?.classId || null,
-      elaClassId: t.ela?.classId || null,
-      mathClassName: t.math?.className || "SAT Math",
-      elaClassName: t.ela?.className || "SAT ELA",
-      pairs,
-      avgMath: mathScores.length ? mathScores.reduce((a, b) => a + b, 0) / mathScores.length : null,
-      avgEla: elaScores.length ? elaScores.reduce((a, b) => a + b, 0) / elaScores.length : null,
-      avgTotal: totals.length ? totals.reduce((a, b) => a + b, 0) / totals.length : null,
-      classAvgTotal: classTotals.length ? classTotals.reduce((a, b) => a + b, 0) / classTotals.length : null,
-    });
+    const hasMath = studentTouches(t.math);
+    const hasEla = studentTouches(t.ela);
+    if (!hasMath && !hasEla) return;
+    if (hasMath && hasEla && t.math && t.ela) {
+      complete.push({ trackId, label: t.label, math: t.math, ela: t.ela });
+    } else if (hasMath && t.math) {
+      mathOnly.push({ trackId, label: t.label, side: t.math });
+    } else if (hasEla && t.ela) {
+      elaOnly.push({ trackId, label: t.label, side: t.ela });
+    }
   });
 
-  results.sort((a, b) => a.label.localeCompare(b.label));
+  const results: SatTrackResult[] = [];
+
+  // Same-session full programs → one table each.
+  complete.forEach(({ trackId, label, math, ela }) => {
+    const pairs = pairMathEla(sideQuizzes(math.classId, student), sideQuizzes(ela.classId, student));
+    if (!pairs.length) return;
+    results.push(summarizeSatTrack(trackId, label, math, ela, pairs));
+  });
+
+  // Cross-session leftovers (e.g. AM Math + PM ELA) → single merged table.
+  if (mathOnly.length && elaOnly.length) {
+    const mathQ = mathOnly.flatMap((m) => sideQuizzes(m.side.classId, student));
+    const elaQ = elaOnly.flatMap((e) => sideQuizzes(e.side.classId, student));
+    const pairs = pairMathEla(mathQ, elaQ);
+    if (pairs.length) {
+      const mathSide = mathOnly[0].side;
+      const elaSide = elaOnly[0].side;
+      // Label "SAT" when sessions differ; keep afternoon label only if both leftover sides are PM.
+      const allAfternoon =
+        mathOnly.every((m) => m.trackId === "sat-afternoon") &&
+        elaOnly.every((e) => e.trackId === "sat-afternoon");
+      const label = allAfternoon ? "SAT Afternoon" : "SAT";
+      const trackId =
+        mathOnly.length === 1 && elaOnly.length === 1
+          ? `sat-cross:${mathOnly[0].trackId}+${elaOnly[0].trackId}`
+          : "sat-cross";
+      results.push(summarizeSatTrack(trackId, label, mathSide, elaSide, pairs));
+    }
+  } else if (mathOnly.length || elaOnly.length) {
+    // Single-section leftovers with no partner to merge — still show section scores.
+    mathOnly.forEach(({ trackId, label, side }) => {
+      const pairs = pairMathEla(sideQuizzes(side.classId, student), []);
+      if (!pairs.length) return;
+      results.push(summarizeSatTrack(trackId, label, side, null, pairs));
+    });
+    elaOnly.forEach(({ trackId, label, side }) => {
+      const pairs = pairMathEla([], sideQuizzes(side.classId, student));
+      if (!pairs.length) return;
+      results.push(summarizeSatTrack(trackId, label, null, side, pairs));
+    });
+  }
+
+  results.sort((a, b) => a.label.localeCompare(b.label) || a.track.localeCompare(b.track));
   return results;
 }
 
