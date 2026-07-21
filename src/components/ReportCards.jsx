@@ -154,14 +154,15 @@ function SatTotalsSection({ tracks }) {
 }
 
 function ClassSection({ c, student, planReadOnly, saveComment, quizOnly, classAvg }) {
-  // SAT classes: student scores only — no class average / Class % comparison.
+  // SAT classes: no overall Class average tile (combined total is student-only),
+  // but each quiz row still shows Class avg for comparison.
   const isSat = !!satSubjectOf(c.className);
-  const classAvgPct = isSat ? null : (classAvg?.avgPct ?? null);
+  const classAvgPct = classAvg?.avgPct ?? null;
   const classAvgByQuiz = useMemo(() => {
     const m = new Map();
-    if (!isSat) (classAvg?.byQuiz || []).forEach((q) => m.set(q.quizId, q));
+    (classAvg?.byQuiz || []).forEach((q) => m.set(q.quizId, q));
     return m;
-  }, [classAvg, isSat]);
+  }, [classAvg]);
 
   return (
     <div style={{ marginBottom: 22, breakInside: "avoid" }}>
@@ -191,7 +192,7 @@ function ClassSection({ c, student, planReadOnly, saveComment, quizOnly, classAv
           label="Quiz average"
           value={fmtPctNum(c.quiz.avgPct)}
           sub={`${c.quiz.count} quiz${c.quiz.count === 1 ? "" : "zes"}`}
-          tone={isSat ? "#123c3a" : toneVsClass(c.quiz.avgPct, classAvgPct)}
+          tone={toneVsClass(c.quiz.avgPct, classAvgPct)}
         />
         {!isSat && (
           <StatTile
@@ -206,29 +207,27 @@ function ClassSection({ c, student, planReadOnly, saveComment, quizOnly, classAv
       </div>
 
       {c.quiz.detail.length > 0 ? (
-        <table style={{ borderCollapse: "collapse", width: "100%", maxWidth: quizOnly ? (isSat ? 480 : 620) : (isSat ? 420 : 540), marginBottom: 10 }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", maxWidth: quizOnly ? 620 : 540, marginBottom: 10 }}>
           <thead>
             <tr>
               <th style={{ ...thStyle, textAlign: "left", padding: "5px 8px" }}>Quiz</th>
               <th style={{ ...thStyle, padding: "5px 8px" }}>Date</th>
               <th style={{ ...thStyle, padding: "5px 8px" }}>Score</th>
               <th style={{ ...thStyle, padding: "5px 8px" }}>%</th>
-              {!isSat && <th style={{ ...thStyle, padding: "5px 8px" }}>Class %</th>}
+              <th style={{ ...thStyle, padding: "5px 8px" }}>Class avg</th>
             </tr>
           </thead>
           <tbody>
             {c.quiz.detail.map((q) => {
               const ca = classAvgByQuiz.get(q.quizId);
-              const pctTone = isSat ? "#123c3a" : toneVsClass(q.pct, ca?.avgPct ?? null);
+              const pctTone = toneVsClass(q.pct, ca?.avgPct ?? null);
               return (
                 <tr key={q.quizId}>
                   <td style={{ ...tdStyle, padding: "5px 8px" }}>{q.title}</td>
                   <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center", color: "#64748b" }}>{q.date ? formatDateLabel(q.date) : "—"}</td>
                   <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center" }}>{q.score}{q.maxScore ? ` / ${q.maxScore}` : ""}</td>
                   <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center", fontWeight: 700, color: pctTone }}>{fmtPctNum(q.pct)}</td>
-                  {!isSat && (
-                    <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center", color: "#64748b" }}>{fmtPctNum(ca?.avgPct ?? null)}</td>
-                  )}
+                  <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center", color: "#64748b" }}>{fmtPctNum(ca?.avgPct ?? null)}</td>
                 </tr>
               );
             })}
