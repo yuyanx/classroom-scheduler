@@ -652,6 +652,8 @@ the top; `STUDENT_CLASH_TOKENS` stays imported in `App.jsx` for its inline grid 
   + Grades) hide Class average / Class % / Class avg. Combined total no longer shows class total.
   Students on morning Math + afternoon ELA (or vice versa) get one merged Combined total table;
   full AM + full PM programs stay as two tables.
+- 2026-07-21 — **Report Cards · per-quiz Class avg**: every quiz row (including SAT) shows a
+  **Class avg** column (roster mean %). Overall Class average tile still omitted for SAT.
 
 ---
 
