@@ -41,6 +41,7 @@ export {
   attendanceSummary,
   homeworkCompletionRate,
   quizAverage,
+  upsertQuizScore,
   classQuizAverages,
   satSubjectOf,
   buildSatTotals,
