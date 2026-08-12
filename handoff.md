@@ -471,8 +471,9 @@ staffPins:      { "<teacher name>": "<pin>" }   // legacy; no longer written by 
   responsive card layout on narrow screens via `useIsNarrow`), `📝 Grades` (quiz grid + averages +
   CSV), `🪪 Report Cards` (aggregation via `buildReportCard`; toggle **🎓 By Student** vs
   **📋 By Class** roster walk-through; optional **📝 Quiz only** filter for scores without
-  attendance/homework/comments; **inline score entry** on each quiz row and SAT combined-total
-  Math/ELA cells via `upsertQuizScore` — same `quizScores` records as Grades; `🖨 Print` via an
+  attendance/homework/comments; SAT **Combined total** renders above per-subject sections;
+  **inline score entry** on each quiz row and SAT combined-total Math/ELA cells via
+  `upsertQuizScore` — same `quizScores` records as Grades; `🖨 Print` via an
   injected `@media print` style; CSV export for all students or the selected class, with
   quiz-detail rows when Quiz only is on). The Class
   Library `<aside>` is hidden on these three tabs (they have their own class pickers) — this also
@@ -661,6 +662,9 @@ the top; `STUDENT_CLASH_TOKENS` stays imported in `App.jsx` for its inline grid 
   `quizAverage.detail` now lists every class quiz (unscored rows are empty) so a student with
   no score yet still has a cell to type into. Print view still shows the numeric score, not the
   input. Archive/read-only plans stay text-only.
+- 2026-08-12 — **Report Cards · SAT combined first**: the SAT **Combined total** block renders
+  above the per-subject class sections (Math / ELA / other classes), in both By Student and
+  By Class.
 
 ---
 

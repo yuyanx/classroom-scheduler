@@ -107,8 +107,8 @@ function SatTotalsSection({ tracks, student, planReadOnly, saveScore }) {
           <div
             key={t.track}
             style={{
-              marginTop: 8,
-              marginBottom: 8,
+              marginTop: 0,
+              marginBottom: 22,
               breakInside: "avoid",
               border: "1px solid #c7e0dc",
               borderRadius: 12,
@@ -609,6 +609,16 @@ export default function ReportCards({ data, persist, currentTeacher, planReadOnl
             </div>
           </div>
 
+          {/* SAT combined total first, then per-subject class sections */}
+          {satTracks.length > 0 && (
+            <SatTotalsSection
+              tracks={satTracks}
+              student={student}
+              planReadOnly={planReadOnly}
+              saveScore={saveScore}
+            />
+          )}
+
           {displayClasses.length === 0 && satTracks.length === 0 ? (
             <p style={{ color: "#94a3b8", fontSize: 14 }}>
               {mode === "class"
@@ -628,16 +638,6 @@ export default function ReportCards({ data, persist, currentTeacher, planReadOnl
                 classAvg={classAvgById.get(c.classId) || null}
               />
             ))
-          )}
-
-          {/* SAT combined total sits at the bottom, under per-class sections */}
-          {satTracks.length > 0 && (
-            <SatTotalsSection
-              tracks={satTracks}
-              student={student}
-              planReadOnly={planReadOnly}
-              saveScore={saveScore}
-            />
           )}
 
           <div style={{ marginTop: 16, fontSize: 11, color: "#94a3b8" }}>Generated {new Date().toLocaleDateString()}</div>
