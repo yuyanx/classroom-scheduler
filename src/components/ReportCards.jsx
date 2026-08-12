@@ -1,8 +1,8 @@
 // 🪪 Report Cards — per student: attendance, homework completion, quiz scores,
 // and teacher comments. View by student (all classes) or by class (roster walk-through).
 // Optional Quiz only filter shows scores without attendance/homework/comments.
-// Printable + CSV export.
-import React, { useState, useMemo, useEffect } from "react";
+// Quiz scores are editable inline (same quizScores records as Grades). Printable + CSV export.
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import {
   buildReportCard,
   buildSatTotals,
@@ -11,17 +11,21 @@ import {
   studentKey,
   satSubjectOf,
   sortCatalogForRosterView,
+  upsertQuizScore,
 } from "../domain/scheduleLogic.ts";
 import { inputStyle, selStyle, btnPrimary, btnSecondary, thStyle, tdStyle } from "./uikit.jsx";
 import { fmtPct, fmtPctNum, downloadCSV } from "./classbookUtils.jsx";
 
 const fmtScore = (n) => (n == null || !Number.isFinite(n) ? "—" : `${Math.round(n)}`);
 
-const PRINT_CSS = `@media print {
+const PRINT_CSS = `
+.score-print { display: none; }
+@media print {
   body * { visibility: hidden !important; }
   #report-card-print, #report-card-print * { visibility: visible !important; }
   #report-card-print { position: absolute; left: 0; top: 0; width: 100%; padding: 0 !important; border: none !important; }
   .no-print { display: none !important; }
+  .score-print { display: inline !important; }
 }`;
 
 const MODE_BTN = {
@@ -40,6 +44,39 @@ const MODE_BTN_ACTIVE = {
   color: "#fff",
   borderColor: "#123c3a",
 };
+
+function ScoreInput({ quizId, student, score, maxScore, planReadOnly, onSave }) {
+  const dirtyRef = useRef(false);
+  const maxLabel = maxScore ? <span style={{ color: "#94a3b8", fontSize: 11, fontWeight: 400 }}> / {maxScore}</span> : null;
+  if (planReadOnly || !quizId) {
+    return <>{fmtScore(score)}{maxLabel}</>;
+  }
+  return (
+    <>
+      <input
+        key={`${quizId}|${student}|${score ?? ""}`}
+        className="no-print"
+        style={{ ...inputStyle, display: "inline-block", width: 64, padding: "4px 4px", fontSize: 13, textAlign: "center" }}
+        type="number"
+        min="0"
+        max={maxScore || undefined}
+        placeholder="—"
+        defaultValue={score == null ? "" : score}
+        aria-label="Quiz score"
+        onChange={() => { dirtyRef.current = true; }}
+        onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+        onBlur={(e) => {
+          if (!dirtyRef.current) return;
+          dirtyRef.current = false;
+          const cur = score == null ? "" : String(score);
+          if (e.target.value !== cur) onSave(quizId, student, e.target.value);
+        }}
+      />
+      <span className="score-print">{fmtScore(score)}</span>
+      {maxLabel}
+    </>
+  );
+}
 
 function StatTile({ label, value, sub, tone }) {
   return (
@@ -60,7 +97,7 @@ function toneVsClass(studentPct, classPct) {
   return "#b91c1c"; // well below class average
 }
 
-function SatTotalsSection({ tracks }) {
+function SatTotalsSection({ tracks, student, planReadOnly, saveScore }) {
   if (!tracks?.length) return null;
   return (
     <>
@@ -110,7 +147,7 @@ function SatTotalsSection({ tracks }) {
             </div>
 
             {t.pairs.length > 0 ? (
-              <table style={{ borderCollapse: "collapse", width: "100%", maxWidth: 560, marginBottom: 4 }}>
+              <table style={{ borderCollapse: "collapse", width: "100%", maxWidth: 640, marginBottom: 4 }}>
                 <thead>
                   <tr>
                     <th style={{ ...thStyle, textAlign: "left", padding: "5px 8px" }}>Quiz date</th>
@@ -128,12 +165,32 @@ function SatTotalsSection({ tracks }) {
                       </td>
                       <td style={{ ...tdStyle, padding: "5px 8px" }}>{p.title}</td>
                       <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center" }}>
-                        {fmtScore(p.math?.score ?? null)}
-                        {p.math?.maxScore ? <span style={{ color: "#94a3b8", fontSize: 11 }}> / {p.math.maxScore}</span> : null}
+                        {p.math?.quizId ? (
+                          <ScoreInput
+                            quizId={p.math.quizId}
+                            student={student}
+                            score={p.math.score ?? null}
+                            maxScore={p.math.maxScore}
+                            planReadOnly={planReadOnly}
+                            onSave={saveScore}
+                          />
+                        ) : (
+                          fmtScore(null)
+                        )}
                       </td>
                       <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center" }}>
-                        {fmtScore(p.ela?.score ?? null)}
-                        {p.ela?.maxScore ? <span style={{ color: "#94a3b8", fontSize: 11 }}> / {p.ela.maxScore}</span> : null}
+                        {p.ela?.quizId ? (
+                          <ScoreInput
+                            quizId={p.ela.quizId}
+                            student={student}
+                            score={p.ela.score ?? null}
+                            maxScore={p.ela.maxScore}
+                            planReadOnly={planReadOnly}
+                            onSave={saveScore}
+                          />
+                        ) : (
+                          fmtScore(null)
+                        )}
                       </td>
                       <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center", fontWeight: 800, color: "#123c3a" }}>
                         {fmtScore(p.total)}
@@ -153,7 +210,7 @@ function SatTotalsSection({ tracks }) {
   );
 }
 
-function ClassSection({ c, student, planReadOnly, saveComment, quizOnly, classAvg }) {
+function ClassSection({ c, student, planReadOnly, saveComment, saveScore, quizOnly, classAvg }) {
   // SAT classes: no overall Class average tile (combined total is student-only),
   // but each quiz row still shows Class avg for comparison.
   const isSat = !!satSubjectOf(c.className);
@@ -207,7 +264,7 @@ function ClassSection({ c, student, planReadOnly, saveComment, quizOnly, classAv
       </div>
 
       {c.quiz.detail.length > 0 ? (
-        <table style={{ borderCollapse: "collapse", width: "100%", maxWidth: quizOnly ? 620 : 540, marginBottom: 10 }}>
+        <table style={{ borderCollapse: "collapse", width: "100%", maxWidth: quizOnly ? 680 : 620, marginBottom: 10 }}>
           <thead>
             <tr>
               <th style={{ ...thStyle, textAlign: "left", padding: "5px 8px" }}>Quiz</th>
@@ -225,7 +282,16 @@ function ClassSection({ c, student, planReadOnly, saveComment, quizOnly, classAv
                 <tr key={q.quizId}>
                   <td style={{ ...tdStyle, padding: "5px 8px" }}>{q.title}</td>
                   <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center", color: "#64748b" }}>{q.date ? formatDateLabel(q.date) : "—"}</td>
-                  <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center" }}>{q.score}{q.maxScore ? ` / ${q.maxScore}` : ""}</td>
+                  <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center" }}>
+                    <ScoreInput
+                      quizId={q.quizId}
+                      student={student}
+                      score={q.score}
+                      maxScore={q.maxScore}
+                      planReadOnly={planReadOnly}
+                      onSave={saveScore}
+                    />
+                  </td>
                   <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center", fontWeight: 700, color: pctTone }}>{fmtPctNum(q.pct)}</td>
                   <td style={{ ...tdStyle, padding: "5px 8px", textAlign: "center", color: "#64748b" }}>{fmtPctNum(ca?.avgPct ?? null)}</td>
                 </tr>
@@ -235,7 +301,7 @@ function ClassSection({ c, student, planReadOnly, saveComment, quizOnly, classAv
         </table>
       ) : (
         quizOnly && (
-          <p style={{ margin: "0 0 10px", fontSize: 13, color: "#94a3b8" }}>No quiz scores recorded yet.</p>
+          <p style={{ margin: "0 0 10px", fontSize: 13, color: "#94a3b8" }}>No quizzes yet — add them on the 📝 Grades tab.</p>
         )
       )}
 
@@ -338,14 +404,21 @@ export default function ReportCards({ data, persist, currentTeacher, planReadOnl
     );
   }, [mode, satTracksAll, selectedClassId, selectedClass]);
 
+  const stamp = () => ({ by: currentTeacher || "", at: new Date().toISOString() });
+
   const saveComment = (classId, comment) => {
     if (planReadOnly) return;
     persist((d) => {
       const k = `${classId}|${studentKey(student)}`;
       const rest = (d.reportComments || []).filter((c) => `${c.classId}|${studentKey(c.student)}` !== k);
       if (!comment.trim()) return { ...d, reportComments: rest };
-      return { ...d, reportComments: [...rest, { classId, student, comment, by: currentTeacher || "", at: new Date().toISOString() }] };
+      return { ...d, reportComments: [...rest, { classId, student, comment, ...stamp() }] };
     });
+  };
+
+  const saveScore = (quizId, who, raw) => {
+    if (planReadOnly) return;
+    persist((d) => ({ ...d, quizScores: upsertQuizScore(d.quizScores, quizId, who, raw, stamp()) }));
   };
 
   const exportAll = () => {
@@ -474,6 +547,7 @@ export default function ReportCards({ data, persist, currentTeacher, planReadOnl
             ? `${classRoster.length} students in class`
             : `${fullCard.classes.length} classes`}
           {quizOnly ? " · quiz scores" : ""}
+          {!planReadOnly ? " · click a score to edit" : ""}
         </span>
       </div>
 
@@ -549,6 +623,7 @@ export default function ReportCards({ data, persist, currentTeacher, planReadOnl
                 student={student}
                 planReadOnly={planReadOnly}
                 saveComment={saveComment}
+                saveScore={saveScore}
                 quizOnly={quizOnly}
                 classAvg={classAvgById.get(c.classId) || null}
               />
@@ -556,7 +631,14 @@ export default function ReportCards({ data, persist, currentTeacher, planReadOnl
           )}
 
           {/* SAT combined total sits at the bottom, under per-class sections */}
-          {satTracks.length > 0 && <SatTotalsSection tracks={satTracks} />}
+          {satTracks.length > 0 && (
+            <SatTotalsSection
+              tracks={satTracks}
+              student={student}
+              planReadOnly={planReadOnly}
+              saveScore={saveScore}
+            />
+          )}
 
           <div style={{ marginTop: 16, fontSize: 11, color: "#94a3b8" }}>Generated {new Date().toLocaleDateString()}</div>
         </div>

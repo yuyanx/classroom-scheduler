@@ -843,9 +843,11 @@ export function homeworkCompletionRate(attendance: AttRec[] | undefined, classId
 }
 
 type QuizLike = { id: string; classId: string; date?: string; title?: string; maxScore?: number };
-type QuizScoreLike = { quizId: string; student: string; score: number | string };
+type QuizScoreLike = { quizId: string; student: string; score: number | string; note?: string; by?: string; at?: string };
 
-/** Per-quiz detail + average percent/raw for one student in one class. */
+/** Per-quiz detail + average percent/raw for one student in one class.
+ *  `detail` lists every class quiz (score is null when unrecorded) so Report Cards
+ *  can show empty cells for inline entry. Averages/`count` use scored quizzes only. */
 export function quizAverage(
   quizzes: QuizLike[] | undefined,
   quizScores: QuizScoreLike[] | undefined,
@@ -853,24 +855,54 @@ export function quizAverage(
   student: string,
 ) {
   const key = studentKey(student);
-  const qById = new Map<string, QuizLike>();
-  (quizzes || []).forEach((q) => { if (q.classId === classId) qById.set(q.id, q); });
-  const detail: { quizId: string; title: string; date: string; score: number; maxScore: number | null; pct: number | null }[] = [];
+  const scoreByQuiz = new Map<string, number>();
   (quizScores || []).forEach((s) => {
     if (studentKey(s.student) !== key) return;
-    const q = qById.get(s.quizId);
-    if (!q) return;
     const score = Number(s.score);
     if (!Number.isFinite(score)) return;
+    scoreByQuiz.set(s.quizId, score);
+  });
+  const detail: { quizId: string; title: string; date: string; score: number | null; maxScore: number | null; pct: number | null }[] = [];
+  (quizzes || []).forEach((q) => {
+    if (q.classId !== classId) return;
     const max = Number(q.maxScore) > 0 ? Number(q.maxScore) : null;
-    detail.push({ quizId: q.id, title: q.title || "Quiz", date: q.date || "", score, maxScore: max, pct: max ? (score / max) * 100 : null });
+    const has = scoreByQuiz.has(q.id);
+    const score = has ? scoreByQuiz.get(q.id)! : null;
+    detail.push({
+      quizId: q.id,
+      title: q.title || "Quiz",
+      date: q.date || "",
+      score,
+      maxScore: max,
+      pct: has && max ? (score! / max) * 100 : null,
+    });
   });
   detail.sort((a, b) => String(a.date).localeCompare(String(b.date)));
-  const pcts = detail.map((d) => d.pct).filter((p): p is number => p != null);
+  const scored = detail.filter((d): d is typeof d & { score: number } => d.score != null);
+  const pcts = scored.map((d) => d.pct).filter((p): p is number => p != null);
   const avgPct = pcts.length ? pcts.reduce((a, b) => a + b, 0) / pcts.length : null;
-  const raw = detail.map((d) => d.score);
+  const raw = scored.map((d) => d.score);
   const avgScore = raw.length ? raw.reduce((a, b) => a + b, 0) / raw.length : null;
-  return { detail, avgPct, avgScore, count: detail.length };
+  return { detail, avgPct, avgScore, count: scored.length };
+}
+
+/** Insert, replace, or clear one student's score for a quiz. Empty raw clears the row;
+ *  non-numeric raw is a no-op. */
+export function upsertQuizScore(
+  quizScores: QuizScoreLike[] | undefined,
+  quizId: string,
+  student: string,
+  raw: unknown,
+  stamp?: { by?: string; at?: string; note?: string },
+): QuizScoreLike[] {
+  const list = quizScores || [];
+  const k = `${quizId}|${studentKey(student)}`;
+  const rest = list.filter((s) => `${s.quizId}|${studentKey(s.student)}` !== k);
+  const trimmed = String(raw ?? "").trim();
+  if (trimmed === "") return rest;
+  const score = Number(trimmed);
+  if (!Number.isFinite(score)) return list;
+  return [...rest, { quizId, student, score, note: stamp?.note ?? "", by: stamp?.by ?? "", at: stamp?.at ?? "" }];
 }
 
 /**

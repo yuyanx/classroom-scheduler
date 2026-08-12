@@ -10,6 +10,7 @@ import {
   attendanceSummary,
   homeworkCompletionRate,
   quizAverage,
+  upsertQuizScore,
   classQuizAverages,
   satSubjectOf,
   buildSatTotals,
@@ -132,6 +133,75 @@ test("quizAverage ignores scores for quizzes in other classes", () => {
   const r = quizAverage(quizzes, [{ quizId: "qX", student: "Alex", score: 99 }], "k1", "Alex");
   assert.equal(r.count, 0);
   assert.equal(r.avgPct, null);
+  assert.equal(r.detail.length, 2);
+  assert.equal(r.detail[0].score, null);
+  assert.equal(r.detail[1].score, null);
+});
+
+test("quizAverage lists unscored class quizzes so scores can be entered", () => {
+  const r = quizAverage(quizzes, [{ quizId: "q1", student: "Alex", score: 80 }], "k1", "Alex");
+  assert.equal(r.count, 1);
+  assert.equal(r.detail.length, 2);
+  assert.equal(r.detail[0].score, 80);
+  assert.equal(r.detail[1].score, null);
+  assert.equal(r.avgPct, 80);
+});
+
+test("upsertQuizScore inserts, replaces, and clears a score", () => {
+  let scores = upsertQuizScore([], "q1", "Alex", "80", { by: "Amy", at: "t1" });
+  assert.equal(scores.length, 1);
+  assert.equal(scores[0].score, 80);
+  assert.equal(scores[0].by, "Amy");
+  scores = upsertQuizScore(scores, "q1", "Alex", "90", { by: "Amy", at: "t2" });
+  assert.equal(scores.length, 1);
+  assert.equal(scores[0].score, 90);
+  scores = upsertQuizScore(scores, "q1", "Bailey", "70", { by: "Amy", at: "t3" });
+  assert.equal(scores.length, 2);
+  scores = upsertQuizScore(scores, "q1", "Alex", "  ");
+  assert.equal(scores.length, 1);
+  assert.equal(scores[0].student, "Bailey");
+  const unchanged = upsertQuizScore(scores, "q1", "Bailey", "nope");
+  assert.equal(unchanged, scores);
+});
+
+test("display helpers do not mutate stored students, quizzes, or scores", () => {
+  const data = {
+    catalog: [
+      { id: "k1", name: "Algebra", teacher: "Amy", students: ["Alex", "Bailey"] },
+      { id: "sm", name: "SAT Math", students: ["Alex"] },
+      { id: "se", name: "SAT ELA", students: ["Alex"] },
+    ],
+    students: ["Alex", "Bailey"],
+    quizzes: [
+      { id: "q1", classId: "k1", date: "2026-06-19", title: "Week 1", maxScore: 100 },
+      { id: "qm1", classId: "sm", date: "2026-07-10", title: "Quiz 1", maxScore: 800 },
+      { id: "qe1", classId: "se", date: "2026-07-10", title: "Quiz 1", maxScore: 800 },
+    ],
+    quizScores: [
+      { quizId: "q1", student: "Alex", score: 80, note: "", by: "Amy", at: "t1" },
+      { quizId: "qm1", student: "Alex", score: 700, note: "", by: "Amy", at: "t1" },
+    ],
+  };
+  const snapshot = JSON.stringify(data);
+  quizAverage(data.quizzes, data.quizScores, "k1", "Alex");
+  classQuizAverages(data.quizzes, data.quizScores, "k1", data.catalog[0].students);
+  buildReportCard("Alex", data);
+  buildSatTotals("Alex", data);
+  normalizeV2({
+    version: 2,
+    days: ["mon"],
+    rooms: [{ id: "1", cap: 12 }],
+    catalog: data.catalog.map((k) => ({ ...k, reg: (k.students || []).length, note: "" })),
+    placements: [],
+    students: data.students,
+    quizzes: data.quizzes,
+    quizScores: data.quizScores,
+  });
+  assert.equal(JSON.stringify(data), snapshot);
+  const others = upsertQuizScore(data.quizScores, "q1", "Bailey", "70");
+  assert.deepEqual(data.quizScores, JSON.parse(snapshot).quizScores);
+  assert.equal(others.find((s) => s.student === "Alex" && s.quizId === "q1").score, 80);
+  assert.equal(others.find((s) => s.quizId === "qm1").score, 700);
 });
 
 test("classQuizAverages means student avgs and per-quiz roster means", () => {

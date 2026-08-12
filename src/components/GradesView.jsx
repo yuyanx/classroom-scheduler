@@ -6,6 +6,7 @@ import {
   formatDateLabel,
   studentKey,
   quizAverage,
+  upsertQuizScore,
   sortCatalogForRosterView,
   satSubjectOf,
 } from "../domain/scheduleLogic.ts";
@@ -67,15 +68,7 @@ export default function GradesView({ data, persist, currentTeacher, planReadOnly
   };
   const setScore = (quizId, student, raw) => {
     if (planReadOnly) return;
-    persist((d) => {
-      const k = `${quizId}|${studentKey(student)}`;
-      const rest = (d.quizScores || []).filter((s) => `${s.quizId}|${studentKey(s.student)}` !== k);
-      const trimmed = String(raw).trim();
-      if (trimmed === "") return { ...d, quizScores: rest };
-      const score = Number(trimmed);
-      if (!Number.isFinite(score)) return d;
-      return { ...d, quizScores: [...rest, { quizId, student, score, note: "", ...stamp() }] };
-    });
+    persist((d) => ({ ...d, quizScores: upsertQuizScore(d.quizScores, quizId, student, raw, stamp()) }));
   };
 
   const classAvgForQuiz = (q) => {

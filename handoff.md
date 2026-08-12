@@ -471,8 +471,10 @@ staffPins:      { "<teacher name>": "<pin>" }   // legacy; no longer written by 
   responsive card layout on narrow screens via `useIsNarrow`), `📝 Grades` (quiz grid + averages +
   CSV), `🪪 Report Cards` (aggregation via `buildReportCard`; toggle **🎓 By Student** vs
   **📋 By Class** roster walk-through; optional **📝 Quiz only** filter for scores without
-  attendance/homework/comments; `🖨 Print` via an injected `@media print` style; CSV export
-  for all students or the selected class, with quiz-detail rows when Quiz only is on). The Class
+  attendance/homework/comments; **inline score entry** on each quiz row and SAT combined-total
+  Math/ELA cells via `upsertQuizScore` — same `quizScores` records as Grades; `🖨 Print` via an
+  injected `@media print` style; CSV export for all students or the selected class, with
+  quiz-detail rows when Quiz only is on). The Class
   Library `<aside>` is hidden on these three tabs (they have their own class pickers) — this also
   gives the Classbook full width on mobile.
 - **Who's recording (audit label only).** Header **👤 Who's recording** / **Recording as …** picks
@@ -489,7 +491,7 @@ staffPins:      { "<teacher name>": "<pin>" }   // legacy; no longer written by 
   entering grades into the same plan simultaneously can clobber each other. The dirty-revision guard
   only protects your own unsaved edits from being overwritten by polls. Per-record sync is future work.
 - **Code:** `src/domain/scheduleLogic.ts` (pure: `sessionsForClass`, `attendanceSummary`,
-  `homeworkCompletionRate`, `quizAverage`, `buildReportCard`, `suggestQuizDates`, date utils);
+  `homeworkCompletionRate`, `quizAverage`, `upsertQuizScore`, `buildReportCard`, `suggestQuizDates`, date utils);
   `src/components/` (`Classbook.jsx`, `GradesView.jsx`, `ReportCards.jsx`, `TermModal.jsx`,
   `IdentityModal.jsx`, `classbookUtils.jsx`, and the extracted `uikit.jsx`); wiring in `App.jsx`.
 
@@ -654,6 +656,11 @@ the top; `STUDENT_CLASH_TOKENS` stays imported in `App.jsx` for its inline grid 
   full AM + full PM programs stay as two tables.
 - 2026-07-21 — **Report Cards · per-quiz Class avg**: every quiz row (including SAT) shows a
   **Class avg** column (roster mean %). Overall Class average tile still omitted for SAT.
+- 2026-08-12 — **Report Cards · inline scores**: quiz score cells (class table + SAT Math/ELA)
+  are editable on 🪪 Report Cards — same `quizScores` writes as 📝 Grades (`upsertQuizScore`).
+  `quizAverage.detail` now lists every class quiz (unscored rows are empty) so a student with
+  no score yet still has a cell to type into. Print view still shows the numeric score, not the
+  input. Archive/read-only plans stay text-only.
 
 ---
 

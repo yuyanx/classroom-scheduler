@@ -67,7 +67,7 @@ Central hooks in `App.jsx`: `persist`, `flushRemoteSave`, `switchPlan`, `planApi
 - **Resize test** on By Class / By Teacher (narrow window, horizontal scroll, uniform pill heights).
 - **v3 plans**: switch plans, new plan, delete plan (not Default), archive + restore, Clear schedule vs Reset Data.
 - **Save guards**: Default (id=1) cannot sync with zero classes; each remote save auto-backs up previous server copy to hidden row `10000 + planId` (`scripts/restore-auto-backup.mjs`).
-- **Course management**: set term → Classbook shows dated sessions; record attendance/homework + lesson content, then **reload** and confirm it persists (proves `normalizeV2` carry-through). Grades: add quiz, enter scores, check averages + CSV. Report Cards: By Student vs By Class toggle, Quiz only filter, roster walk-through, print, CSV (class-scoped / quiz-detail export). Mobile (`preview_resize`): Classbook roster becomes cards. Rename/remove a student + delete a class → records cascade.
+- **Course management**: set term → Classbook shows dated sessions; record attendance/homework + lesson content, then **reload** and confirm it persists (proves `normalizeV2` carry-through). Grades: add quiz, enter scores, check averages + CSV. Report Cards: By Student vs By Class toggle, Quiz only filter, roster walk-through, **inline score edit** (type a quiz / SAT section score, blur, reload — same `quizScores` as Grades), print, CSV (class-scoped / quiz-detail export). Mobile (`preview_resize`): Classbook roster becomes cards. Rename/remove a student + delete a class → records cascade.
 
 ## Things Agents Frequently Get Wrong
 
